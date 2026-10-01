@@ -90,6 +90,23 @@ export class AccountStore {
   }
 
   /**
+   * Updates an account's lastUsedAt timestamp without modifying activeId.
+   */
+  async touch(id: string): Promise<void> {
+    return this.mutex.runExclusive(async () => {
+      const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
+      const idx = accounts.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        accounts[idx] = {
+          ...accounts[idx],
+          lastUsedAt: Date.now(),
+        };
+        await this.state.update(ACCOUNTS_STATE_KEY, accounts);
+      }
+    });
+  }
+
+  /**
    * Stores a session snapshot in encrypted secret storage.
    * Tokens NEVER enter Memento/globalState.
    */

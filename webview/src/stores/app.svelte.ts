@@ -13,11 +13,16 @@ let busy = $state(false);
 let busyMessage = $state('');
 let error = $state('');
 let maskEmails = $state(false);
+let mode = $state<'profile' | 'tokenSwap'>('profile');
 let toast = $state('');
 let toastAccountId = $state<string | undefined>(undefined);
 let loading = $state(true);
 
 // ── Getters ──
+
+export function getMode(): 'profile' | 'tokenSwap' {
+  return mode;
+}
 
 export function getAccounts(): AccountMeta[] {
   return accounts;
@@ -71,6 +76,7 @@ export function handleMessage(data: ToWebview): void {
       accounts = data.accounts;
       activeId = data.activeId;
       maskEmails = data.maskEmails ?? false;
+      mode = data.mode ?? 'profile';
       busy = false;
       busyMessage = '';
       loading = false;
@@ -80,17 +86,20 @@ export function handleMessage(data: ToWebview): void {
       busy = true;
       busyMessage = data.message;
       error = '';
+      loading = false;
       break;
 
     case 'error':
       error = data.message;
       busy = false;
       busyMessage = '';
+      loading = false;
       break;
 
     case 'toast':
       toast = data.message;
       toastAccountId = data.accountId;
+      loading = false;
       break;
   }
 }

@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte';
   import { maskEmail } from '../lib/maskEmail';
   import { timeAgo } from '../lib/timeAgo';
+  import { getMode } from '../stores/app.svelte';
 
   interface Props {
     account: AccountMeta;
@@ -21,7 +22,7 @@
     <div class="card-info">
       <div class="email-row">
         <span class="email" title={account.email}>{displayEmail}</span>
-        <span class="active-badge">ACTIVE</span>
+        <span class="active-badge">{getMode() === 'profile' ? 'THIS WINDOW' : 'ACTIVE'}</span>
       </div>
       <div class="meta-row">
         {#if account.label}

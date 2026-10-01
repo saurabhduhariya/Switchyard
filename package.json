@@ -54,6 +54,10 @@
       {
         "command": "switchyard.restoreBackup",
         "title": "Switchyard: Restore Last Backup"
+      },
+      {
+        "command": "switchyard.importAccount",
+        "title": "Switchyard: Import Account from Database / Backup"
       }
     ],
     "configuration": {
@@ -61,12 +65,12 @@
       "properties": {
         "switchyard.mode": {
           "type": "string",
-          "default": "profile",
+          "default": "tokenSwap",
           "enum": [
-            "profile",
-            "tokenSwap"
+            "tokenSwap",
+            "profile"
           ],
-          "description": "profile = isolated windows (safest). tokenSwap = restart IDE and swap saved session (experimental)."
+          "description": "tokenSwap = switch accounts in the same window (restarts IDE). profile = launch isolated windows side-by-side."
         },
         "switchyard.confirmBeforeSwitch": {
           "type": "boolean",
@@ -77,6 +81,16 @@
           "type": "number",
           "default": 5,
           "description": "Number of state.vscdb backups to retain."
+        },
+        "switchyard.maskEmails": {
+          "type": "boolean",
+          "default": false,
+          "description": "Mask email addresses in the accounts panel and status bar (e.g. u***@domain.com)."
+        },
+        "switchyard.executablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to the Antigravity IDE executable binary. Leave empty for automatic detection."
         }
       }
     }

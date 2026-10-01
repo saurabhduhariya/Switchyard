@@ -175,7 +175,22 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
 
   // 3. Direct regex check
   const directMatch = str.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-  return directMatch ? directMatch[1] : undefined;
+  if (directMatch) return directMatch[1];
+
+  // 4. Scan for embedded base64 chunks within binary buffer
+  const latinStr = buf.toString('latin1');
+  const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
+  for (const chunk of b64Chunks) {
+    try {
+      const decodedBuf = Buffer.from(chunk, 'base64');
+      const innerEmail = extractEmailFromBuffer(decodedBuf);
+      if (innerEmail) return innerEmail;
+    } catch {
+      // ignore
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -210,6 +225,21 @@ export function extractPlanFromBuffer(buf: Buffer): string | undefined {
       if (subPlan && (!bestPlan || subPlan.length > bestPlan.length)) {
         bestPlan = subPlan;
       }
+    }
+  }
+
+  // Also scan embedded base64 chunks for plan
+  const latinStr = buf.toString('latin1');
+  const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
+  for (const chunk of b64Chunks) {
+    try {
+      const decodedBuf = Buffer.from(chunk, 'base64');
+      const innerPlan = extractPlanFromBuffer(decodedBuf);
+      if (innerPlan && (!bestPlan || innerPlan.length > bestPlan.length)) {
+        bestPlan = innerPlan;
+      }
+    } catch {
+      // ignore
     }
   }
 

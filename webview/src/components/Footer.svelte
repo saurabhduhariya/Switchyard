@@ -4,6 +4,10 @@
   function handleAdd() {
     postToHost({ type: 'add' });
   }
+
+  function handleImport() {
+    postToHost({ type: 'import' });
+  }
 </script>
 
 <footer class="footer">
@@ -11,12 +15,39 @@
     <span class="plus" aria-hidden="true">+</span>
     Add Account
   </button>
+  <button class="import-btn" onclick={handleImport} aria-label="Import account from file or backup">
+    Import from Backup / File
+  </button>
 </footer>
 
 <style>
   .footer {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
     padding-top: 8px;
     border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
+  }
+
+  .import-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 5px 12px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground, #999);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 11px;
+    transition: color 0.12s;
+  }
+
+  .import-btn:hover {
+    color: var(--vscode-foreground, #ccc);
+    text-decoration: underline;
   }
 
   .add-btn {

@@ -17,9 +17,11 @@ let api: VsCodeApi | undefined;
 export function getVsCodeApi(): VsCodeApi | undefined {
   if (api) return api;
   try {
-    api = acquireVsCodeApi();
+    if (typeof acquireVsCodeApi === 'function') {
+      api = acquireVsCodeApi();
+    }
   } catch {
-    // standalone dev mode — mockHost.ts will handle messages
+    // Already acquired or in standalone dev mode
   }
   return api;
 }

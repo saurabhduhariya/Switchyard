@@ -21,11 +21,9 @@
     isLoading,
     handleMessage,
   } from './stores/app.svelte';
-  import { getVsCodeApi, postToHost } from './lib/vscode';
+  import { postToHost } from './lib/vscode';
 
   // Wire up message listener
-  const vscode = getVsCodeApi();
-
   window.addEventListener('message', (e) => {
     if (e.data?.type) {
       handleMessage(e.data);
@@ -33,11 +31,7 @@
   });
 
   // Tell the host we're ready
-  if (vscode) {
-    vscode.postMessage({ type: 'ready' });
-  } else {
-    postToHost({ type: 'ready' });
-  }
+  postToHost({ type: 'ready' });
 </script>
 
 <main class="container">

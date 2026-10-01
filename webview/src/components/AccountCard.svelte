@@ -5,6 +5,7 @@
   import { maskEmail } from '../lib/maskEmail';
   import { timeAgo } from '../lib/timeAgo';
   import { postToHost } from '../lib/vscode';
+  import { getMode } from '../stores/app.svelte';
 
   interface Props {
     account: AccountMeta;
@@ -55,6 +56,10 @@
     postToHost({ type: 'revealProfile', id: account.id });
   }
 
+  function handleCopySettings() {
+    postToHost({ type: 'copySettings', id: account.id });
+  }
+
   function handleRenameKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') submitRename();
     if (e.key === 'Escape') cancelRename();
@@ -78,6 +83,7 @@
   let menuItems = $derived([
     { label: 'Rename', icon: '✏️', action: startRename },
     { label: 'Reveal Profile Folder', icon: '📂', action: handleReveal },
+    { label: 'Copy Settings into Profile', icon: '📋', action: handleCopySettings },
     { label: 'Remove', icon: '🗑️', danger: true, action: handleRemove },
   ]);
 </script>
@@ -89,7 +95,7 @@
   role="listitem"
   tabindex="0"
   onkeydown={handleCardKeydown}
-  aria-label="Switch to {account.email}"
+  aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
 >
   <div class="card-body">
     <Avatar email={account.email} size={32} />
@@ -120,9 +126,9 @@
       <button
         class="btn switch-btn"
         onclick={handleSwitch}
-        aria-label="Switch to {account.email}"
+        aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
       >
-        Switch
+        {getMode() === 'profile' ? 'Open' : 'Switch'}
       </button>
       <button
         class="btn icon-btn"

@@ -1,40 +1,33 @@
-import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
+import * as vscode from 'vscode';
+import { AccountStore } from '../accounts/AccountStore';
+import { AuthDetector } from '../accounts/AuthDetector';
+import { createAccountId, Snapshot } from '../accounts/types';
 import type { AccountMeta, ToHost, ToWebview } from '../shared/messages';
-
-/** Hard-coded fake accounts for Phase 2 round-trip testing. */
-const MOCK_ACCOUNTS: AccountMeta[] = [
-  {
-    id: 'acc-1',
-    email: 'saurabhduhariya2007@gmail.com',
-    label: 'Personal',
-    plan: 'Pro',
-    addedAt: Date.now() - 30 * 86_400_000,
-    lastUsedAt: Date.now() - 2 * 3_600_000,
-  },
-  {
-    id: 'acc-2',
-    email: 'saurabh@company.dev',
-    label: 'Work',
-    plan: 'Enterprise',
-    addedAt: Date.now() - 20 * 86_400_000,
-    lastUsedAt: Date.now() - 86_400_000,
-  },
-  {
-    id: 'acc-3',
-    email: 'freelance.saurabh@outlook.com',
-    addedAt: Date.now() - 10 * 86_400_000,
-    lastUsedAt: Date.now() - 5 * 86_400_000,
-  },
-];
-
-let currentActiveId = 'acc-1';
+import { Logger } from '../util/logger';
+import { StatusBar } from './StatusBar';
+import { SwitchEngine } from '../switch/SwitchEngine';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'agSwitchyard.panel';
   private view?: vscode.WebviewView;
 
-  constructor(private readonly ctx: vscode.ExtensionContext) {}
+  private pendingSnapshot?: Snapshot;
+  private lastDetectedHash?: string;
+  private lastSnapshotUpdateMap = new Map<string, number>();
+
+  constructor(
+    private readonly ctx: vscode.ExtensionContext,
+    private readonly store: AccountStore,
+    private readonly detector: AuthDetector | undefined,
+    private readonly logger: Logger,
+    private readonly statusBar: StatusBar,
+    private switchEngine?: SwitchEngine
+  ) {}
+
+  public setSwitchEngine(switchEngine: SwitchEngine): void {
+    this.switchEngine = switchEngine;
+  }
 
   public resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -44,87 +37,314 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.html(view.webview);
 
-    view.webview.onDidReceiveMessage((msg: ToHost) => {
-      switch (msg.type) {
-        case 'ready':
-          void this.push();
-          break;
+    view.webview.onDidReceiveMessage(async (msg: ToHost) => {
+      this.logger.info(`Received webview message: ${msg.type}`);
+      try {
+        switch (msg.type) {
+          case 'ready':
+            await this.detectAndRefresh();
+            await this.push();
+            break;
 
-        case 'switch':
-          void this.handleSwitch(msg.id);
-          break;
+          case 'saveDetected':
+            await this.handleSaveDetected();
+            break;
 
-        case 'add':
-          vscode.window.showInformationMessage(
-            'Switchyard: "Add Account" will be implemented in Phase 4.'
-          );
-          break;
+          case 'add':
+            await vscode.commands.executeCommand('switchyard.addAccount');
+            break;
 
-        case 'rename':
-          vscode.window.showInformationMessage(
-            `Switchyard: Renamed ${msg.id} → "${msg.label}" (mock)`
-          );
-          break;
+          case 'rename':
+            await this.handleRename(msg.id, msg.label);
+            break;
 
-        case 'remove':
-          vscode.window.showInformationMessage(
-            `Switchyard: Remove ${msg.id} (mock, not implemented yet)`
-          );
-          break;
+          case 'remove':
+            await this.handleRemove(msg.id);
+            break;
 
-        case 'openSettings':
-          void vscode.commands.executeCommand(
-            'workbench.action.openSettings',
-            'switchyard'
-          );
-          break;
+          case 'switch':
+            await this.handleSwitch(msg.id);
+            break;
 
-        case 'revealProfile':
-          vscode.window.showInformationMessage(
-            `Switchyard: Reveal profile for ${msg.id} (mock)`
-          );
-          break;
+          case 'dismissToast':
+            this.pendingSnapshot = undefined;
+            break;
+
+          case 'openSettings':
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'switchyard');
+            break;
+
+          case 'revealProfile':
+            await this.handleRevealProfile(msg.id);
+            break;
+
+          case 'copySettings':
+            await this.handleCopySettings(msg.id);
+            break;
+
+          case 'import':
+            await vscode.commands.executeCommand('switchyard.importAccount');
+            break;
+        }
+      } catch (err) {
+        this.logger.error('Failed to handle webview message', err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        await this.view?.webview.postMessage({ type: 'error', message: errorMsg });
       }
     });
+
+    // Immediately push current state to webview
+    void this.push().then(() => this.detectAndRefresh());
   }
 
-  /** Push state to webview. */
+  /**
+   * Pushes the current state of accounts, active ID, and masking preference to the webview.
+   */
   public async push(): Promise<void> {
+    const accounts = await this.store.list();
+    const activeId = await this.store.activeId();
+    const config = vscode.workspace.getConfiguration('switchyard');
+    const maskEmails = config.get<boolean>('maskEmails', false);
+    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'profile');
+
     const msg: ToWebview = {
       type: 'state',
-      accounts: MOCK_ACCOUNTS,
-      activeId: currentActiveId,
+      accounts,
+      activeId,
+      maskEmails,
+      mode,
     };
+
     await this.view?.webview.postMessage(msg);
+    this.statusBar.update(accounts, activeId, maskEmails);
+    void vscode.commands.executeCommand('setContext', 'switchyard.hasAccounts', accounts.length > 0);
   }
 
-  /** Return mock accounts for Quick Pick. */
-  public getAccounts(): AccountMeta[] {
-    return MOCK_ACCOUNTS;
+  /**
+   * Detects the active session in state.vscdb and refreshes state.
+   * If a saved account is detected, keeps its session fresh (rate limited to 60s).
+   * If an unsaved account is detected, triggers the new login toast.
+   */
+  public async detectAndRefresh(force = false): Promise<void> {
+    if (!this.detector) {
+      return;
+    }
+
+    try {
+      const result = await this.detector.detectActive();
+
+      if ('unsupported' in result) {
+        this.logger.debug('Active detection unsupported or signed out:', result.reason);
+        this.pendingSnapshot = undefined;
+        await this.push();
+        return;
+      }
+
+      const { identity, snapshot } = result;
+      const contentHash = crypto.createHash('sha256').update(JSON.stringify(snapshot.values)).digest('hex');
+
+      // Match detected account against store
+      let matched: AccountMeta | undefined;
+      if (identity.email) {
+        matched = await this.store.getByEmail(identity.email);
+      }
+      if (!matched) {
+        matched = await this.store.get(`fp-${identity.fingerprint}`);
+      }
+
+      if (matched) {
+        // Matched a saved account
+        this.pendingSnapshot = undefined;
+
+        const currentActive = await this.store.activeId();
+        if (currentActive !== matched.id) {
+          await this.store.setActive(matched.id);
+          this.logger.info(`Detected active account switched to: ${matched.email}`);
+        }
+
+        // Token rotation sync: update stored snapshot if changed and >= 60s elapsed
+        const lastUpdate = this.lastSnapshotUpdateMap.get(matched.id) || 0;
+        const now = Date.now();
+        if (contentHash !== this.lastDetectedHash && (now - lastUpdate >= 60_000 || force)) {
+          this.lastSnapshotUpdateMap.set(matched.id, now);
+          this.lastDetectedHash = contentHash;
+          await this.store.saveSnapshot(matched.id, snapshot);
+          this.logger.debug(`Synchronized rotated snapshot for ${matched.email}`);
+        }
+      } else {
+        // Unsaved account detected (first-run capture or new login)
+        this.pendingSnapshot = snapshot;
+        const emailDisplay = identity.email || `Account (${identity.fingerprint.slice(0, 6)})`;
+        const candidateId = identity.email ? createAccountId(identity.email) : `fp-${identity.fingerprint}`;
+
+        await this.view?.webview.postMessage({
+          type: 'toast',
+          message: `Save ${emailDisplay}?`,
+          accountId: candidateId,
+        });
+      }
+    } catch (err) {
+      this.logger.error('Error in detectAndRefresh:', err);
+    }
   }
 
-  public getActiveId(): string {
-    return currentActiveId;
-  }
+  /**
+   * Saves the detected unsaved session when the user clicks 'Save' on the toast.
+   */
+  public async handleSaveDetected(): Promise<void> {
+    this.logger.info('Handling saveDetected request...');
 
-  /** Simulate switching: show busy overlay for 2s, then update state. */
-  private async handleSwitch(id: string): Promise<void> {
-    const account = MOCK_ACCOUNTS.find((a) => a.id === id);
-    const label = account?.email ?? id;
+    if (!this.pendingSnapshot && this.detector) {
+      const activeCheck = await this.detector.detectActive();
+      if (!('unsupported' in activeCheck)) {
+        this.pendingSnapshot = activeCheck.snapshot;
+      }
+    }
 
-    const busyMsg: ToWebview = {
-      type: 'busy',
-      message: `Switching to ${label}…`,
-    };
-    await this.view?.webview.postMessage(busyMsg);
+    if (!this.pendingSnapshot) {
+      vscode.window.showWarningMessage('No active Google session found to save.');
+      await this.push();
+      return;
+    }
 
-    // Simulate delay
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    currentActiveId = id;
+    const contentHash = crypto.createHash('sha256').update(JSON.stringify(this.pendingSnapshot.values)).digest('hex');
+    const meta = await this.store.upsertFromSnapshot(this.pendingSnapshot);
+    await this.store.setActive(meta.id);
+    this.lastDetectedHash = contentHash;
+    this.lastSnapshotUpdateMap.set(meta.id, Date.now());
+    this.pendingSnapshot = undefined;
     await this.push();
 
-    vscode.window.showInformationMessage(`Switchyard: Switched to ${label} (mock)`);
+    this.logger.info(`Successfully saved account: ${meta.email}`);
+    vscode.window.showInformationMessage(`Saved account ${meta.email}`);
+  }
+
+  /**
+   * Prompts user for a new label and renames the account.
+   */
+  public async handleRename(id: string, newLabel?: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    let label = newLabel;
+    if (label === undefined || label === '') {
+      label = await vscode.window.showInputBox({
+        title: `Rename Account: ${account.email}`,
+        prompt: 'Enter a display label for this account',
+        value: account.label || '',
+        placeHolder: 'e.g. Work, Personal, Client A',
+      });
+      if (label === undefined) return; // User cancelled
+    }
+
+    await this.store.rename(id, label);
+    await this.push();
+  }
+
+  /**
+   * Shows a confirmation modal dialog before deleting the account and secret credentials.
+   */
+  public async handleRemove(id: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    const answer = await vscode.window.showWarningMessage(
+      `Remove account ${account.email}? This will delete the saved session from your secure credentials.`,
+      { modal: true },
+      'Remove'
+    );
+
+    if (answer === 'Remove') {
+      await this.store.remove(id);
+      await this.detectAndRefresh(true);
+      await this.push();
+      vscode.window.showInformationMessage(`Removed account ${account.email}`);
+    }
+  }
+
+  /**
+   * Handles switching to an account.
+   */
+  public async handleSwitch(id: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    if (!this.switchEngine) {
+      vscode.window.showErrorMessage('Switchyard: Switch engine is not initialized.');
+      return;
+    }
+
+    const config = vscode.workspace.getConfiguration('switchyard');
+    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'profile');
+
+    if (mode === 'tokenSwap') {
+      const activeId = await this.store.activeId();
+      if (id === activeId) {
+        vscode.window.showInformationMessage(`Account ${account.email} is already active.`);
+        return;
+      }
+      await this.view?.webview.postMessage({
+        type: 'busy',
+        message: `Switching to ${account.email}…`,
+      });
+    }
+
+    const result = await this.switchEngine.switchTo(id);
+    if (!result.ok && result.error) {
+      await this.view?.webview.postMessage({
+        type: 'error',
+        message: result.error,
+      });
+      vscode.window.showErrorMessage(`Switchyard: ${result.error}`);
+    } else {
+      await this.push();
+    }
+  }
+
+  public async handleRevealProfile(id: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    if (this.switchEngine?.revealProfile) {
+      await this.switchEngine.revealProfile(id);
+    } else {
+      vscode.window.showInformationMessage(`Profile folder for ${account.email}`);
+    }
+  }
+
+  public async handleCopySettings(id: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    const answer = await vscode.window.showWarningMessage(
+      `Copy settings.json, keybindings.json, and snippets from this window into the isolated profile for ${account.email}? Existing configuration in that profile will be overwritten.`,
+      { modal: true },
+      'Copy Settings',
+      'Cancel'
+    );
+
+    if (answer === 'Copy Settings') {
+      if (this.switchEngine?.copySettingsToProfile) {
+        const result = await this.switchEngine.copySettingsToProfile(id);
+        if (result.ok) {
+          vscode.window.showInformationMessage(
+            `Successfully copied ${result.count} configuration item(s) to ${account.email}'s profile.`
+          );
+        } else {
+          vscode.window.showErrorMessage(
+            `Failed to copy settings: ${result.error || 'Unknown error'}`
+          );
+        }
+      }
+    }
+  }
+
+  public async getAccounts(): Promise<AccountMeta[]> {
+    return this.store.list();
+  }
+
+  public async getActiveId(): Promise<string | undefined> {
+    return this.store.activeId();
   }
 
   private html(webview: vscode.Webview): string {

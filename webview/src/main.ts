@@ -1,11 +1,11 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
+import { getVsCodeApi } from './lib/vscode';
 
 // In standalone dev mode, load the mock host
 async function init() {
-  try {
-    acquireVsCodeApi();
-  } catch {
+  const vscode = getVsCodeApi();
+  if (!vscode) {
     // Not in VS Code — load mock host
     const { initMockHost } = await import('./lib/mockHost');
     initMockHost();

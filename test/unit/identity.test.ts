@@ -116,4 +116,18 @@ describe('accounts/identity', () => {
     expect(id1).toBe(id2);
     expect(id1).toHaveLength(16);
   });
+
+  it('extracts email embedded in raw binary buffer with base64 chunks', () => {
+    // Simulate Google internal protobuf containing an embedded base64 payload
+    const innerText = 'kkpncc: kkpncc8831@gmail.com';
+    const b64 = Buffer.from(innerText).toString('base64');
+    const outerBinary = Buffer.concat([
+      Buffer.from([0x01, 0x02, 0x03]),
+      Buffer.from(b64, 'ascii'),
+      Buffer.from([0x04, 0x05, 0x06]),
+    ]);
+
+    const email = extractEmailFromBuffer(outerBinary);
+    expect(email).toBe('kkpncc8831@gmail.com');
+  });
 });
