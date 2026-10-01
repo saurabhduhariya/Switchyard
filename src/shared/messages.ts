@@ -13,6 +13,7 @@ export type AccountMeta = {
   plan?: string; // optional, from userStatus
   addedAt: number;
   lastUsedAt?: number;
+  fingerprint?: string;
 };
 
 export type ToWebview =

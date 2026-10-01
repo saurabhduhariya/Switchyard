@@ -13,3 +13,5 @@ eslint.config.mjs
 .prettierrc
 .editorconfig
 .gitignore
+IMPLEMENTATION_PLAN.md
+.github/**
