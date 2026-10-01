@@ -7,3 +7,5 @@ spike/
 *.vscdb
 *.vscdb.backup
 .DS_Store
+README.md
+IMPLEMENTATION_PLAN.md
