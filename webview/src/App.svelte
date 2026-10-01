@@ -1,39 +1,91 @@
 <script lang="ts">
-  interface VsCodeApi {
-    postMessage(msg: unknown): void;
-    getState(): unknown;
-    setState(state: unknown): void;
-  }
+  import Header from './components/Header.svelte';
+  import Footer from './components/Footer.svelte';
+  import ActiveCard from './components/ActiveCard.svelte';
+  import AccountCard from './components/AccountCard.svelte';
+  import EmptyState from './components/EmptyState.svelte';
+  import SwitchOverlay from './components/SwitchOverlay.svelte';
+  import ErrorBanner from './components/ErrorBanner.svelte';
+  import Toast from './components/Toast.svelte';
+  import {
+    getAccounts,
+    getActiveAccount,
+    getOtherAccounts,
+    getActiveId,
+    isBusy,
+    getBusyMessage,
+    getError,
+    getMaskEmails,
+    getToast,
+    getToastAccountId,
+    isLoading,
+    handleMessage,
+  } from './stores/app.svelte';
+  import { getVsCodeApi, postToHost } from './lib/vscode';
 
-  declare function acquireVsCodeApi(): VsCodeApi;
+  // Wire up message listener
+  const vscode = getVsCodeApi();
 
-  let vscode: VsCodeApi | undefined;
-  try {
-    vscode = acquireVsCodeApi();
-  } catch {
-    // running in standalone browser dev mode
-  }
+  window.addEventListener('message', (e) => {
+    if (e.data?.type) {
+      handleMessage(e.data);
+    }
+  });
 
+  // Tell the host we're ready
   if (vscode) {
     vscode.postMessage({ type: 'ready' });
+  } else {
+    postToHost({ type: 'ready' });
   }
 </script>
 
 <main class="container">
-  <div class="header">
-    <div class="brand">
-      <span class="badge">Switchyard</span>
-    </div>
-  </div>
+  <Header />
+
+  {#if isBusy()}
+    <SwitchOverlay message={getBusyMessage()} />
+  {/if}
+
+  {#if getError()}
+    <ErrorBanner message={getError()} />
+  {/if}
+
+  {#if getToast()}
+    <Toast message={getToast()} accountId={getToastAccountId()} />
+  {/if}
 
   <div class="content">
-    <h2>Hello Switchyard</h2>
-    <p class="subtitle">Multi-Account Switcher for Google Antigravity</p>
-    <div class="status-card">
-      <span class="status-indicator"></span>
-      <span>Scaffold active · Phase 1 ready</span>
-    </div>
+    {#if isLoading()}
+      <div class="loading" aria-label="Loading accounts">
+        <div class="loading-shimmer"></div>
+        <div class="loading-shimmer short"></div>
+      </div>
+    {:else if getAccounts().length === 0}
+      <EmptyState />
+    {:else}
+      <ul class="account-list" aria-label="Accounts">
+        {#if getActiveAccount()}
+          <li>
+            <ActiveCard account={getActiveAccount()!} masked={getMaskEmails()} />
+          </li>
+        {/if}
+
+        {#if getOtherAccounts().length > 0}
+          <li class="section-label">Other Accounts</li>
+          {#each getOtherAccounts() as account (account.id)}
+            <li>
+              <AccountCard {account} masked={getMaskEmails()} />
+            </li>
+          {/each}
+        {/if}
+      </ul>
+    {/if}
   </div>
+
+  {#if !isLoading() && getAccounts().length > 0}
+    <Footer />
+  {/if}
 </main>
 
 <style>
@@ -50,70 +102,106 @@
     font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
     font-size: var(--vscode-font-size, 13px);
     user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :global(*) {
+    box-sizing: border-box;
+  }
+
+  :global(:focus-visible) {
+    outline: 1px solid var(--vscode-focusBorder, #007fd4);
+    outline-offset: 1px;
   }
 
   .container {
     padding: 12px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-  }
-
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
-  }
-
-  .badge {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--vscode-badge-foreground, #ffffff);
-    background: var(--vscode-badge-background, #4d4d4d);
-    padding: 2px 6px;
-    border-radius: 4px;
+    gap: 10px;
+    height: 100vh;
   }
 
   .content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .account-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
   }
 
-  h2 {
-    margin: 0;
-    font-size: 14px;
+  .section-label {
+    font-size: 10px;
     font-weight: 600;
-    color: var(--vscode-foreground, #ffffff);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--vscode-descriptionForeground, #888);
+    padding: 8px 0 2px;
   }
 
-  .subtitle {
-    margin: 0;
-    font-size: 12px;
-    color: var(--vscode-descriptionForeground, #888888);
-  }
-
-  .status-card {
-    margin-top: 8px;
-    padding: 10px;
-    border-radius: var(--radius);
-    background: var(--vscode-editor-background, #252526);
-    border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+  /* Loading shimmer */
+  .loading {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 0;
   }
 
-  .status-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--vscode-testing-iconPassed, #4ec9b0);
-    box-shadow: 0 0 6px var(--vscode-testing-iconPassed, #4ec9b0);
+  .loading-shimmer {
+    height: 52px;
+    border-radius: var(--radius);
+    background: linear-gradient(
+      90deg,
+      var(--vscode-editor-background, #252526) 25%,
+      color-mix(in srgb, var(--vscode-editor-background, #252526), var(--vscode-foreground, #ccc) 8%) 50%,
+      var(--vscode-editor-background, #252526) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  .loading-shimmer.short {
+    height: 44px;
+    width: 85%;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* Scrollbar theming */
+  .content::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .content::-webkit-scrollbar-thumb {
+    background: var(--vscode-scrollbarSlider-background, rgba(255, 255, 255, 0.15));
+    border-radius: 3px;
+  }
+
+  .content::-webkit-scrollbar-thumb:hover {
+    background: var(--vscode-scrollbarSlider-hoverBackground, rgba(255, 255, 255, 0.25));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading-shimmer {
+      animation: none;
+    }
   }
 </style>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Switchyard – Dev</title>
+  <style>
+    /* Set default dark theme variables for standalone dev */
+    :root {
+      --vscode-foreground: #cccccc;
+      --vscode-sideBar-background: #1e1e1e;
+      --vscode-editor-background: #252526;
+      --vscode-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --vscode-font-size: 13px;
+      --vscode-widget-border: rgba(255, 255, 255, 0.08);
+      --vscode-badge-background: #4d4d4d;
+      --vscode-badge-foreground: #ffffff;
+      --vscode-button-background: #0e639c;
+      --vscode-button-foreground: #ffffff;
+      --vscode-button-hoverBackground: #1177bb;
+      --vscode-focusBorder: #007fd4;
+      --vscode-descriptionForeground: #888888;
+      --vscode-list-hoverBackground: #2a2d2e;
+      --vscode-textLink-foreground: #3794ff;
+      --vscode-errorForeground: #f48771;
+      --vscode-testing-iconPassed: #4ec9b0;
+      --vscode-menu-background: #2d2d2d;
+      --vscode-menu-foreground: #cccccc;
+      --vscode-menu-border: rgba(255, 255, 255, 0.12);
+      --vscode-menu-selectionBackground: #094771;
+      --vscode-menu-selectionForeground: #ffffff;
+      --vscode-input-background: #3c3c3c;
+      --vscode-input-foreground: #cccccc;
+      --vscode-inputBorder: #3c3c3c;
+      --vscode-toolbar-hoverBackground: rgba(255, 255, 255, 0.1);
+      --vscode-scrollbarSlider-background: rgba(255, 255, 255, 0.15);
+      --vscode-scrollbarSlider-hoverBackground: rgba(255, 255, 255, 0.25);
+    }
+    /* Constrain to sidebar width for realistic preview */
+    body {
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      background: #111;
+    }
+    #app {
+      width: 320px;
+      min-height: 100vh;
+      background: var(--vscode-sideBar-background);
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
