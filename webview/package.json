@@ -1,0 +1,19 @@
+{
+  "name": "ag-switchyard-webview",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@vscode/codicons": "^0.0.46-24",
+    "svelte": "^5.57.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2"
+  }
+}

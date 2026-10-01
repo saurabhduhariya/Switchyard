@@ -1,0 +1,9 @@
+node_modules/
+dist/
+out/
+*.vsix
+spike/
+.vscode-test/
+*.vscdb
+*.vscdb.backup
+.DS_Store

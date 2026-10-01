@@ -1,0 +1,15 @@
+.vscode/**
+.vscode-test/**
+src/**
+webview/**
+test/**
+spike/**
+docs/**
+**/*.map
+node_modules/**
+esbuild.mjs
+tsconfig.json
+eslint.config.mjs
+.prettierrc
+.editorconfig
+.gitignore

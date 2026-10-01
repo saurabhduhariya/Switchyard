@@ -1,0 +1,116 @@
+{
+  "name": "ag-switchyard",
+  "displayName": "Switchyard – Account Switcher for Antigravity",
+  "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
+  "publisher": "saurabh",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/saurabh/Switchyard"
+  },
+  "engines": {
+    "vscode": "^1.107.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agSwitchyard",
+          "title": "Accounts",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agSwitchyard": [
+        {
+          "type": "webview",
+          "id": "agSwitchyard.panel",
+          "name": "Accounts"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "switchyard.addAccount",
+        "title": "Switchyard: Add Account"
+      },
+      {
+        "command": "switchyard.switchAccount",
+        "title": "Switchyard: Switch Account…"
+      },
+      {
+        "command": "switchyard.refresh",
+        "title": "Switchyard: Refresh"
+      },
+      {
+        "command": "switchyard.restoreBackup",
+        "title": "Switchyard: Restore Last Backup"
+      }
+    ],
+    "configuration": {
+      "title": "Switchyard",
+      "properties": {
+        "switchyard.mode": {
+          "type": "string",
+          "default": "profile",
+          "enum": [
+            "profile",
+            "tokenSwap"
+          ],
+          "description": "profile = isolated windows (safest). tokenSwap = restart IDE and swap saved session (experimental)."
+        },
+        "switchyard.confirmBeforeSwitch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Ask for confirmation before restarting the IDE when switching accounts in tokenSwap mode."
+        },
+        "switchyard.backupRetention": {
+          "type": "number",
+          "default": 5,
+          "description": "Number of state.vscdb backups to retain."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:ext": "node esbuild.mjs",
+    "build:web": "npm --prefix webview run build",
+    "build": "run-s build:ext build:web",
+    "watch:ext": "node esbuild.mjs --watch",
+    "watch:web": "npm --prefix webview run build -- --watch",
+    "watch": "run-p watch:ext watch:web",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:int": "node ./out/test/integration/runTests.js",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "@types/sql.js": "^1.4.11",
+    "@types/vscode": "^1.107.0",
+    "@typescript-eslint/eslint-plugin": "^8.71.0",
+    "@typescript-eslint/parser": "^8.71.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.11.0",
+    "npm-run-all2": "^8.0.4",
+    "ovsx": "^1.1.1",
+    "prettier": "^3.9.9",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.2"
+  }
+}
