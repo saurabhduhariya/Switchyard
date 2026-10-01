@@ -275,8 +275,8 @@ export function parseSnapshot(
   let userStatus: string | undefined;
 
   if (typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
-    oauth = valuesOrOauth[KEYS.oauth] || valuesOrOauth[KEYS.legacyInit];
-    userStatus = valuesOrOauth[KEYS.userStatus];
+    oauth = valuesOrOauth[KEYS.oauth] || valuesOrOauth[KEYS.legacyInit] || valuesOrOauth['oauth'];
+    userStatus = valuesOrOauth[KEYS.userStatus] || valuesOrOauth['userStatus'];
   } else {
     oauth = valuesOrOauth;
     userStatus = userStatusValue;

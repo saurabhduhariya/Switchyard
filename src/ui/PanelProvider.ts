@@ -15,6 +15,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private pendingSnapshot?: Snapshot;
   private lastDetectedHash?: string;
   private lastSnapshotUpdateMap = new Map<string, number>();
+  private _detecting = false;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -43,7 +44,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         switch (msg.type) {
           case 'ready':
             await this.detectAndRefresh();
-            await this.push();
             break;
 
           case 'saveDetected':
@@ -67,6 +67,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             break;
 
           case 'dismissToast':
+            // Only clear pendingSnapshot on explicit dismiss (NOT on save)
             this.pendingSnapshot = undefined;
             break;
 
@@ -93,8 +94,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Immediately push current state to webview
-    void this.push().then(() => this.detectAndRefresh());
+    // Immediately detect and push state (detectAndRefresh now always calls push)
+    void this.detectAndRefresh();
   }
 
   /**
@@ -124,13 +125,20 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    * Detects the active session in state.vscdb and refreshes state.
    * If a saved account is detected, keeps its session fresh (rate limited to 60s).
    * If an unsaved account is detected, triggers the new login toast.
+   * ALWAYS pushes updated state to the webview at the end.
    */
   public async detectAndRefresh(force = false): Promise<void> {
-    if (!this.detector) {
+    if (this._detecting) {
       return;
     }
+    this._detecting = true;
 
     try {
+      if (!this.detector) {
+        await this.push();
+        return;
+      }
+
       const result = await this.detector.detectActive();
 
       if ('unsupported' in result) {
@@ -153,7 +161,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
 
       if (matched) {
-        // Matched a saved account
+        // Matched a saved account — clear any pending toast
         this.pendingSnapshot = undefined;
 
         const currentActive = await this.store.activeId();
@@ -183,8 +191,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           accountId: candidateId,
         });
       }
+
+      // Always push updated state to the webview
+      await this.push();
     } catch (err) {
       this.logger.error('Error in detectAndRefresh:', err);
+      // Still push state even on error so the webview isn't stuck in loading
+      await this.push();
+    } finally {
+      this._detecting = false;
     }
   }
 
@@ -257,7 +272,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     if (answer === 'Remove') {
       await this.store.remove(id);
       await this.detectAndRefresh(true);
-      await this.push();
       vscode.window.showInformationMessage(`Removed account ${account.email}`);
     }
   }
@@ -274,8 +288,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    const config = vscode.workspace.getConfiguration('switchyard');
-    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'profile');
+    const mode = this.switchEngine.mode;
 
     if (mode === 'tokenSwap') {
       const activeId = await this.store.activeId();
@@ -290,12 +303,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     }
 
     const result = await this.switchEngine.switchTo(id);
-    if (!result.ok && result.error) {
-      await this.view?.webview.postMessage({
-        type: 'error',
-        message: result.error,
-      });
-      vscode.window.showErrorMessage(`Switchyard: ${result.error}`);
+    if (!result.ok) {
+      if (result.error) {
+        await this.view?.webview.postMessage({
+          type: 'error',
+          message: result.error,
+        });
+        vscode.window.showErrorMessage(`Switchyard: ${result.error}`);
+      }
+      await this.push();
     } else {
       await this.push();
     }

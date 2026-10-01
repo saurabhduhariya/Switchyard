@@ -140,12 +140,23 @@ export class ProfileEngine implements SwitchEngine {
       `Launching profile window for ${account.email} [dir=${profileDir}, exe=${exe}]`
     );
 
-    // 6. Spawn detached IDE process
+    // 6. Spawn detached IDE process with clean environment
     try {
+      const cleanEnv: Record<string, string | undefined> = { ...process.env };
+      for (const key of Object.keys(cleanEnv)) {
+        if (
+          key.startsWith('VSCODE_') ||
+          key.startsWith('ELECTRON_') ||
+          key.startsWith('ANTIGRAVITY_')
+        ) {
+          delete cleanEnv[key];
+        }
+      }
+
       const child = this.spawner(exe, args, {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env },
+        env: cleanEnv as NodeJS.ProcessEnv,
       });
 
       if (child.pid) {

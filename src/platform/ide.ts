@@ -54,17 +54,7 @@ export function findExecutable(customPath?: string): string {
     return process.env.APPIMAGE;
   }
 
-  // 3. Current process executable if running inside Antigravity/Electron
-  const execPath = process.execPath;
-  const isNodeBinary = path.basename(execPath).toLowerCase().startsWith('node');
-  if (!isNodeBinary && fs.existsSync(execPath)) {
-    const lower = execPath.toLowerCase();
-    if (lower.includes('antigravity') || lower.includes('code') || lower.includes('electron')) {
-      return execPath;
-    }
-  }
-
-  // 4. Platform-specific known installation candidates
+  // 3. Platform-specific known installation candidates (prefer launcher scripts)
   const platform = process.platform;
   const candidates: string[] = [];
 
@@ -73,7 +63,6 @@ export function findExecutable(customPath?: string): string {
       '/usr/bin/antigravity-ide',
       '/usr/local/bin/antigravity-ide',
       '/opt/antigravity-ide/bin/antigravity-ide',
-      '/opt/antigravity-ide/antigravity-ide',
       path.join(os.homedir(), '.local/bin/antigravity-ide')
     );
   } else if (platform === 'darwin') {
@@ -102,6 +91,16 @@ export function findExecutable(customPath?: string): string {
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return candidate;
+    }
+  }
+
+  // 4. Current process executable if running inside Antigravity/Electron
+  const execPath = process.execPath;
+  const isNodeBinary = path.basename(execPath).toLowerCase().startsWith('node');
+  if (!isNodeBinary && fs.existsSync(execPath)) {
+    const lower = execPath.toLowerCase();
+    if (lower.includes('antigravity') || lower.includes('code') || lower.includes('electron')) {
+      return execPath;
     }
   }
 

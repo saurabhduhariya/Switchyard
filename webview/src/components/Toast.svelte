@@ -14,10 +14,14 @@
     if (accountId) {
       postToHost({ type: 'saveDetected', id: accountId });
     }
-    dismiss();
+    // Clear the toast locally — do NOT send dismissToast to the host
+    // because that would clear pendingSnapshot before handleSaveDetected runs
+    visible = false;
+    setTimeout(() => clearToast(), 200);
   }
 
   function dismiss() {
+    postToHost({ type: 'dismissToast' });
     visible = false;
     setTimeout(() => clearToast(), 200);
   }

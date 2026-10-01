@@ -1,9 +1,56 @@
+import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import initSqlJs, { Database, SqlJsStatic } from 'sql.js';
 
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
+
+/**
+ * Checkpoints any pending WAL changes in a temporary database copy into the main file.
+ * This ensures in-flight transactions written while the IDE is running are visible to sql.js.
+ */
+function tryCheckpointWal(tempDbPath: string): void {
+  const walPath = `${tempDbPath}-wal`;
+  if (!fs.existsSync(walPath)) {
+    return;
+  }
+
+  // 1. Try native sqlite3 CLI if installed
+  try {
+    child_process.execFileSync('sqlite3', [tempDbPath, 'PRAGMA wal_checkpoint(TRUNCATE);'], {
+      timeout: 3000,
+      stdio: 'ignore',
+    });
+    return;
+  } catch {
+    // sqlite3 CLI not available or failed
+  }
+
+  // 2. Try python3 with standard library sqlite3
+  try {
+    const pyScript = `import sqlite3; con = sqlite3.connect(r'''${tempDbPath}'''); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()`;
+    child_process.execFileSync('python3', ['-c', pyScript], {
+      timeout: 3000,
+      stdio: 'ignore',
+    });
+    return;
+  } catch {
+    // python3 not available or failed
+  }
+
+  // 3. Try python (e.g. Windows)
+  try {
+    const pyScript = `import sqlite3; con = sqlite3.connect(r'''${tempDbPath}'''); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()`;
+    child_process.execFileSync('python', ['-c', pyScript], {
+      timeout: 3000,
+      stdio: 'ignore',
+    });
+    return;
+  } catch {
+    // Fallback: proceed without checkpoint
+  }
+}
 
 /**
  * Returns a cached singleton instance of SqlJsStatic.
@@ -65,6 +112,9 @@ export async function readKeys(dbPath: string, keys: string[]): Promise<Record<s
         // ignore
       }
     }
+
+    // Checkpoint any WAL entries into tempDb so sql.js sees the live commits
+    tryCheckpointWal(tempDb);
 
     const SQL = await getSqlJs();
     const data = fs.readFileSync(tempDb);

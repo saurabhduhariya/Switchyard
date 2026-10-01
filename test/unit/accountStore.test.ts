@@ -217,4 +217,44 @@ describe('accounts/AccountStore', () => {
     const accounts = await store.list();
     expect(accounts.length).toBe(10);
   });
+
+  it('saveSnapshot synchronizes account fingerprint and plan in metadata', async () => {
+    const initialSnap = {
+      values: makeSyntheticSessionEntries({ email: 'rotate@test.com', plan: 'AI Pro' }),
+      capturedAt: 100,
+    };
+    const meta = await store.upsertFromSnapshot(initialSnap);
+    const initialFp = meta.fingerprint;
+
+    // Simulate rotation with new auth value
+    const rotatedSnap = {
+      values: makeSyntheticSessionEntries({
+        email: 'rotate@test.com',
+        plan: 'Gemini Advanced',
+        token: 'rotated-token-99',
+      }),
+      capturedAt: 200,
+    };
+    await store.saveSnapshot(meta.id, rotatedSnap);
+
+    const updated = await store.get(meta.id);
+    expect(updated).toBeDefined();
+    expect(updated!.plan).toBe('Gemini Advanced');
+    // Fingerprint must be updated and non-empty
+    expect(updated!.fingerprint).toBeDefined();
+    expect(updated!.fingerprint).not.toBe(initialFp);
+  });
+
+  it('updateMeta modifies arbitrary metadata fields safely', async () => {
+    const snap = {
+      values: makeSyntheticSessionEntries({ email: 'updatemeta@test.com' }),
+      capturedAt: 100,
+    };
+    const meta = await store.upsertFromSnapshot(snap);
+
+    await store.updateMeta(meta.id, { label: 'Updated Label', fingerprint: 'custom-fp-99' });
+    const updated = await store.get(meta.id);
+    expect(updated?.label).toBe('Updated Label');
+    expect(updated?.fingerprint).toBe('custom-fp-99');
+  });
 });

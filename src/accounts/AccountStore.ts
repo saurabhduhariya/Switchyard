@@ -114,6 +114,32 @@ export class AccountStore {
     return this.mutex.runExclusive(async () => {
       const secretKey = `${SECRET_PREFIX}${id}`;
       await this.secrets.store(secretKey, JSON.stringify(snapshot));
+
+      const identity = parseSnapshot(snapshot.values);
+      const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
+      const idx = accounts.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        accounts[idx] = {
+          ...accounts[idx],
+          fingerprint: identity.fingerprint,
+          plan: identity.plan || accounts[idx].plan,
+        };
+        await this.state.update(ACCOUNTS_STATE_KEY, accounts);
+      }
+    });
+  }
+
+  /**
+   * Updates metadata fields for an existing account.
+   */
+  async updateMeta(id: string, partial: Partial<AccountMeta>): Promise<void> {
+    return this.mutex.runExclusive(async () => {
+      const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
+      const idx = accounts.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        accounts[idx] = { ...accounts[idx], ...partial };
+        await this.state.update(ACCOUNTS_STATE_KEY, accounts);
+      }
     });
   }
 

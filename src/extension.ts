@@ -12,6 +12,7 @@ import { PanelProvider } from './ui/PanelProvider';
 import { StatusBar } from './ui/StatusBar';
 import { Logger } from './util/logger';
 import { createSwitchEngine } from './switch/SwitchEngine';
+import { reconcilePendingSwitch } from './switch/reconcile';
 
 let channel: vscode.OutputChannel | undefined;
 
@@ -34,25 +35,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     state: context.globalState,
   });
 
-  const mode = vscode.workspace.getConfiguration('switchyard').get<'profile' | 'tokenSwap'>('mode', 'profile');
+  const detector = dbPath ? new AuthDetector(dbPath) : undefined;
+
+  const mode = vscode.workspace
+    .getConfiguration('switchyard')
+    .get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+
   const switchEngine = createSwitchEngine(mode, {
     store,
     logger,
     globalStorageUri: context.globalStorageUri,
     extensionUri: context.extensionUri,
     memento: context.globalState,
+    dbPath,
+    detector,
   });
 
-  const detector = dbPath ? new AuthDetector(dbPath) : undefined;
   const statusBar = new StatusBar();
   const panelProvider = new PanelProvider(context, store, detector, logger, statusBar, switchEngine);
+
+  // 2b. Reconcile any pending switch from a previous IDE quit/restart
+  void reconcilePendingSwitch(context.globalState, store, logger);
 
   // 3. Register Webview Provider & Status Bar
   context.subscriptions.push(
     channel,
     statusBar,
     vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
-      webviewOptions: { retainContextWhenHidden: false },
+      webviewOptions: { retainContextWhenHidden: true },
     })
   );
 
@@ -90,6 +100,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  // 5b. Authentication Sessions Change Listener (re-detect when user logs in/out in the IDE)
+  context.subscriptions.push(
+    vscode.authentication.onDidChangeSessions(() => {
+      logger.info('Authentication sessions changed; triggering detectAndRefresh');
+      void panelProvider.detectAndRefresh();
+    })
+  );
+
+  // 5c. Periodic Detection Polling (every 5 seconds) to catch live logins/logouts automatically
+  const pollTimer = setInterval(() => {
+    void panelProvider.detectAndRefresh();
+  }, 5000);
+  context.subscriptions.push({
+    dispose: () => clearInterval(pollTimer),
+  });
+
   // 6. Settings Change Listener (e.g. switchyard.maskEmails, switchyard.mode)
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -99,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ) {
         const currentMode = vscode.workspace
           .getConfiguration('switchyard')
-          .get<'profile' | 'tokenSwap'>('mode', 'profile');
+          .get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
         panelProvider.setSwitchEngine(
           createSwitchEngine(currentMode, {
             store,
@@ -107,6 +133,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             globalStorageUri: context.globalStorageUri,
             extensionUri: context.extensionUri,
             memento: context.globalState,
+            dbPath,
+            detector,
           })
         );
         void panelProvider.push();
@@ -203,7 +231,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // switchyard.refresh
     vscode.commands.registerCommand('switchyard.refresh', async () => {
       await panelProvider.detectAndRefresh(true);
-      await panelProvider.push();
       vscode.window.showInformationMessage('Switchyard: Refreshed accounts and active state.');
     }),
 
@@ -321,7 +348,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   // 8. Initial Detection & Sync
-  void panelProvider.detectAndRefresh().then(() => panelProvider.push());
+  // detectAndRefresh is also triggered by resolveWebviewView when the panel appears,
+  // but we call it here too for activation-time detection before the panel is shown.
+  void panelProvider.detectAndRefresh();
 }
 
 export function deactivate(): void {

@@ -105,9 +105,10 @@ export function makeSyntheticUserStatus(options: {
 export function makeSyntheticSessionEntries(options: {
   email: string;
   plan?: string;
+  token?: string;
 }): Record<string, string> {
   return {
-    [KEYS.oauth]: makeSyntheticOAuthToken({ email: options.email }),
+    [KEYS.oauth]: makeSyntheticOAuthToken({ email: options.email, token: options.token }),
     [KEYS.userStatus]: makeSyntheticUserStatus({ email: options.email, plan: options.plan }),
     [KEYS.modelCredits]: Buffer.from('synthetic-model-credits').toString('base64'),
     [KEYS.profileUrl]: 'https://example.com/avatar.png',

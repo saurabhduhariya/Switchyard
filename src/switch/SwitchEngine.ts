@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
+import { AuthDetector } from '../accounts/AuthDetector';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
 import { Logger } from '../util/logger';
 import { ProfileEngine } from './ProfileEngine';
+import { TokenSwapEngine } from './TokenSwapEngine';
 
 export interface SwitchResult {
   ok: boolean;
@@ -34,15 +36,16 @@ export interface SwitchEngineDeps {
   globalStorageUri: vscode.Uri;
   extensionUri?: vscode.Uri;
   memento: MementoLike;
+  dbPath?: string;
+  detector?: AuthDetector;
 }
 
 export function createSwitchEngine(
   mode: 'profile' | 'tokenSwap',
   deps: SwitchEngineDeps
 ): SwitchEngine {
-  if (mode === 'profile') {
-    return new ProfileEngine(deps);
+  if (mode === 'tokenSwap') {
+    return new TokenSwapEngine(deps);
   }
-  // TokenSwapEngine will be implemented in Phase 6
-  throw new Error(`Mode "${mode}" will be available in Phase 6. Falling back to Profile mode.`);
+  return new ProfileEngine(deps);
 }
