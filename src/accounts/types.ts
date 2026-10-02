@@ -5,6 +5,22 @@ export interface Snapshot {
   capturedAt: number;
 }
 
+export interface ModelQuotaGroup {
+  name: string; // "Gemini" | "Claude + GPT"
+  weeklyRemaining?: number; // percentage (e.g. 76.42)
+  weeklyResetTime?: string; // ISO string e.g. "2026-10-02T14:36:41Z"
+  rolling5hRemaining?: number;
+  rolling5hResetTime?: string;
+}
+
+export interface AccountQuotaSummary {
+  tierName: string; // e.g. "Google AI Pro Quota"
+  gemini: ModelQuotaGroup;
+  claudeGpt: ModelQuotaGroup;
+  updatedAt: number; // epoch ms
+  source: 'live' | 'cache' | 'vscdb';
+}
+
 export interface AccountMeta {
   id: string; // sha256(email.toLowerCase()).slice(0, 16)
   email: string;
@@ -13,6 +29,8 @@ export interface AccountMeta {
   addedAt: number;
   lastUsedAt?: number;
   fingerprint: string;
+  pinned?: boolean;
+  quota?: AccountQuotaSummary;
 }
 
 export interface AccountIdentity {

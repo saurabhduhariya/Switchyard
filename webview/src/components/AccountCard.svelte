@@ -1,9 +1,10 @@
 <script lang="ts">
   import type { AccountMeta } from '../../../src/shared/messages';
   import Avatar from './Avatar.svelte';
+  import QuotaBoxes from './QuotaBoxes.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import { maskEmail } from '../lib/maskEmail';
-  import { timeAgo } from '../lib/timeAgo';
+  import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode } from '../stores/app.svelte';
 
@@ -21,7 +22,9 @@
   let renameInput: HTMLInputElement | undefined = $state();
 
   let displayEmail = $derived(masked ? maskEmail(account.email) : account.email);
-  let lastUsed = $derived(timeAgo(account.lastUsedAt));
+  let username = $derived(account.label || account.email.split('@')[0]);
+  let tierName = $derived(account.quota?.tierName || account.plan || 'Antigravity Quota');
+  let age = $derived(formatCompactAge(account.quota?.updatedAt || account.lastUsedAt || account.addedAt));
 
   function handleSwitch() {
     if (disabled) return;
@@ -31,7 +34,6 @@
   function startRename() {
     renameValue = account.label ?? '';
     renaming = true;
-    // Focus will be handled by the $effect below
   }
 
   $effect(() => {
@@ -109,8 +111,9 @@
   onkeydown={handleCardKeydown}
   aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
 >
-  <div class="card-body">
-    <Avatar email={account.email} size={32} />
+  <!-- Top Profile Row -->
+  <div class="card-header">
+    <Avatar email={account.email} size={36} />
     <div class="card-info">
       {#if renaming}
         <!-- svelte-ignore a11y_autofocus -->
@@ -124,41 +127,52 @@
           placeholder="Label (e.g. Work)"
         />
       {:else}
-        <div class="email-row">
+        <div class="name-row">
+          <span class="username" title={account.label || username}>{username}</span>
           {#if account.pinned}
-            <span class="pin-icon" title="Pinned to top" aria-label="Pinned">📌</span>
-          {/if}
-          <span class="email" title={account.email}>{displayEmail}</span>
-          {#if account.label}
-            <span class="label-chip">{account.label}</span>
+            <span class="pin-icon" title="Pinned to top">📌</span>
           {/if}
         </div>
-        <span class="last-used">{lastUsed}</span>
+        <div class="email" title={account.email}>{displayEmail}</div>
       {/if}
     </div>
 
-
-    <div class="card-actions">
-      <button
-        class="btn switch-btn"
-        onclick={handleSwitch}
-        {disabled}
-        title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
-        aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
-      >
-        {getMode() === 'profile' ? 'Open' : 'Switch'}
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <button class="icon-btn" onclick={startRename} title="Rename account" aria-label="Rename">
+        ✏️
+      </button>
+      <button class="icon-btn danger" onclick={handleRemove} title="Remove account" aria-label="Remove">
+        🗑️
       </button>
       <button
-        class="btn icon-btn"
+        class="icon-btn"
         onclick={() => (menuOpen = !menuOpen)}
-        aria-label="More actions for {account.email}"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
+        title="More actions"
+        aria-label="More actions"
       >
         ⋮
       </button>
     </div>
   </div>
+
+  <!-- Middle Action & Badges Row -->
+  <div class="badges-row">
+    <button
+      class="switch-btn"
+      onclick={handleSwitch}
+      {disabled}
+      title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
+      aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
+    >
+      <span class="switch-icon">⇄</span> {getMode() === 'profile' ? 'Open' : 'Switch'}
+    </button>
+    <span class="tier-pill" title="Tier: {tierName}">✨ {tierName}</span>
+    <span class="time-pill" title="Quota snapshot age">⏱️ {age}</span>
+  </div>
+
+  <!-- Quota Cards -->
+  <QuotaBoxes quota={account.quota} />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
@@ -167,16 +181,17 @@
 
 <style>
   .account-card {
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: var(--vscode-editor-background, #252526);
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--vscode-editor-background, #1e1e1e);
     border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
     position: relative;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     transition: background 0.15s, border-color 0.15s;
   }
 
   .account-card:hover {
-    background: var(--vscode-list-hoverBackground, #2a2d2e);
+    background: var(--vscode-list-hoverBackground, #25282a);
     border-color: var(--vscode-widget-border, rgba(255, 255, 255, 0.15));
   }
 
@@ -185,121 +200,147 @@
     outline-offset: 1px;
   }
 
-  .card-body {
+  .card-header {
     display: flex;
     align-items: center;
     gap: 10px;
   }
 
   .card-info {
-    flex: 1;
     min-width: 0;
+    flex: 1;
   }
 
-  .email-row {
+  .name-row {
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
-  .pin-icon {
-    font-size: 11px;
-    opacity: 0.85;
-    flex-shrink: 0;
-  }
-
-  .email {
-    font-size: 12px;
-    font-weight: 500;
+  .username {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--vscode-foreground, #ffffff);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--vscode-foreground, #ccc);
   }
 
-
-  .label-chip {
-    font-size: 9.5px;
-    padding: 1px 5px;
-    border-radius: 10px;
-    background: var(--vscode-badge-background, #4d4d4d);
-    color: var(--vscode-badge-foreground, #fff);
-    flex-shrink: 0;
+  .pin-icon {
+    font-size: 11px;
   }
 
-  .last-used {
-    font-size: 10.5px;
-    color: var(--vscode-descriptionForeground, #888);
-    margin-top: 2px;
-    display: block;
+  .email {
+    font-size: 11.5px;
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: 1px;
   }
 
-  .card-actions {
+  .header-actions {
     display: flex;
     align-items: center;
     gap: 4px;
-    flex-shrink: 0;
-    opacity: 0.9;
-    transition: opacity 0.15s;
-  }
-
-
-  .account-card:hover .card-actions,
-  .account-card:focus-within .card-actions {
-    opacity: 1;
-  }
-
-  .btn {
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 11px;
-    padding: 4px 10px;
-    transition: background 0.12s;
-  }
-
-  .switch-btn {
-    background: var(--vscode-button-background, #0e639c);
-    color: var(--vscode-button-foreground, #fff);
-  }
-
-  .switch-btn:hover {
-    background: var(--vscode-button-hoverBackground, #1177bb);
+    margin-left: auto;
   }
 
   .icon-btn {
     background: transparent;
-    color: var(--vscode-foreground, #ccc);
-    font-size: 16px;
-    padding: 2px 6px;
+    border: none;
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    padding: 4px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
     line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
   }
 
   .icon-btn:hover {
     background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
+    color: var(--vscode-foreground, #fff);
+  }
+
+  .icon-btn.danger:hover {
+    color: var(--vscode-errorForeground, #f14c4c);
+  }
+
+  .badges-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .switch-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vscode-foreground, #ffffff);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    line-height: 1.4;
+  }
+
+  .switch-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.25);
+  }
+
+  .switch-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .switch-icon {
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .tier-pill {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: rgba(204, 167, 0, 0.12);
+    border: 1px solid rgba(204, 167, 0, 0.5);
+    color: #e5b700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 170px;
+  }
+
+  .time-pill {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    white-space: nowrap;
   }
 
   .rename-input {
     width: 100%;
-    padding: 3px 6px;
-    border: 1px solid var(--vscode-inputBorder, #3c3c3c);
-    background: var(--vscode-input-background, #3c3c3c);
-    color: var(--vscode-input-foreground, #ccc);
-    border-radius: 4px;
     font-size: 12px;
-    font-family: inherit;
+    padding: 2px 6px;
+    background: var(--vscode-input-background, #3c3c3c);
+    color: var(--vscode-input-foreground, #cccccc);
+    border: 1px solid var(--vscode-input-border, #007fd4);
+    border-radius: 3px;
     outline: none;
-  }
-
-  .rename-input:focus {
-    border-color: var(--vscode-focusBorder, #007fd4);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .account-card,
-    .card-actions {
-      transition: none;
-    }
   }
 </style>

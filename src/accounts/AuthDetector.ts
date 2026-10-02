@@ -42,6 +42,10 @@ const STATE_SYNC_SIGNAL_KEYS = [
 export class AuthDetector {
   constructor(private dbPath: string) {}
 
+  public get databasePath(): string {
+    return this.dbPath;
+  }
+
   /**
    * Detects the currently active authentication state from state.vscdb.
    */

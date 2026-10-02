@@ -7,6 +7,7 @@ import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../sh
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
+import { QuotaCollector } from '../quota/QuotaCollector';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'agSwitchyard.panel';
@@ -17,6 +18,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private lastSnapshotUpdateMap = new Map<string, number>();
   private _detecting = false;
   private dismissedSignOutBanner = false;
+  private readonly quotaCollector: QuotaCollector;
+  private quotaTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -25,7 +28,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     private readonly logger: Logger,
     private readonly statusBar: StatusBar,
     private switchEngine?: SwitchEngine
-  ) {}
+  ) {
+    this.quotaCollector = new QuotaCollector(this.logger);
+  }
 
   public setSwitchEngine(switchEngine: SwitchEngine): void {
     this.switchEngine = switchEngine;
@@ -38,6 +43,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.ctx.extensionUri, 'dist', 'webview')],
     };
     view.webview.html = this.html(view.webview);
+
+    if (!this.quotaTimer) {
+      this.quotaTimer = setInterval(() => {
+        if (this.view?.visible) {
+          void this.refreshActiveQuota();
+        }
+      }, 60_000);
+    }
 
     view.webview.onDidReceiveMessage(async (msg: ToHost) => {
       this.logger.info(`Received webview message: ${msg.type}`);
@@ -114,6 +127,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
           case 'import':
             await vscode.commands.executeCommand('switchyard.importAccount');
+            break;
+
+          case 'refreshQuota':
+            await this.handleRefreshQuota(msg.accountId);
             break;
         }
       } catch (err) {
@@ -341,6 +358,18 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         });
       }
 
+      // Refresh active account quota
+      const activeAccountId = await this.store.activeId();
+      if (activeAccountId) {
+        try {
+          const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
+          if (quota) {
+            await this.store.updateQuota(activeAccountId, quota);
+          }
+        } catch (err) {
+          this.logger.debug('Failed to update quota summary:', err);
+        }
+      }
 
       // Always push updated state to the webview
       await this.push();
@@ -350,6 +379,40 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       await this.push();
     } finally {
       this._detecting = false;
+    }
+  }
+
+  /**
+   * Refreshes the currently active account's quota in the background.
+   */
+  public async refreshActiveQuota(): Promise<void> {
+    const activeId = await this.store.activeId();
+    if (!activeId) return;
+    try {
+      const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
+      if (quota) {
+        await this.store.updateQuota(activeId, quota);
+        await this.push();
+      }
+    } catch (err) {
+      this.logger.debug('Periodic quota refresh failed:', err);
+    }
+  }
+
+  /**
+   * Manually refreshes quota for a specific account or active account.
+   */
+  private async handleRefreshQuota(accountId?: string): Promise<void> {
+    const targetId = accountId || (await this.store.activeId());
+    if (!targetId) return;
+    try {
+      const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
+      if (quota) {
+        await this.store.updateQuota(targetId, quota);
+        await this.push();
+      }
+    } catch (err) {
+      this.logger.error('Failed to manually refresh quota:', err);
     }
   }
 

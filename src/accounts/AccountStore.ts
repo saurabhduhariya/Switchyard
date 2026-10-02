@@ -1,7 +1,7 @@
 import { ACCOUNTS_STATE_KEY, ACTIVE_ACCOUNT_STATE_KEY, SECRET_PREFIX } from '../constants';
 import { Mutex } from '../util/mutex';
 import { parseSnapshot } from './identity';
-import { AccountMeta, createAccountId, Snapshot } from './types';
+import { AccountMeta, AccountQuotaSummary, createAccountId, Snapshot } from './types';
 
 export interface SecretStorageLike {
   get(key: string): Promise<string | undefined>;
@@ -151,6 +151,13 @@ export class AccountStore {
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
       }
     });
+  }
+
+  /**
+   * Updates an account's quota summary.
+   */
+  async updateQuota(id: string, quota: AccountQuotaSummary): Promise<void> {
+    return this.updateMeta(id, { quota });
   }
 
   /**

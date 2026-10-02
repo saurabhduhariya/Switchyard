@@ -6,6 +6,22 @@
  * Rule: tokens NEVER cross into the webview. Only AccountMeta.
  */
 
+export interface ModelQuotaGroup {
+  name: string; // "Gemini" | "Claude + GPT"
+  weeklyRemaining?: number; // percentage (e.g. 76.42)
+  weeklyResetTime?: string; // ISO string e.g. "2026-10-02T14:36:41Z"
+  rolling5hRemaining?: number;
+  rolling5hResetTime?: string;
+}
+
+export interface AccountQuotaSummary {
+  tierName: string; // e.g. "Google AI Pro Quota"
+  gemini: ModelQuotaGroup;
+  claudeGpt: ModelQuotaGroup;
+  updatedAt: number; // epoch ms
+  source: 'live' | 'cache' | 'vscdb';
+}
+
 export type AccountMeta = {
   id: string; // stable id (hash of email)
   email: string;
@@ -15,6 +31,7 @@ export type AccountMeta = {
   lastUsedAt?: number;
   fingerprint?: string;
   pinned?: boolean;
+  quota?: AccountQuotaSummary;
 };
 
 export interface AddAccountGuideState {
@@ -59,5 +76,6 @@ export type ToHost =
   | { type: 'restoreBackup' }
   | { type: 'revealProfile'; id: string }
   | { type: 'copySettings'; id: string }
-  | { type: 'import' };
+  | { type: 'import' }
+  | { type: 'refreshQuota'; accountId?: string };
 
