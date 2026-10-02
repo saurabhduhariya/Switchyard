@@ -56,11 +56,61 @@
         "title": "Switchyard: Restore Last Backup"
       },
       {
+        "command": "switchyard.addNewAccount",
+        "title": "Switchyard: Add New Account (Sign Out & Switch)"
+      },
+      {
+        "command": "switchyard.openBackupsFolder",
+        "title": "Switchyard: Open Backups Folder"
+      },
+      {
         "command": "switchyard.importAccount",
         "title": "Switchyard: Import Account from Database / Backup"
       }
     ],
+    "walkthroughs": [
+      {
+        "id": "switchyard.walkthrough",
+        "title": "Getting Started with Switchyard",
+        "description": "Learn how to manage and switch between multiple Google accounts in Antigravity IDE",
+        "steps": [
+          {
+            "id": "switchyard.step.openPanel",
+            "title": "Open Switchyard Accounts Panel",
+            "description": "Click the Accounts icon on the Activity Bar to view your active account and manage saved profiles.\n[Open Switchyard](command:agSwitchyard.panel.focus)",
+            "media": {
+              "svg": "media/walkthrough-panel.svg"
+            }
+          },
+          {
+            "id": "switchyard.step.saveAccount",
+            "title": "Save Your Current Account",
+            "description": "Switchyard automatically detects your active Google login. Click 'Save Current Login' to store it securely.\n[Save Account](command:switchyard.addAccount)",
+            "media": {
+              "svg": "media/walkthrough-save.svg"
+            }
+          },
+          {
+            "id": "switchyard.step.addSecond",
+            "title": "Add a Second Account",
+            "description": "Click 'Add Another Account' to sign out cleanly, log in with your second Google account, and save it.\n[Add New Account](command:switchyard.addNewAccount)",
+            "media": {
+              "svg": "media/walkthrough-add.svg"
+            }
+          },
+          {
+            "id": "switchyard.step.switch",
+            "title": "Switch Between Accounts Instantly",
+            "description": "Switch anytime with 1 click from the sidebar or via the Command Palette.\n[Switch Account](command:switchyard.switchAccount)",
+            "media": {
+              "svg": "media/walkthrough-switch.svg"
+            }
+          }
+        ]
+      }
+    ],
     "configuration": {
+
       "title": "Switchyard",
       "properties": {
         "switchyard.mode": {

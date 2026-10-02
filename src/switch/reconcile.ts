@@ -75,4 +75,36 @@ export async function reconcilePendingSwitch(
       );
     }
   }
+
+  // Also reconcile addingAccount sign-out state if present
+  const addingState = memento.get<
+    { resultFile?: string; previousEmail?: string } | undefined
+  >('switchyard.addingAccount', undefined);
+
+  if (addingState?.resultFile && fs.existsSync(addingState.resultFile)) {
+    try {
+      const raw = fs.readFileSync(addingState.resultFile, 'utf8');
+      const result = JSON.parse(raw) as SwitchResultFile;
+      if (!result.ok) {
+        const err = result.error || 'Unknown error while signing out';
+        logger.error(`Sign out for adding account failed: ${err}`);
+        const choice = await vscode.window.showErrorMessage(
+          `Switchyard: Failed to sign out current session: ${err}`,
+          'Restore Backup'
+        );
+        if (choice === 'Restore Backup') {
+          void vscode.commands.executeCommand('switchyard.restoreBackup');
+        }
+      }
+    } catch (err) {
+      logger.warn('Failed to parse addingAccount resultFile:', err);
+    } finally {
+      try {
+        fs.rmSync(addingState.resultFile, { force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
+

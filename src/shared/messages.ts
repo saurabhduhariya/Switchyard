@@ -14,7 +14,15 @@ export type AccountMeta = {
   addedAt: number;
   lastUsedAt?: number;
   fingerprint?: string;
+  pinned?: boolean;
 };
+
+export interface AddAccountGuideState {
+  active: boolean;
+  previousEmail?: string;
+  previousId?: string;
+  expectedEmail?: string;
+}
 
 export type ToWebview =
   | {
@@ -23,6 +31,7 @@ export type ToWebview =
       activeId?: string;
       maskEmails?: boolean;
       mode?: 'profile' | 'tokenSwap';
+      addAccountGuide?: AddAccountGuideState;
     }
   | { type: 'busy'; message: string }
   | { type: 'error'; message: string }
@@ -32,11 +41,19 @@ export type ToHost =
   | { type: 'ready' }
   | { type: 'switch'; id: string }
   | { type: 'add' }
+  | { type: 'addNewAccount' }
+  | { type: 'cancelAddAccount' }
+  | { type: 'signIn' }
+  | { type: 'reauth'; id: string }
+  | { type: 'togglePin'; id: string }
   | { type: 'rename'; id: string; label: string }
   | { type: 'remove'; id: string }
   | { type: 'dismissToast' }
   | { type: 'saveDetected'; id: string }
   | { type: 'openSettings' }
+  | { type: 'openBackupsFolder' }
+  | { type: 'restoreBackup' }
   | { type: 'revealProfile'; id: string }
   | { type: 'copySettings'; id: string }
   | { type: 'import' };
+

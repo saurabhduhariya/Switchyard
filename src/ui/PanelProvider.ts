@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { AccountStore } from '../accounts/AccountStore';
 import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
-import type { AccountMeta, ToHost, ToWebview } from '../shared/messages';
+import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
@@ -16,6 +16,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private lastDetectedHash?: string;
   private lastSnapshotUpdateMap = new Map<string, number>();
   private _detecting = false;
+  private dismissedSignOutBanner = false;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -52,6 +53,34 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
           case 'add':
             await vscode.commands.executeCommand('switchyard.addAccount');
+            break;
+
+          case 'addNewAccount':
+            await this.handleAddNewAccount();
+            break;
+
+          case 'cancelAddAccount':
+            await this.handleCancelAddAccount();
+            break;
+
+          case 'signIn':
+            await this.handleSignIn();
+            break;
+
+          case 'reauth':
+            await this.handleReauth(msg.id);
+            break;
+
+          case 'togglePin':
+            await this.handleTogglePin(msg.id);
+            break;
+
+          case 'openBackupsFolder':
+            await vscode.commands.executeCommand('switchyard.openBackupsFolder');
+            break;
+
+          case 'restoreBackup':
+            await vscode.commands.executeCommand('switchyard.restoreBackup');
             break;
 
           case 'rename':
@@ -102,11 +131,44 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    * Pushes the current state of accounts, active ID, and masking preference to the webview.
    */
   public async push(): Promise<void> {
-    const accounts = await this.store.list();
+    const rawAccounts = await this.store.list();
     const activeId = await this.store.activeId();
     const config = vscode.workspace.getConfiguration('switchyard');
     const maskEmails = config.get<boolean>('maskEmails', false);
-    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'profile');
+    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+
+    const pinnedIds = this.ctx.globalState?.get<string[]>('switchyard.pinned', []) ?? [];
+    const accounts = rawAccounts.map((acc) => ({
+      ...acc,
+      pinned: pinnedIds.includes(acc.id),
+    }));
+
+    // Check addingAccount guide state
+    let addAccountGuide: AddAccountGuideState | undefined;
+    const addingState = this.ctx.globalState?.get<{
+      previousId?: string;
+      previousEmail?: string;
+      expectedEmail?: string;
+    } | undefined>('switchyard.addingAccount');
+
+    if (addingState) {
+      if (!activeId) {
+        addAccountGuide = {
+          active: true,
+          previousEmail: addingState.previousEmail,
+          previousId: addingState.previousId,
+          expectedEmail: addingState.expectedEmail,
+        };
+      } else {
+        // Active account detected, clear addingAccount guide
+        await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
+      }
+    } else if (!activeId && rawAccounts.length > 0 && !this.dismissedSignOutBanner) {
+      addAccountGuide = {
+        active: true,
+      };
+    }
+
 
     const msg: ToWebview = {
       type: 'state',
@@ -114,12 +176,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       activeId,
       maskEmails,
       mode,
+      addAccountGuide,
     };
 
     await this.view?.webview.postMessage(msg);
     this.statusBar.update(accounts, activeId, maskEmails);
     void vscode.commands.executeCommand('setContext', 'switchyard.hasAccounts', accounts.length > 0);
   }
+
 
   /**
    * Detects the active session in state.vscdb and refreshes state.
@@ -144,6 +208,52 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       if ('unsupported' in result) {
         this.logger.debug('Active detection unsupported or signed out:', result.reason);
         this.pendingSnapshot = undefined;
+        await this.store.setActive(undefined);
+        await this.push();
+        return;
+      }
+
+      if ('partial' in result) {
+        // Auth tokens are in the OS secret store, not in state.vscdb.
+        // Try to match the profileUrl against saved accounts.
+        this.logger.debug('Partial detection: auth tokens likely in OS secret store');
+        const accounts = await this.store.list();
+
+        if (accounts.length > 0) {
+          // Try to match by profileUrl if available
+          let matched: AccountMeta | undefined;
+
+          if (result.profileUrl) {
+            // Match by profileUrl stored in any saved account's snapshot
+            for (const acc of accounts) {
+              const snap = await this.store.loadSnapshot(acc.id);
+              if (snap?.values?.['antigravity.profileUrl'] === result.profileUrl) {
+                matched = acc;
+                break;
+              }
+            }
+          }
+
+          if (!matched && accounts.length === 1) {
+            // Only one account saved — reasonable to assume it's the active one
+            matched = accounts[0];
+          }
+
+          if (matched) {
+            this.dismissedSignOutBanner = false;
+            this.pendingSnapshot = undefined;
+            const currentActive = await this.store.activeId();
+            if (currentActive !== matched.id) {
+              await this.store.setActive(matched.id);
+              this.logger.info(`Partial detection matched account: ${matched.email}`);
+            }
+          } else {
+            // Multiple accounts saved but can't determine which is active.
+            // Don't clear activeId — keep last known active to avoid false sign-out banner.
+            this.logger.debug('Partial detection: could not match to a specific saved account');
+          }
+        }
+
         await this.push();
         return;
       }
@@ -156,13 +266,33 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       if (identity.email) {
         matched = await this.store.getByEmail(identity.email);
       }
+      if (!matched && identity.fingerprint) {
+        matched = await this.store.getByFingerprint(identity.fingerprint);
+      }
       if (!matched) {
         matched = await this.store.get(`fp-${identity.fingerprint}`);
       }
+      if (!matched && snapshot.values['antigravity.profileUrl']) {
+        const targetUrl = snapshot.values['antigravity.profileUrl'];
+        const accounts = await this.store.list();
+        for (const acc of accounts) {
+          const snap = await this.store.loadSnapshot(acc.id);
+          if (snap?.values?.['antigravity.profileUrl'] === targetUrl) {
+            matched = acc;
+            break;
+          }
+        }
+      }
 
       if (matched) {
-        // Matched a saved account — clear any pending toast
+        // Matched a saved account — clear any pending toast & guide
+        this.dismissedSignOutBanner = false;
         this.pendingSnapshot = undefined;
+        await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
+
+        if (!identity.email && matched.email) {
+          identity.email = matched.email;
+        }
 
         const currentActive = await this.store.activeId();
         if (currentActive !== matched.id) {
@@ -185,12 +315,26 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         const emailDisplay = identity.email || `Account (${identity.fingerprint.slice(0, 6)})`;
         const candidateId = identity.email ? createAccountId(identity.email) : `fp-${identity.fingerprint}`;
 
+        // Clear activeId so the old account is not shown as active
+        await this.store.setActive(undefined);
+
         await this.view?.webview.postMessage({
           type: 'toast',
           message: `Save ${emailDisplay}?`,
           accountId: candidateId,
         });
+
+        void vscode.window.showInformationMessage(
+          `Switchyard detected account: ${emailDisplay}. Save to Switchyard?`,
+          'Save Account',
+          'Ignore'
+        ).then(async (selection) => {
+          if (selection === 'Save Account') {
+            await this.handleSaveDetected();
+          }
+        });
       }
+
 
       // Always push updated state to the webview
       await this.push();
@@ -224,7 +368,21 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
     const contentHash = crypto.createHash('sha256').update(JSON.stringify(this.pendingSnapshot.values)).digest('hex');
     const meta = await this.store.upsertFromSnapshot(this.pendingSnapshot);
+
+    if (meta.email.startsWith('unknown-') || !meta.email.includes('@') || meta.email.endsWith('@switchyard.local')) {
+      const enteredEmail = await vscode.window.showInputBox({
+        title: 'Save Account',
+        prompt: 'Enter the Google account email address for this session',
+        placeHolder: 'e.g. user@gmail.com',
+      });
+      if (enteredEmail && enteredEmail.trim()) {
+        await this.store.updateMeta(meta.id, { email: enteredEmail.trim() });
+        meta.email = enteredEmail.trim();
+      }
+    }
+
     await this.store.setActive(meta.id);
+    await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
     this.lastDetectedHash = contentHash;
     this.lastSnapshotUpdateMap.set(meta.id, Date.now());
     this.pendingSnapshot = undefined;
@@ -362,6 +520,147 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   public async getActiveId(): Promise<string | undefined> {
     return this.store.activeId();
   }
+
+  public async handleAddNewAccount(): Promise<void> {
+    this.dismissedSignOutBanner = false;
+    const config = vscode.workspace.getConfiguration('switchyard');
+    const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+
+    if (mode === 'profile') {
+      const label = await vscode.window.showInputBox({
+        title: 'Add Account (Profile Mode)',
+        prompt: 'Enter a label or identifier for the new isolated profile',
+        placeHolder: 'e.g. Work, Secondary, Client B',
+      });
+      if (!label) return;
+      const meta = await this.store.upsertFromSnapshot({
+        values: {},
+        capturedAt: Date.now(),
+      }, label);
+      await this.push();
+      await this.handleSwitch(meta.id);
+      return;
+    }
+
+    // Token Swap mode: modal explanation
+    const choice = await vscode.window.showInformationMessage(
+      'Switchyard will save your current session, sign you out of Antigravity, and restart the IDE. After restart, sign in with your new Google account; Switchyard will detect and save it automatically.',
+      { modal: true },
+      'Sign Out & Restart',
+      'Cancel'
+    );
+
+    if (choice === 'Sign Out & Restart') {
+      if (this.switchEngine?.signOutAndRestart) {
+        await this.switchEngine.signOutAndRestart();
+      } else {
+        vscode.window.showErrorMessage('Switchyard: Switch engine does not support signing out.');
+      }
+    }
+  }
+
+  public async handleCancelAddAccount(): Promise<void> {
+    this.dismissedSignOutBanner = true;
+    const addingState = this.ctx.globalState?.get<{
+      previousId?: string;
+      previousEmail?: string;
+    } | undefined>('switchyard.addingAccount');
+
+    await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
+
+    if (addingState?.previousId) {
+      const choice = await vscode.window.showInformationMessage(
+        `Cancelled adding account. Restore session for ${addingState.previousEmail || 'previous account'}?`,
+        'Restore Account',
+        'Dismiss'
+      );
+      if (choice === 'Restore Account') {
+        await this.handleSwitch(addingState.previousId);
+        return;
+      }
+    }
+    await this.push();
+  }
+
+  public async handleSignIn(): Promise<void> {
+    // 1. Refresh active check first in case the user is already signed in
+    await this.detectAndRefresh(true);
+    const activeId = await this.store.activeId();
+    if (activeId) {
+      const activeAcc = await this.store.get(activeId);
+      void vscode.window.showInformationMessage(
+        `Antigravity is already signed in with ${activeAcc?.email || 'your active account'}.`
+      );
+      return;
+    }
+
+    // 2. Try auth session request
+    try {
+      await vscode.authentication.getSession('antigravity_auth', [], { createIfNone: true });
+      return;
+    } catch {
+      // try command fallback
+    }
+
+    const candidateCommands = [
+      'antigravity.login',
+      'antigravity.signin',
+      'antigravity.signIn',
+      'workbench.action.accounts.manage',
+    ];
+    let executed = false;
+    for (const cmd of candidateCommands) {
+      try {
+        await vscode.commands.executeCommand(cmd);
+        executed = true;
+        break;
+      } catch {
+        // try next
+      }
+    }
+    if (!executed) {
+      void vscode.window.showInformationMessage(
+        'To sign in: Click the profile avatar icon in the top-right of the Antigravity window or the Accounts icon at the bottom of the Activity Bar.'
+      );
+    }
+  }
+
+
+  public async handleReauth(id: string): Promise<void> {
+    const account = await this.store.get(id);
+    if (!account) return;
+
+    const choice = await vscode.window.showInformationMessage(
+      `Re-authenticate ${account.email}? We'll sign you out and restart so you can sign in with ${account.email} again.`,
+      { modal: true },
+      'Sign Out & Restart',
+      'Cancel'
+    );
+
+    if (choice === 'Sign Out & Restart') {
+      if (this.switchEngine?.signOutAndRestart) {
+        await this.switchEngine.signOutAndRestart({
+          previousId: account.id,
+          previousEmail: account.email,
+          expectedEmail: account.email,
+        });
+      }
+    }
+  }
+
+  public async handleTogglePin(id: string): Promise<void> {
+    const pinnedList = this.ctx.globalState?.get<string[]>('switchyard.pinned', []) ?? [];
+    const pinned = new Set(pinnedList);
+    if (pinned.has(id)) {
+      pinned.delete(id);
+    } else {
+      pinned.add(id);
+    }
+    await this.ctx.globalState?.update('switchyard.pinned', Array.from(pinned));
+    await this.push();
+  }
+
+
 
   private html(webview: vscode.Webview): string {
     const nonce = crypto.randomUUID().replace(/-/g, '');

@@ -227,4 +227,63 @@ describe('switch/TokenSwapEngine', () => {
     // Verify quit was triggered
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
   });
+
+  it('signOutAndRestart builds a job with deleteKeys, stores addingAccount in memento, and quits IDE', async () => {
+    let spawnedCmd = '';
+    let spawnedArgs: string[] = [];
+    let spawnedEnv: any = {};
+
+    const fakeChild = {
+      pid: 54321,
+      unref: vi.fn(),
+    } as unknown as ChildProcess;
+
+    const fakeSpawner = vi.fn((cmd: string, args: string[], opts: any) => {
+      spawnedCmd = cmd;
+      spawnedArgs = args;
+      spawnedEnv = opts.env;
+      return fakeChild;
+    });
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      spawner: fakeSpawner as any,
+      executableFinder: () => '/mock/antigravity-ide',
+    });
+
+    const result = await engine.signOutAndRestart({
+      previousId: 'acc-prev',
+      previousEmail: 'prev@example.com',
+      expectedEmail: 'new@example.com',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fakeSpawner).toHaveBeenCalledOnce();
+    expect(spawnedEnv.ELECTRON_RUN_AS_NODE).toBe('1');
+
+    // Verify addingAccount was stored in memento
+    const adding = memento.get<any>('switchyard.addingAccount');
+    expect(adding).toBeDefined();
+    expect(adding.previousId).toBe('acc-prev');
+    expect(adding.previousEmail).toBe('prev@example.com');
+    expect(adding.expectedEmail).toBe('new@example.com');
+    expect(adding.resultFile).toBeDefined();
+
+    // Verify job file content has deleteKeys and empty target values
+    const jobPath = spawnedArgs[1];
+    expect(fs.existsSync(jobPath)).toBe(true);
+    const jobContent = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
+    expect(jobContent.deleteKeys).toContain(KEYS.oauth);
+    expect(jobContent.deleteKeys).toContain(KEYS.legacyInit);
+    expect(jobContent.targetFingerprint).toBe('');
+    expect(jobContent.values).toEqual({});
+
+    // Verify quit was triggered
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
+  });
 });
+

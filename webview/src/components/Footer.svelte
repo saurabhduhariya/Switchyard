@@ -1,8 +1,13 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
+  import { getAccounts } from '../stores/app.svelte';
 
   function handleAdd() {
-    postToHost({ type: 'add' });
+    if (getAccounts().length > 0) {
+      postToHost({ type: 'addNewAccount' });
+    } else {
+      postToHost({ type: 'add' });
+    }
   }
 
   function handleImport() {
@@ -13,8 +18,9 @@
 <footer class="footer">
   <button class="add-btn" onclick={handleAdd} aria-label="Add account">
     <span class="plus" aria-hidden="true">+</span>
-    Add Account
+    {getAccounts().length > 0 ? 'Add Another Account' : 'Add Account'}
   </button>
+
   <button class="import-btn" onclick={handleImport} aria-label="Import account from file or backup">
     Import from Backup / File
   </button>

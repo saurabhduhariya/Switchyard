@@ -7,6 +7,7 @@
   import SwitchOverlay from './components/SwitchOverlay.svelte';
   import ErrorBanner from './components/ErrorBanner.svelte';
   import Toast from './components/Toast.svelte';
+  import AddAccountGuide from './components/AddAccountGuide.svelte';
   import {
     getAccounts,
     getActiveAccount,
@@ -19,6 +20,7 @@
     getToast,
     getToastAccountId,
     isLoading,
+    getAddAccountGuide,
     handleMessage,
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
@@ -49,15 +51,20 @@
     <Toast message={getToast()} accountId={getToastAccountId()} />
   {/if}
 
+  {#if getAddAccountGuide()?.active}
+    <AddAccountGuide guide={getAddAccountGuide()!} />
+  {/if}
+
   <div class="content">
     {#if isLoading()}
       <div class="loading" aria-label="Loading accounts">
         <div class="loading-shimmer"></div>
         <div class="loading-shimmer short"></div>
       </div>
-    {:else if getAccounts().length === 0}
+    {:else if getAccounts().length === 0 && !getAddAccountGuide()?.active}
       <EmptyState />
     {:else}
+
       <ul class="account-list" aria-label="Accounts">
         {#if getActiveAccount()}
           <li>

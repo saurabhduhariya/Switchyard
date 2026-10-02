@@ -3,7 +3,7 @@
  * Receives state from the extension host via postMessage.
  */
 
-import type { AccountMeta, ToWebview } from '../../../src/shared/messages';
+import type { AccountMeta, AddAccountGuideState, ToWebview } from '../../../src/shared/messages';
 
 // ── Reactive State (Svelte 5 runes) ──
 
@@ -17,6 +17,7 @@ let mode = $state<'profile' | 'tokenSwap'>('profile');
 let toast = $state('');
 let toastAccountId = $state<string | undefined>(undefined);
 let loading = $state(true);
+let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 
 // ── Getters ──
 
@@ -37,8 +38,18 @@ export function getActiveAccount(): AccountMeta | undefined {
 }
 
 export function getOtherAccounts(): AccountMeta[] {
-  return accounts.filter((a) => a.id !== activeId);
+  const others = accounts.filter((a) => a.id !== activeId);
+  return others.sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1;
+    if (!a.pinned && b.pinned) return 1;
+    return 0;
+  });
 }
+
+export function getAddAccountGuide(): AddAccountGuideState | undefined {
+  return addAccountGuide;
+}
+
 
 export function isBusy(): boolean {
   return busy;
@@ -77,10 +88,12 @@ export function handleMessage(data: ToWebview): void {
       activeId = data.activeId;
       maskEmails = data.maskEmails ?? false;
       mode = data.mode ?? 'profile';
+      addAccountGuide = data.addAccountGuide;
       busy = false;
       busyMessage = '';
       loading = false;
       break;
+
 
     case 'busy':
       busy = true;

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240" width="400" height="240" fill="none">
+  <rect width="400" height="240" rx="8" fill="#1e1e1e"/>
+  <!-- Account A -->
+  <rect x="50" y="55" width="130" height="120" rx="8" fill="#252526" stroke="#3c3c3c" stroke-width="1"/>
+  <circle cx="115" cy="95" r="18" fill="#0e639c"/>
+  <circle cx="115" cy="90" r="6.5" fill="#ffffff"/>
+  <path d="M103 107c0-3.5 3.5-7 12-7s12 3.5 12 7" fill="#ffffff"/>
+  <text x="115" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Personal</text>
+  <text x="115" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="9" fill="#888888" text-anchor="middle">user@gmail.com</text>
+  <!-- Switch Arrows -->
+  <circle cx="200" cy="115" r="20" fill="#007fd4"/>
+  <path d="M192 110l8-8 8 8" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M208 120l-8 8-8-8" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Account B -->
+  <rect x="220" y="55" width="130" height="120" rx="8" fill="#252526" stroke="#007fd4" stroke-width="1.5"/>
+  <circle cx="285" cy="95" r="18" fill="#2ea043"/>
+  <circle cx="285" cy="90" r="6.5" fill="#ffffff"/>
+  <path d="M273 107c0-3.5 3.5-7 12-7s12 3.5 12 7" fill="#ffffff"/>
+  <text x="285" y="132" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="11" font-weight="600" fill="#ffffff" text-anchor="middle">Work / Client</text>
+  <text x="285" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="9" fill="#3794ff" text-anchor="middle">work@corp.com</text>
+  <rect x="250" y="158" width="70" height="14" rx="7" fill="#2ea043" fill-opacity="0.2"/>
+  <text x="285" y="168" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="8" font-weight="600" fill="#2ea043" text-anchor="middle">ACTIVE</text>
+</svg>

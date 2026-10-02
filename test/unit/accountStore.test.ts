@@ -92,6 +92,9 @@ describe('accounts/AccountStore', () => {
 
     const byEmail = await store.getByEmail('ALEX@EXAMPLE.COM');
     expect(byEmail).toEqual(meta);
+
+    const byFingerprint = await store.getByFingerprint(meta.fingerprint);
+    expect(byFingerprint).toEqual(meta);
   });
 
   it('passes exit criterion: Store tests prove tokens never appear in state (only in secrets)', async () => {

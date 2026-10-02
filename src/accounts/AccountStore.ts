@@ -62,6 +62,15 @@ export class AccountStore {
   }
 
   /**
+   * Retrieves account metadata by session fingerprint.
+   */
+  async getByFingerprint(fingerprint: string): Promise<AccountMeta | undefined> {
+    if (!fingerprint) return undefined;
+    const accounts = await this.list();
+    return accounts.find((a) => a.fingerprint === fingerprint);
+  }
+
+  /**
    * Retrieves the currently active account ID.
    */
   async activeId(): Promise<string | undefined> {
@@ -73,9 +82,10 @@ export class AccountStore {
   /**
    * Sets the active account ID and updates its lastUsedAt timestamp.
    */
-  async setActive(id: string): Promise<void> {
+  async setActive(id: string | undefined): Promise<void> {
     return this.mutex.runExclusive(async () => {
       await this.state.update(ACTIVE_ACCOUNT_STATE_KEY, id);
+
 
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);

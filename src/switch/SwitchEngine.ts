@@ -22,13 +22,22 @@ export interface CopySettingsResult {
   error?: string;
 }
 
+export interface SignOutAndRestartOptions {
+  previousId?: string;
+  previousEmail?: string;
+  folders?: string[];
+  expectedEmail?: string;
+}
+
 export interface SwitchEngine {
   readonly mode: 'profile' | 'tokenSwap';
   switchTo(accountId: string, options?: SwitchOptions): Promise<SwitchResult>;
+  signOutAndRestart?(options?: SignOutAndRestartOptions): Promise<SwitchResult>;
   copySettingsToProfile?(accountId: string): Promise<CopySettingsResult>;
   getProfileDir?(accountId: string): string;
   revealProfile?(accountId: string): Promise<void>;
 }
+
 
 export interface SwitchEngineDeps {
   store: AccountStore;

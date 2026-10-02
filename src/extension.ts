@@ -168,13 +168,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (existing) {
         const choice = await vscode.window.showInformationMessage(
           `Switchyard: Account ${existing.email} is already saved.`,
-          'Import from Backup/File',
-          'Sign In to Another'
+          'Add Another Account',
+          'Import from Backup/File'
         );
-        if (choice === 'Import from Backup/File') {
+        if (choice === 'Add Another Account') {
+          await vscode.commands.executeCommand('switchyard.addNewAccount');
+        } else if (choice === 'Import from Backup/File') {
           await vscode.commands.executeCommand('switchyard.importAccount');
-        } else if (choice === 'Sign In to Another') {
-          await vscode.commands.executeCommand('antigravity.login');
         }
         return;
       }
@@ -192,6 +192,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       vscode.window.showInformationMessage(`Switchyard: Successfully saved account ${meta.email}`);
     }),
+
+    // switchyard.addNewAccount: guided flow to sign out and sign in with new account
+    vscode.commands.registerCommand('switchyard.addNewAccount', async () => {
+      await panelProvider.handleAddNewAccount();
+    }),
+
+    // switchyard.openBackupsFolder: reveals the backup directory in system file explorer
+    vscode.commands.registerCommand('switchyard.openBackupsFolder', async () => {
+      if (!dbPath) {
+        vscode.window.showErrorMessage('Switchyard: Cannot locate database path.');
+        return;
+      }
+      const backupDir = getBackupsDir(getGlobalStorageDir(dbPath));
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(backupDir));
+    }),
+
 
     // switchyard.switchAccount: Quick Pick selector
     vscode.commands.registerCommand('switchyard.switchAccount', async () => {

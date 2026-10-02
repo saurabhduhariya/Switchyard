@@ -60,6 +60,14 @@
     postToHost({ type: 'copySettings', id: account.id });
   }
 
+  function handleReauth() {
+    postToHost({ type: 'reauth', id: account.id });
+  }
+
+  function handleTogglePin() {
+    postToHost({ type: 'togglePin', id: account.id });
+  }
+
   function handleRenameKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') submitRename();
     if (e.key === 'Escape') cancelRename();
@@ -81,6 +89,8 @@
   }
 
   let menuItems = $derived([
+    { label: account.pinned ? 'Unpin from Top' : 'Pin to Top', icon: '📌', action: handleTogglePin },
+    { label: 'Re-authenticate', icon: '🔄', action: handleReauth },
     { label: 'Rename', icon: '✏️', action: startRename },
     { label: 'Reveal Profile Folder', icon: '📂', action: handleReveal },
     { label: 'Copy Settings into Profile', icon: '📋', action: handleCopySettings },
@@ -113,6 +123,9 @@
         />
       {:else}
         <div class="email-row">
+          {#if account.pinned}
+            <span class="pin-icon" title="Pinned to top" aria-label="Pinned">📌</span>
+          {/if}
           <span class="email" title={account.email}>{displayEmail}</span>
           {#if account.label}
             <span class="label-chip">{account.label}</span>
@@ -121,6 +134,7 @@
         <span class="last-used">{lastUsed}</span>
       {/if}
     </div>
+
 
     <div class="card-actions">
       <button
@@ -184,6 +198,12 @@
     gap: 6px;
   }
 
+  .pin-icon {
+    font-size: 11px;
+    opacity: 0.85;
+    flex-shrink: 0;
+  }
+
   .email {
     font-size: 12px;
     font-weight: 500;
@@ -192,6 +212,7 @@
     white-space: nowrap;
     color: var(--vscode-foreground, #ccc);
   }
+
 
   .label-chip {
     font-size: 9.5px;
@@ -214,9 +235,10 @@
     align-items: center;
     gap: 4px;
     flex-shrink: 0;
-    opacity: 0;
+    opacity: 0.9;
     transition: opacity 0.15s;
   }
+
 
   .account-card:hover .card-actions,
   .account-card:focus-within .card-actions {

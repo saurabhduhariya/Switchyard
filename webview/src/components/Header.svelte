@@ -1,13 +1,30 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
+  import OverflowMenu from './OverflowMenu.svelte';
+
+  let menuOpen = $state(false);
 
   function handleRefresh() {
     postToHost({ type: 'ready' });
   }
 
+  function handleOpenBackups() {
+    postToHost({ type: 'openBackupsFolder' });
+  }
+
+  function handleRestoreBackup() {
+    postToHost({ type: 'restoreBackup' });
+  }
+
   function handleSettings() {
     postToHost({ type: 'openSettings' });
   }
+
+  let menuItems = [
+    { label: 'Open Backups Folder', icon: '📁', action: handleOpenBackups },
+    { label: 'Restore Backup…', icon: '⏪', action: handleRestoreBackup },
+    { label: 'Settings', icon: '⚙️', action: handleSettings },
+  ];
 </script>
 
 <header class="header">
@@ -26,14 +43,21 @@
     </button>
     <button
       class="icon-btn"
-      onclick={handleSettings}
-      aria-label="Settings"
-      title="Settings"
+      onclick={() => (menuOpen = !menuOpen)}
+      aria-label="More options"
+      title="More options"
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
     >
-      ⚙
+      ⋮
     </button>
   </div>
+
+  {#if menuOpen}
+    <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
+  {/if}
 </header>
+
 
 <style>
   .header {

@@ -36,6 +36,7 @@ vi.mock('vscode', () => {
   };
 });
 
+import * as vscode from 'vscode';
 import { AccountStore, MementoLike, SecretStorageLike } from '../../src/accounts/AccountStore';
 import { AuthDetector } from '../../src/accounts/AuthDetector';
 import { SECRET_PREFIX } from '../../src/constants';
@@ -124,7 +125,9 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
 
     fakeContext = {
       extensionUri: { fsPath: '/test/ext' },
+      globalState: state,
     };
+
 
     const detector = new AuthDetector(dbPath);
     panelProvider = new PanelProvider(fakeContext, store, detector, logger, statusBar);
@@ -280,5 +283,66 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     await panelProvider.handleRevealProfile(id);
     expect(mockSwitchEngine.revealProfile).toHaveBeenCalledWith(id);
   });
+
+  it('handleTogglePin toggles account in switchyard.pinned and updates webview state', async () => {
+    const session = makeSyntheticSessionEntries({ email: 'pin-test@domain.com' });
+    await writeSyntheticDb(dbPath, session);
+    await panelProvider.detectAndRefresh();
+    await panelProvider.handleSaveDetected();
+
+    const accounts = await store.list();
+    const id = accounts[0].id;
+
+    // Toggle pin ON
+    await panelProvider.handleTogglePin(id);
+    const pinnedState = state.get<string[]>('switchyard.pinned', []);
+    expect(pinnedState).toContain(id);
+
+    const lastMsg = postedMessages[postedMessages.length - 1];
+    expect(lastMsg.type).toBe('state');
+    if (lastMsg.type === 'state') {
+      const acc = lastMsg.accounts.find((a) => a.id === id);
+      expect(acc?.pinned).toBe(true);
+    }
+
+    // Toggle pin OFF
+    await panelProvider.handleTogglePin(id);
+    const unpinnedState = state.get<string[]>('switchyard.pinned', []);
+    expect(unpinnedState).not.toContain(id);
+  });
+
+  it('pushes addAccountGuide when switchyard.addingAccount is active and signed out', async () => {
+    await state.update('switchyard.addingAccount', {
+      previousId: 'prev-acc-1',
+      previousEmail: 'prev@example.com',
+      expectedEmail: 'new@example.com',
+    });
+
+    await panelProvider.push();
+
+    const lastMsg = postedMessages[postedMessages.length - 1];
+    expect(lastMsg.type).toBe('state');
+    if (lastMsg.type === 'state') {
+      expect(lastMsg.addAccountGuide).toBeDefined();
+      expect(lastMsg.addAccountGuide?.active).toBe(true);
+      expect(lastMsg.addAccountGuide?.previousEmail).toBe('prev@example.com');
+      expect(lastMsg.addAccountGuide?.expectedEmail).toBe('new@example.com');
+    }
+  });
+
+  it('handleAddNewAccount confirms and calls signOutAndRestart on tokenSwap switchEngine', async () => {
+    const mockSwitchEngine = {
+      mode: 'tokenSwap' as const,
+      switchTo: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+      signOutAndRestart: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+    };
+    panelProvider.setSwitchEngine(mockSwitchEngine);
+
+    vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Sign Out & Restart' as any);
+
+    await panelProvider.handleAddNewAccount();
+    expect(mockSwitchEngine.signOutAndRestart).toHaveBeenCalledOnce();
+  });
 });
+
 
