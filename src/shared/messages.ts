@@ -32,6 +32,10 @@ export type ToWebview =
       maskEmails?: boolean;
       mode?: 'profile' | 'tokenSwap';
       addAccountGuide?: AddAccountGuideState;
+      unsupported?: {
+        reason: string;
+        version?: string;
+      };
     }
   | { type: 'busy'; message: string }
   | { type: 'error'; message: string }

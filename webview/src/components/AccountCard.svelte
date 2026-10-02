@@ -10,9 +10,10 @@
   interface Props {
     account: AccountMeta;
     masked: boolean;
+    disabled?: boolean;
   }
 
-  let { account, masked }: Props = $props();
+  let { account, masked, disabled = false }: Props = $props();
 
   let menuOpen = $state(false);
   let renaming = $state(false);
@@ -23,6 +24,7 @@
   let lastUsed = $derived(timeAgo(account.lastUsedAt));
 
   function handleSwitch() {
+    if (disabled) return;
     postToHost({ type: 'switch', id: account.id });
   }
 
@@ -140,6 +142,8 @@
       <button
         class="btn switch-btn"
         onclick={handleSwitch}
+        {disabled}
+        title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
         aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
       >
         {getMode() === 'profile' ? 'Open' : 'Switch'}

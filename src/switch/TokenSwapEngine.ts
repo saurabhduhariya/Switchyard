@@ -84,7 +84,7 @@ export class TokenSwapEngine implements SwitchEngine {
     const confirm = config.get<boolean>('confirmBeforeSwitch', true);
     if (confirm) {
       const answer = await vscode.window.showWarningMessage(
-        `Switch to ${account.email}? Antigravity IDE will quit, swap credentials, and restart.`,
+        `Switch to ${account.email}? Antigravity IDE will quit, swap credentials, and restart. (Note: switching restarts all Antigravity windows.)`,
         { modal: true },
         'Switch and Restart',
         'Cancel'

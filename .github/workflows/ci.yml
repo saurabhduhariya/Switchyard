@@ -7,7 +7,21 @@ on:
     branches: [main]
 
 jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   build-and-test:
+    name: Build and Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,6 +36,20 @@ jobs:
         run: |
           npm ci
           npm --prefix webview ci
+
+      - name: Audit dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Check for network usage in source code
+        run: |
+          echo "Checking for network API usage in src/ directory..."
+          if grep -r "fetch\|axios\|http\.request\|https\.request\|XMLHttpRequest\|WebSocket\|net\.request" src/ --include="*.ts" --include="*.js"; then
+            echo "ERROR: Network API usage detected in source code!"
+            echo "Switchyard must not make any network requests."
+            exit 1
+          else
+            echo "✓ No network API usage detected"
+          fi
 
       - name: Lint
         run: npm run lint

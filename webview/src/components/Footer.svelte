@@ -2,7 +2,14 @@
   import { postToHost } from '../lib/vscode';
   import { getAccounts } from '../stores/app.svelte';
 
+  interface Props {
+    disabled?: boolean;
+  }
+
+  let { disabled = false }: Props = $props();
+
   function handleAdd() {
+    if (disabled) return;
     if (getAccounts().length > 0) {
       postToHost({ type: 'addNewAccount' });
     } else {
@@ -16,7 +23,7 @@
 </script>
 
 <footer class="footer">
-  <button class="add-btn" onclick={handleAdd} aria-label="Add account">
+  <button class="add-btn" onclick={handleAdd} {disabled} aria-label="Add account" title={disabled ? 'Adding accounts is disabled in unsupported environment' : undefined}>
     <span class="plus" aria-hidden="true">+</span>
     {getAccounts().length > 0 ? 'Add Another Account' : 'Add Account'}
   </button>

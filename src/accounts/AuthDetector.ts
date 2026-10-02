@@ -1,6 +1,5 @@
 import { KEYS } from '../constants';
 import { readKeys } from '../db/StateDb';
-import { fingerprint } from './identity';
 import { parseSnapshot } from './identity';
 import { AccountIdentity, Snapshot } from './types';
 
@@ -24,6 +23,8 @@ export interface PartialDetection {
 export interface DetectionFailure {
   unsupported: true;
   reason: string;
+  version?: string;
+  missingKeys?: string[];
 }
 
 export type DetectionResult = DetectedAuth | DetectionFailure | PartialDetection;
@@ -94,6 +95,7 @@ export class AuthDetector {
     return {
       unsupported: true,
       reason: 'No auth tokens found in state.vscdb (user may be signed out).',
+      missingKeys: [KEYS.oauth, KEYS.legacyInit],
     };
   }
 }

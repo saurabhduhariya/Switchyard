@@ -8,6 +8,7 @@
   import ErrorBanner from './components/ErrorBanner.svelte';
   import Toast from './components/Toast.svelte';
   import AddAccountGuide from './components/AddAccountGuide.svelte';
+  import UnsupportedBanner from './components/UnsupportedBanner.svelte';
   import {
     getAccounts,
     getActiveAccount,
@@ -21,6 +22,8 @@
     getToastAccountId,
     isLoading,
     getAddAccountGuide,
+    getUnsupported,
+    isUnsupported,
     handleMessage,
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
@@ -47,6 +50,13 @@
     <ErrorBanner message={getError()} />
   {/if}
 
+  {#if getUnsupported()}
+    <UnsupportedBanner
+      reason={getUnsupported()?.reason}
+      version={getUnsupported()?.version}
+    />
+  {/if}
+
   {#if getToast()}
     <Toast message={getToast()} accountId={getToastAccountId()} />
   {/if}
@@ -61,7 +71,7 @@
         <div class="loading-shimmer"></div>
         <div class="loading-shimmer short"></div>
       </div>
-    {:else if getAccounts().length === 0 && !getAddAccountGuide()?.active}
+    {:else if getAccounts().length === 0 && !getAddAccountGuide()?.active && !getUnsupported()}
       <EmptyState />
     {:else}
 
@@ -76,7 +86,7 @@
           <li class="section-label">Other Accounts</li>
           {#each getOtherAccounts() as account (account.id)}
             <li>
-              <AccountCard {account} masked={getMaskEmails()} />
+              <AccountCard {account} masked={getMaskEmails()} disabled={isUnsupported()} />
             </li>
           {/each}
         {/if}
@@ -85,7 +95,7 @@
   </div>
 
   {#if !isLoading() && getAccounts().length > 0}
-    <Footer />
+    <Footer disabled={isUnsupported()} />
   {/if}
 </main>
 

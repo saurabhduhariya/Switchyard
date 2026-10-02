@@ -18,6 +18,7 @@ let toast = $state('');
 let toastAccountId = $state<string | undefined>(undefined);
 let loading = $state(true);
 let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
+let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
 
 // ── Getters ──
 
@@ -48,6 +49,14 @@ export function getOtherAccounts(): AccountMeta[] {
 
 export function getAddAccountGuide(): AddAccountGuideState | undefined {
   return addAccountGuide;
+}
+
+export function getUnsupported(): { reason: string; version?: string } | undefined {
+  return unsupported;
+}
+
+export function isUnsupported(): boolean {
+  return Boolean(unsupported);
 }
 
 
@@ -89,6 +98,7 @@ export function handleMessage(data: ToWebview): void {
       maskEmails = data.maskEmails ?? false;
       mode = data.mode ?? 'profile';
       addAccountGuide = data.addAccountGuide;
+      unsupported = data.unsupported;
       busy = false;
       busyMessage = '';
       loading = false;

@@ -130,7 +130,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   /**
    * Pushes the current state of accounts, active ID, and masking preference to the webview.
    */
-  public async push(): Promise<void> {
+  public async push(overrides?: { unsupported?: { reason: string; version?: string } }): Promise<void> {
     const rawAccounts = await this.store.list();
     const activeId = await this.store.activeId();
     const config = vscode.workspace.getConfiguration('switchyard');
@@ -177,6 +177,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       maskEmails,
       mode,
       addAccountGuide,
+      ...overrides,
     };
 
     await this.view?.webview.postMessage(msg);
@@ -209,7 +210,12 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         this.logger.debug('Active detection unsupported or signed out:', result.reason);
         this.pendingSnapshot = undefined;
         await this.store.setActive(undefined);
-        await this.push();
+        await this.push({
+          unsupported: {
+            reason: result.reason,
+            version: result.version,
+          },
+        });
         return;
       }
 
