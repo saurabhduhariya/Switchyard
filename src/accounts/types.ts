@@ -5,8 +5,17 @@ export interface Snapshot {
   capturedAt: number;
 }
 
+export interface QuotaBucket {
+  remainingFraction?: number; // 0.0 - 1.0 (e.g. 0.645962)
+  remainingPercent?: number; // 0 - 100 (e.g. 64.60)
+  resetTime?: string; // ISO date string
+  disabled?: boolean;
+}
+
 export interface ModelQuotaGroup {
   name: string; // "Gemini" | "Claude + GPT"
+  weekly?: QuotaBucket;
+  fiveHour?: QuotaBucket;
   weeklyRemaining?: number; // percentage (e.g. 76.42)
   weeklyResetTime?: string; // ISO string e.g. "2026-10-02T14:36:41Z"
   rolling5hRemaining?: number;

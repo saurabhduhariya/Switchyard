@@ -1,12 +1,35 @@
 import * as child_process from 'node:child_process';
 import * as net from 'node:net';
-import { AccountQuotaSummary } from '../accounts/types';
+import { AccountQuotaSummary, QuotaBucket } from '../accounts/types';
 import { readKeys } from '../db/StateDb';
 import { Logger } from '../util/logger';
 
 interface LSServerEndpoint {
   port: number;
   token: string;
+}
+
+interface QuotaBucketDto {
+  bucketId?: string;
+  displayName?: string;
+  description?: string;
+  window?: string; // "weekly" | "5h"
+  remainingFraction?: number;
+  resetTime?: string;
+  disabled?: boolean;
+}
+
+interface QuotaGroupDto {
+  displayName?: string;
+  description?: string;
+  buckets?: QuotaBucketDto[];
+}
+
+interface RetrieveUserQuotaSummaryResponse {
+  response?: {
+    groups?: QuotaGroupDto[];
+    description?: string;
+  };
 }
 
 interface ClientModelConfig {
@@ -32,8 +55,10 @@ interface GetUserStatusResponse {
 
 /**
  * Collects model usage and quota summaries.
- * Primary: Queries the local Antigravity Language Server via loopback net.Socket IPC.
- * Fallback: Reads and decodes state.vscdb protobuf payload.
+ * Primary: Queries the local Antigravity Language Server via loopback net.Socket IPC
+ *          calling RetrieveUserQuotaSummary for exact weekly and 5h quota buckets.
+ * Fallback 1: Queries GetUserStatus from Language Server.
+ * Fallback 2: Reads and decodes state.vscdb protobuf payload.
  *
  * Strictly zero-telemetry, zero-external-network compliant.
  */
@@ -47,9 +72,9 @@ export class QuotaCollector {
    */
   public async getQuotaSummary(dbPath?: string): Promise<AccountQuotaSummary | undefined> {
     try {
-      const live = await this.queryLiveUserStatus();
-      if (live?.userStatus) {
-        return this.parseUserStatusResponse(live.userStatus, 'live');
+      const live = await this.queryLiveQuota();
+      if (live) {
+        return live;
       }
     } catch (err) {
       this.logger?.debug('Live quota query failed, trying database fallback:', err);
@@ -68,35 +93,80 @@ export class QuotaCollector {
   }
 
   /**
-   * Queries user status directly from local language server via loopback net.Socket.
+   * Queries user quota directly from local language server via loopback net.Socket.
    */
-  private async queryLiveUserStatus(): Promise<GetUserStatusResponse | undefined> {
+  private async queryLiveQuota(): Promise<AccountQuotaSummary | undefined> {
     const endpoint = await this.getOrDiscoverEndpoint();
     if (!endpoint) return undefined;
 
     try {
-      return await this.sendConnectRpc(endpoint.port, endpoint.token);
+      return await this.fetchLiveQuota(endpoint);
     } catch (err) {
       // Clear cache and retry discovery once
       this.cachedEndpoint = undefined;
       const retryEndpoint = await this.getOrDiscoverEndpoint();
       if (retryEndpoint) {
-        return await this.sendConnectRpc(retryEndpoint.port, retryEndpoint.token);
+        return await this.fetchLiveQuota(retryEndpoint);
       }
       throw err;
     }
   }
 
+  private async fetchLiveQuota(endpoint: LSServerEndpoint): Promise<AccountQuotaSummary | undefined> {
+    // 1. Fetch userTier from GetUserStatus if available
+    let tierName: string | undefined;
+    try {
+      const statusRes = await this.sendConnectRpc<GetUserStatusResponse>(
+        endpoint.port,
+        endpoint.token,
+        'GetUserStatus'
+      );
+      tierName = statusRes?.userStatus?.userTier?.name;
+    } catch (err) {
+      this.logger?.debug('GetUserStatus tier query error:', err);
+    }
+
+    // 2. Dedicated quota endpoint with weekly and 5h buckets
+    try {
+      const quotaRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+        endpoint.port,
+        endpoint.token,
+        'RetrieveUserQuotaSummary'
+      );
+      if (quotaRes?.response?.groups && quotaRes.response.groups.length > 0) {
+        return this.parseQuotaSummaryResponse(quotaRes.response, tierName, 'live');
+      }
+    } catch (err) {
+      this.logger?.debug('RetrieveUserQuotaSummary call failed, attempting fallback to GetUserStatus:', err);
+    }
+
+    // 3. Fallback to GetUserStatus model configs if RetrieveUserQuotaSummary was empty/unavailable
+    try {
+      const statusRes = await this.sendConnectRpc<GetUserStatusResponse>(
+        endpoint.port,
+        endpoint.token,
+        'GetUserStatus'
+      );
+      if (statusRes?.userStatus) {
+        return this.parseUserStatusResponse(statusRes.userStatus, 'live');
+      }
+    } catch (err) {
+      this.logger?.debug('Fallback GetUserStatus also failed:', err);
+    }
+
+    return undefined;
+  }
+
   /**
-   * Sends Connect-RPC HTTP/1.1 POST /exa.language_server_pb.LanguageServerService/GetUserStatus
+   * Sends Connect-RPC HTTP/1.1 POST /exa.language_server_pb.LanguageServerService/<method>
    * using raw net.Socket to avoid high-level HTTP client libraries.
    */
-  private sendConnectRpc(port: number, token: string): Promise<GetUserStatusResponse> {
+  private sendConnectRpc<T>(port: number, token: string, method: string = 'RetrieveUserQuotaSummary'): Promise<T> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection({ host: '127.0.0.1', port }, () => {
         const body = '{}';
         const req = [
-          'POST /exa.language_server_pb.LanguageServerService/GetUserStatus HTTP/1.1',
+          `POST /exa.language_server_pb.LanguageServerService/${method} HTTP/1.1`,
           `Host: 127.0.0.1:${port}`,
           'Content-Type: application/json',
           'Accept: application/json',
@@ -117,7 +187,7 @@ export class QuotaCollector {
 
       socket.on('end', () => {
         try {
-          const res = this.parseHttpResponseBody<GetUserStatusResponse>(raw);
+          const res = this.parseHttpResponseBody<T>(raw);
           resolve(res);
         } catch (e) {
           reject(e);
@@ -127,7 +197,7 @@ export class QuotaCollector {
       socket.on('error', reject);
       socket.setTimeout(2500, () => {
         socket.destroy();
-        reject(new Error('Language server IPC socket timeout'));
+        reject(new Error(`Language server IPC socket timeout on ${method}`));
       });
     });
   }
@@ -205,12 +275,23 @@ export class QuotaCollector {
         const ports = this.getListeningPortsForPid(pid);
         for (const port of ports) {
           try {
-            const res = await this.sendConnectRpc(port, token);
+            const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
             if (res && res.userStatus) {
               return { port, token };
             }
           } catch {
-            // Port wasn't the HTTP service, continue trying
+            try {
+              const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+                port,
+                token,
+                'RetrieveUserQuotaSummary'
+              );
+              if (qRes && qRes.response) {
+                return { port, token };
+              }
+            } catch {
+              // Port wasn't the HTTP service, continue trying
+            }
           }
         }
       }
@@ -240,6 +321,82 @@ export class QuotaCollector {
       }
     } catch {}
     return ports;
+  }
+
+  private toBucket(dto?: QuotaBucketDto): QuotaBucket | undefined {
+    if (!dto) return undefined;
+    const remainingFraction = typeof dto.remainingFraction === 'number' ? dto.remainingFraction : undefined;
+    const remainingPercent =
+      remainingFraction !== undefined ? Math.round(remainingFraction * 10000) / 100 : undefined;
+    return {
+      remainingFraction,
+      remainingPercent,
+      resetTime: dto.resetTime,
+      disabled: dto.disabled === true,
+    };
+  }
+
+  /**
+   * Transforms RetrieveUserQuotaSummary response into AccountQuotaSummary.
+   */
+  private parseQuotaSummaryResponse(
+    quotaData: NonNullable<RetrieveUserQuotaSummaryResponse['response']>,
+    rawTierName?: string,
+    source: 'live' | 'vscdb' = 'live'
+  ): AccountQuotaSummary {
+    let tierName = rawTierName || 'Antigravity Quota';
+    if (!tierName.toLowerCase().includes('quota')) {
+      tierName = `${tierName} Quota`;
+    }
+
+    const groups = quotaData.groups || [];
+    const geminiGroup = groups.find((g) => g.displayName?.toLowerCase().includes('gemini'));
+    const claudeGroup = groups.find(
+      (g) => g.displayName?.toLowerCase().includes('claude') || g.displayName?.toLowerCase().includes('gpt')
+    );
+
+    const geminiWeeklyDto = geminiGroup?.buckets?.find(
+      (b) => b.window?.toLowerCase() === 'weekly' || b.bucketId?.toLowerCase().includes('weekly')
+    );
+    const gemini5hDto = geminiGroup?.buckets?.find(
+      (b) => b.window?.toLowerCase() === '5h' || b.bucketId?.toLowerCase().includes('5h')
+    );
+
+    const claudeWeeklyDto = claudeGroup?.buckets?.find(
+      (b) => b.window?.toLowerCase() === 'weekly' || b.bucketId?.toLowerCase().includes('weekly')
+    );
+    const claude5hDto = claudeGroup?.buckets?.find(
+      (b) => b.window?.toLowerCase() === '5h' || b.bucketId?.toLowerCase().includes('5h')
+    );
+
+    const geminiWeekly = this.toBucket(geminiWeeklyDto);
+    const gemini5h = this.toBucket(gemini5hDto);
+    const claudeWeekly = this.toBucket(claudeWeeklyDto);
+    const claude5h = this.toBucket(claude5hDto);
+
+    return {
+      tierName,
+      gemini: {
+        name: 'Gemini',
+        weekly: geminiWeekly,
+        fiveHour: gemini5h,
+        weeklyRemaining: geminiWeekly?.remainingPercent,
+        weeklyResetTime: geminiWeekly?.resetTime,
+        rolling5hRemaining: gemini5h?.disabled ? undefined : gemini5h?.remainingPercent,
+        rolling5hResetTime: gemini5h?.disabled ? undefined : gemini5h?.resetTime,
+      },
+      claudeGpt: {
+        name: 'Claude + GPT',
+        weekly: claudeWeekly,
+        fiveHour: claude5h,
+        weeklyRemaining: claudeWeekly?.remainingPercent ?? 0,
+        weeklyResetTime: claudeWeekly?.resetTime,
+        rolling5hRemaining: claude5h?.disabled ? undefined : claude5h?.remainingPercent,
+        rolling5hResetTime: claude5h?.disabled ? undefined : claude5h?.resetTime,
+      },
+      updatedAt: Date.now(),
+      source,
+    };
   }
 
   /**
@@ -279,17 +436,44 @@ export class QuotaCollector {
         ? Math.round(claudeGptConfig.quotaInfo.remainingFraction * 10000) / 100
         : 0;
 
+    const geminiWeeklyBucket = {
+      remainingPercent: geminiRemaining,
+      resetTime: geminiConfig?.quotaInfo?.resetTime,
+      disabled: false,
+    };
+    const gemini5hBucket = {
+      remainingPercent: geminiRemaining,
+      resetTime: geminiConfig?.quotaInfo?.resetTime,
+      disabled: false,
+    };
+    const claudeWeeklyBucket = {
+      remainingPercent: claudeGptRemaining,
+      resetTime: claudeGptConfig?.quotaInfo?.resetTime,
+      disabled: false,
+    };
+    const claude5hBucket = {
+      disabled: true,
+    };
+
     return {
       tierName,
       gemini: {
         name: 'Gemini',
+        weekly: geminiWeeklyBucket,
+        fiveHour: gemini5hBucket,
         weeklyRemaining: geminiRemaining,
         weeklyResetTime: geminiConfig?.quotaInfo?.resetTime,
+        rolling5hRemaining: geminiRemaining,
+        rolling5hResetTime: geminiConfig?.quotaInfo?.resetTime,
       },
       claudeGpt: {
         name: 'Claude + GPT',
+        weekly: claudeWeeklyBucket,
+        fiveHour: claude5hBucket,
         weeklyRemaining: claudeGptRemaining,
         weeklyResetTime: claudeGptConfig?.quotaInfo?.resetTime,
+        rolling5hRemaining: undefined,
+        rolling5hResetTime: undefined,
       },
       updatedAt: Date.now(),
       source,
@@ -376,13 +560,35 @@ export class QuotaCollector {
         tierName: 'Antigravity Quota',
         gemini: {
           name: 'Gemini',
+          weekly: {
+            remainingPercent: geminiRemaining ?? 100,
+            resetTime: geminiResetTime,
+            disabled: false,
+          },
+          fiveHour: {
+            remainingPercent: geminiRemaining,
+            resetTime: geminiResetTime,
+            disabled: false,
+          },
           weeklyRemaining: geminiRemaining ?? 100,
           weeklyResetTime: geminiResetTime,
+          rolling5hRemaining: geminiRemaining,
+          rolling5hResetTime: geminiResetTime,
         },
         claudeGpt: {
           name: 'Claude + GPT',
+          weekly: {
+            remainingPercent: 0,
+            resetTime: claudeResetTime,
+            disabled: false,
+          },
+          fiveHour: {
+            disabled: true,
+          },
           weeklyRemaining: 0,
           weeklyResetTime: claudeResetTime,
+          rolling5hRemaining: undefined,
+          rolling5hResetTime: undefined,
         },
         updatedAt: Date.now(),
         source: 'vscdb',
