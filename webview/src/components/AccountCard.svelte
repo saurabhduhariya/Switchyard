@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte';
   import QuotaBoxes from './QuotaBoxes.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
+  import Icon from './Icon.svelte';
   import { maskEmail } from '../lib/maskEmail';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
@@ -93,12 +94,12 @@
   }
 
   let menuItems = $derived([
-    { label: account.pinned ? 'Unpin from Top' : 'Pin to Top', icon: '📌', action: handleTogglePin },
-    { label: 'Re-authenticate', icon: '🔄', action: handleReauth },
-    { label: 'Rename', icon: '✏️', action: startRename },
-    { label: 'Reveal Profile Folder', icon: '📂', action: handleReveal },
-    { label: 'Copy Settings into Profile', icon: '📋', action: handleCopySettings },
-    { label: 'Remove', icon: '🗑️', danger: true, action: handleRemove },
+    { label: account.pinned ? 'Unpin from Top' : 'Pin to Top', icon: 'pin' as const, action: handleTogglePin },
+    { label: 'Re-authenticate', icon: 'refresh' as const, action: handleReauth },
+    { label: 'Rename', icon: 'edit' as const, action: startRename },
+    { label: 'Reveal Profile Folder', icon: 'folder' as const, action: handleReveal },
+    { label: 'Copy Settings into Profile', icon: 'copy' as const, action: handleCopySettings },
+    { label: 'Remove', icon: 'trash' as const, danger: true, action: handleRemove },
   ]);
 </script>
 
@@ -130,7 +131,9 @@
         <div class="name-row">
           <span class="username" title={account.label || username}>{username}</span>
           {#if account.pinned}
-            <span class="pin-icon" title="Pinned to top">📌</span>
+            <span class="pin-icon" title="Pinned to top">
+              <Icon name="pin" size={11} />
+            </span>
           {/if}
         </div>
         <div class="email" title={account.email}>{displayEmail}</div>
@@ -140,10 +143,10 @@
     <!-- Header Actions -->
     <div class="header-actions">
       <button class="icon-btn" onclick={startRename} title="Rename account" aria-label="Rename">
-        ✏️
+        <Icon name="edit" size={13} />
       </button>
       <button class="icon-btn danger" onclick={handleRemove} title="Remove account" aria-label="Remove">
-        🗑️
+        <Icon name="trash" size={13} />
       </button>
       <button
         class="icon-btn"
@@ -151,7 +154,7 @@
         title="More actions"
         aria-label="More actions"
       >
-        ⋮
+        <Icon name="dots" size={14} />
       </button>
     </div>
   </div>
@@ -165,10 +168,17 @@
       title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
       aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
     >
-      <span class="switch-icon">⇄</span> {getMode() === 'profile' ? 'Open' : 'Switch'}
+      <Icon name="switch" size={12} class="switch-icon" />
+      <span>{getMode() === 'profile' ? 'Open' : 'Switch'}</span>
     </button>
-    <span class="tier-pill" title="Tier: {tierName}">✨ {tierName}</span>
-    <span class="time-pill" title="Quota snapshot age">⏱️ {age}</span>
+    <span class="tier-pill" title="Tier: {tierName}">
+      <Icon name="sparkle" size={10} class="pill-icon" />
+      <span>{tierName}</span>
+    </span>
+    <span class="time-pill" title="Quota snapshot age">
+      <Icon name="clock" size={10} class="pill-icon" />
+      <span>{age}</span>
+    </span>
   </div>
 
   <!-- Quota Cards -->
@@ -304,12 +314,10 @@
     cursor: not-allowed;
   }
 
-  .switch-icon {
-    font-size: 12px;
-    line-height: 1;
-  }
-
   .tier-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 10px;
     font-weight: 600;
     padding: 2px 8px;
@@ -324,6 +332,9 @@
   }
 
   .time-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 10px;
     padding: 2px 7px;
     border-radius: 12px;

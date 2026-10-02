@@ -1,6 +1,7 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
   import { getAccounts } from '../stores/app.svelte';
+  import Icon from './Icon.svelte';
 
   interface Props {
     disabled?: boolean;
@@ -24,12 +25,13 @@
 
 <footer class="footer">
   <button class="add-btn" onclick={handleAdd} {disabled} aria-label="Add account" title={disabled ? 'Adding accounts is disabled in unsupported environment' : undefined}>
-    <span class="plus" aria-hidden="true">+</span>
-    {getAccounts().length > 0 ? 'Add Another Account' : 'Add Account'}
+    <Icon name="plus" size={13} />
+    <span>{getAccounts().length > 0 ? 'Add Another Account' : 'Add Account'}</span>
   </button>
 
   <button class="import-btn" onclick={handleImport} aria-label="Import account from file or backup">
-    Import from Backup / File
+    <Icon name="import" size={12} class="import-icon" />
+    <span>Import from Backup / File</span>
   </button>
 </footer>
 
@@ -46,6 +48,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
     width: 100%;
     padding: 5px 12px;
     border: none;
@@ -60,7 +63,6 @@
 
   .import-btn:hover {
     color: var(--vscode-foreground, #ccc);
-    text-decoration: underline;
   }
 
   .add-btn {
@@ -89,12 +91,6 @@
   .add-btn:focus-visible {
     outline: 1px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 1px;
-  }
-
-  .plus {
-    font-size: 16px;
-    font-weight: 400;
-    line-height: 1;
   }
 
   @media (prefers-reduced-motion: reduce) {

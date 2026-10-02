@@ -1,6 +1,7 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
   import OverflowMenu from './OverflowMenu.svelte';
+  import Icon from './Icon.svelte';
 
   let menuOpen = $state(false);
 
@@ -21,15 +22,15 @@
   }
 
   let menuItems = [
-    { label: 'Open Backups Folder', icon: '📁', action: handleOpenBackups },
-    { label: 'Restore Backup…', icon: '⏪', action: handleRestoreBackup },
-    { label: 'Settings', icon: '⚙️', action: handleSettings },
+    { label: 'Open Backups Folder', icon: 'folder' as const, action: handleOpenBackups },
+    { label: 'Restore Backup…', icon: 'restore' as const, action: handleRestoreBackup },
+    { label: 'Settings', icon: 'settings' as const, action: handleSettings },
   ];
 </script>
 
 <header class="header">
   <div class="brand">
-    <span class="logo" aria-hidden="true">⚡</span>
+    <Icon name="zap" size={15} class="brand-icon" />
     <span class="title">Switchyard</span>
   </div>
   <div class="actions">
@@ -39,7 +40,7 @@
       aria-label="Refresh accounts"
       title="Refresh"
     >
-      ↻
+      <Icon name="refresh" size={14} />
     </button>
     <button
       class="icon-btn"
@@ -49,7 +50,7 @@
       aria-haspopup="menu"
       aria-expanded={menuOpen}
     >
-      ⋮
+      <Icon name="dots" size={14} />
     </button>
   </div>
 
@@ -72,10 +73,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-
-  .logo {
-    font-size: 14px;
   }
 
   .title {

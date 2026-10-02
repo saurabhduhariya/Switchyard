@@ -1,6 +1,7 @@
 <script lang="ts">
   import { clearToast } from '../stores/app.svelte';
   import { postToHost } from '../lib/vscode';
+  import Icon from './Icon.svelte';
 
   interface Props {
     message: string;
@@ -29,7 +30,9 @@
 
 {#if visible}
   <div class="toast" role="status" aria-live="polite">
-    <span class="toast-icon" aria-hidden="true">🔔</span>
+    <span class="toast-icon" aria-hidden="true">
+      <Icon name="bell" size={14} />
+    </span>
     <span class="toast-text">{message}</span>
     <div class="toast-actions">
       {#if accountId}

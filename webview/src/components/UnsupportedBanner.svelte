@@ -1,4 +1,6 @@
 <script lang="ts">
+  import Icon from './Icon.svelte';
+
   interface Props {
     reason?: string;
     version?: string;
@@ -25,7 +27,9 @@
   </p>
 
   <div class="banner-note">
-    <span class="note-icon" aria-hidden="true">🔒</span>
+    <span class="note-icon" aria-hidden="true">
+      <Icon name="lock" size={13} />
+    </span>
     <span>Read-only features (viewing, renaming, backups) remain safe and available.</span>
   </div>
 </div>

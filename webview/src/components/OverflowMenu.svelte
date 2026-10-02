@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import Icon, { type IconName } from './Icon.svelte';
 
   interface Props {
-    items: { label: string; icon?: string; danger?: boolean; action: () => void }[];
+    items: { label: string; icon?: IconName | string; danger?: boolean; action: () => void }[];
     onclose: () => void;
     children?: Snippet;
   }
@@ -53,7 +54,9 @@
         onclick={() => { item.action(); onclose(); }}
       >
         {#if item.icon}
-          <span class="menu-icon">{item.icon}</span>
+          <span class="menu-icon">
+            <Icon name={item.icon as IconName} size={14} />
+          </span>
         {/if}
         {item.label}
       </button>
@@ -112,8 +115,11 @@
   }
 
   .menu-icon {
-    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     width: 16px;
-    text-align: center;
+    height: 16px;
+    flex-shrink: 0;
   }
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { clearError } from '../stores/app.svelte';
+  import Icon from './Icon.svelte';
 
   interface Props {
     message: string;
@@ -9,9 +10,13 @@
 </script>
 
 <div class="error-banner" role="alert">
-  <span class="error-icon" aria-hidden="true">⚠</span>
+  <span class="error-icon" aria-hidden="true">
+    <Icon name="alert" size={14} />
+  </span>
   <span class="error-text">{message}</span>
-  <button class="dismiss-btn" onclick={clearError} aria-label="Dismiss error">✕</button>
+  <button class="dismiss-btn" onclick={clearError} aria-label="Dismiss error">
+    <Icon name="close" size={12} />
+  </button>
 </div>
 
 <style>
