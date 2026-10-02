@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: Build, Package & Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Dependencies
+        run: |
+          npm ci
+          npm --prefix webview ci
+
+      - name: Audit & Lint
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm run lint
+
+      - name: Run Tests
+        run: npm test
+
+      - name: Build Extension
+        run: npm run build
+
+      - name: Package VSIX
+        run: npx @vscode/vsce package --no-dependencies
+
+      - name: Find VSIX Package
+        id: package-info
+        run: |
+          VSIX_FILE=$(ls *.vsix | head -n 1)
+          echo "vsix_file=${VSIX_FILE}" >> $GITHUB_OUTPUT
+          echo "Packaged: ${VSIX_FILE}"
+          sha256sum "${VSIX_FILE}" > "${VSIX_FILE}.sha256"
+
+      - name: Publish to Open VSX
+        if: env.OVSX_PAT != ''
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          npx ovsx publish ${{ steps.package-info.outputs.vsix_file }} -p "${OVSX_PAT}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package-info.outputs.vsix_file }}
+            ${{ steps.package-info.outputs.vsix_file }}.sha256
+          generate_release_notes: true
+          draft: false
+          prerelease: false
