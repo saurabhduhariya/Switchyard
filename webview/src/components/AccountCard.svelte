@@ -175,7 +175,7 @@
       <Icon name="sparkle" size={10} class="pill-icon" />
       <span>{tierName}</span>
     </span>
-    <span class="time-pill" title="Quota snapshot age">
+    <span class="time-pill" title="Last active: {age}">
       <Icon name="clock" size={10} class="pill-icon" />
       <span>{age}</span>
     </span>
