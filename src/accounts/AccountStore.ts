@@ -4,14 +4,14 @@ import { parseSnapshot } from './identity';
 import { AccountMeta, AccountQuotaSummary, createAccountId, Snapshot } from './types';
 
 export interface SecretStorageLike {
-  get(key: string): Promise<string | undefined>;
-  store(key: string, value: string): Promise<void>;
-  delete(key: string): Promise<void>;
+  get(key: string): Thenable<string | undefined> | Promise<string | undefined>;
+  store(key: string, value: string): Thenable<void> | Promise<void>;
+  delete(key: string): Thenable<void> | Promise<void>;
 }
 
 export interface MementoLike {
   get<T>(key: string, defaultValue?: T): T;
-  update(key: string, value: unknown): Promise<void>;
+  update(key: string, value: unknown): Thenable<void> | Promise<void>;
 }
 
 export interface AccountStoreOptions {
@@ -118,9 +118,10 @@ export class AccountStore {
 
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);
-      if (idx !== -1) {
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
         accounts[idx] = {
-          ...accounts[idx],
+          ...existing,
           lastUsedAt: Date.now(),
         };
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
@@ -135,9 +136,10 @@ export class AccountStore {
     return this.mutex.runExclusive(async () => {
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);
-      if (idx !== -1) {
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
         accounts[idx] = {
-          ...accounts[idx],
+          ...existing,
           lastUsedAt: Date.now(),
         };
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
@@ -157,11 +159,12 @@ export class AccountStore {
       const identity = parseSnapshot(snapshot.values);
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);
-      if (idx !== -1) {
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
         accounts[idx] = {
-          ...accounts[idx],
+          ...existing,
           fingerprint: identity.fingerprint,
-          plan: identity.plan || accounts[idx].plan,
+          plan: identity.plan || existing.plan,
         };
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
       }
@@ -175,8 +178,9 @@ export class AccountStore {
     return this.mutex.runExclusive(async () => {
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);
-      if (idx !== -1) {
-        accounts[idx] = { ...accounts[idx], ...partial };
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
+        accounts[idx] = { ...existing, ...partial };
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
       }
     });
@@ -222,13 +226,14 @@ export class AccountStore {
       // 2. Update metadata in state
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const existingIdx = accounts.findIndex((a) => a.id === id);
+      const existing = accounts[existingIdx];
       const now = Date.now();
 
       let meta: AccountMeta;
-      if (existingIdx !== -1) {
+      if (existingIdx !== -1 && existing) {
         meta = {
-          ...accounts[existingIdx],
-          plan: identity.plan || accounts[existingIdx].plan,
+          ...existing,
+          plan: identity.plan || existing.plan,
           fingerprint: identity.fingerprint,
           lastUsedAt: now,
           ...(label ? { label } : {}),
@@ -259,8 +264,9 @@ export class AccountStore {
     return this.mutex.runExclusive(async () => {
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const idx = accounts.findIndex((a) => a.id === id);
-      if (idx !== -1) {
-        accounts[idx] = { ...accounts[idx], label: label.trim() || undefined };
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
+        accounts[idx] = { ...existing, label: label.trim() || undefined };
         await this.state.update(ACCOUNTS_STATE_KEY, accounts);
       }
     });

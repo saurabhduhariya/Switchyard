@@ -154,7 +154,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       const result = await detector.detectActive();
-      if ('unsupported' in result) {
+      if ('unsupported' in result || 'partial' in result) {
         vscode.window.showWarningMessage('Switchyard: No active Google login found. Please sign in to Antigravity first.');
         return;
       }
@@ -305,8 +305,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } else {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         let defaultUri: vscode.Uri | undefined;
-        if (workspaceFolders && workspaceFolders.length > 0) {
-          const spikeB = path.join(workspaceFolders[0].uri.fsPath, 'spike', 'B.vscdb');
+        const firstFolder = workspaceFolders?.[0];
+        if (firstFolder) {
+          const spikeB = path.join(firstFolder.uri.fsPath, 'spike', 'B.vscdb');
           if (fs.existsSync(spikeB)) {
             defaultUri = vscode.Uri.file(spikeB);
           }

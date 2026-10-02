@@ -31,6 +31,7 @@ export function readVarint(buf: Buffer, offset: number): { value: number; bytesR
   while (offset + bytesRead < buf.length) {
     const byte = buf[offset + bytesRead];
     bytesRead++;
+    if (byte === undefined) break;
     value |= (byte & 0x7f) << shift;
     if ((byte & 0x80) === 0) {
       break;
@@ -119,9 +120,10 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
 export function jwtPayload(token: string): Record<string, unknown> | undefined {
   if (!token || typeof token !== 'string') return undefined;
   const parts = token.split('.');
-  if (parts.length < 2) return undefined;
+  const payload = parts[1];
+  if (!payload) return undefined;
   try {
-    const raw = Buffer.from(parts[1], 'base64url').toString('utf8');
+    const raw = Buffer.from(payload, 'base64url').toString('utf8');
     const parsed = JSON.parse(raw);
     return typeof parsed === 'object' && parsed !== null ? parsed : undefined;
   } catch {

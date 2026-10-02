@@ -102,7 +102,7 @@ export class TokenSwapEngine implements SwitchEngine {
     if (this.detector) {
       try {
         const activeResult = await this.detector.detectActive();
-        if (!('unsupported' in activeResult)) {
+        if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
           await this.store.upsertFromSnapshot(activeResult.snapshot);
           this.logger.debug('Re-captured active session before token swap');
         }
@@ -267,7 +267,7 @@ export class TokenSwapEngine implements SwitchEngine {
     if (this.detector) {
       try {
         const activeResult = await this.detector.detectActive();
-        if (!('unsupported' in activeResult)) {
+        if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
           const meta = await this.store.upsertFromSnapshot(activeResult.snapshot);
           previousId = previousId || meta.id;
           previousEmail = previousEmail || meta.email;

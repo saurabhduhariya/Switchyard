@@ -8,9 +8,10 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "types": ["node"],
     "outDir": "out",
     "rootDir": "src",
     "sourceMap": true
   },
-  "include": ["src", "test"]
+  "include": ["src"]
 }

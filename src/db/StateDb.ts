@@ -122,7 +122,7 @@ export async function readKeys(dbPath: string, keys: string[]): Promise<Record<s
 
     try {
       const tableCheck = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='ItemTable'");
-      if (!tableCheck.length || !tableCheck[0].values.length) {
+      if (!tableCheck.length || !tableCheck[0]?.values.length) {
         return {};
       }
 
@@ -220,7 +220,7 @@ export async function deleteKeys(dbPath: string, keys: string[]): Promise<void> 
 
   try {
     const tableCheck = db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='ItemTable'");
-    if (!tableCheck.length || !tableCheck[0].values.length) {
+    if (!tableCheck.length || !tableCheck[0]?.values.length) {
       return;
     }
 

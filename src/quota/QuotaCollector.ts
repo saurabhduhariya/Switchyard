@@ -271,26 +271,28 @@ export class QuotaCollector {
         const token = tokenMatch[1];
         const pid = pidMatch[1];
 
-        // Find listening ports for this pid
-        const ports = this.getListeningPortsForPid(pid);
-        for (const port of ports) {
-          try {
-            const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
-            if (res && res.userStatus) {
-              return { port, token };
-            }
-          } catch {
+        if (token && pid) {
+          // Find listening ports for this pid
+          const ports = this.getListeningPortsForPid(pid);
+          for (const port of ports) {
             try {
-              const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
-                port,
-                token,
-                'RetrieveUserQuotaSummary'
-              );
-              if (qRes && qRes.response) {
+              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
+              if (res && res.userStatus) {
                 return { port, token };
               }
             } catch {
-              // Port wasn't the HTTP service, continue trying
+              try {
+                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+                  port,
+                  token,
+                  'RetrieveUserQuotaSummary'
+                );
+                if (qRes && qRes.response) {
+                  return { port, token };
+                }
+              } catch {
+                // Port wasn't the HTTP service, continue trying
+              }
             }
           }
         }
@@ -308,7 +310,8 @@ export class QuotaCollector {
         const ssOut = child_process.execSync('ss -tlpn', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
         const regex = new RegExp(`127\\.0\\.0\\.1:(\\d+).*?pid=${pid}\\b`, 'g');
         for (const match of ssOut.matchAll(regex)) {
-          ports.push(parseInt(match[1], 10));
+          const p = match[1];
+          if (p) ports.push(parseInt(p, 10));
         }
       } else if (process.platform === 'darwin') {
         const lsofOut = child_process.execSync(`lsof -nP -p ${pid} -iTCP -sTCP:LISTEN`, {
@@ -316,7 +319,8 @@ export class QuotaCollector {
           stdio: ['pipe', 'pipe', 'ignore'],
         });
         for (const match of lsofOut.matchAll(/127\.0\.0\.1:(\d+)/g)) {
-          ports.push(parseInt(match[1], 10));
+          const p = match[1];
+          if (p) ports.push(parseInt(p, 10));
         }
       }
     } catch {}
@@ -484,7 +488,7 @@ export class QuotaCollector {
    * Database fallback: Decodes antigravityUnifiedStateSync.userStatus from state.vscdb
    */
   private async loadFromDb(dbPath: string): Promise<AccountQuotaSummary | undefined> {
-    const keys = readKeys(dbPath, ['antigravityUnifiedStateSync.userStatus']);
+    const keys = await readKeys(dbPath, ['antigravityUnifiedStateSync.userStatus']);
     const val = keys['antigravityUnifiedStateSync.userStatus'];
     if (!val) return undefined;
 
@@ -492,9 +496,10 @@ export class QuotaCollector {
       const raw = Buffer.from(val, 'base64');
       // Look for inner base64 string after userStatusSentinelKey
       const match = raw.toString('binary').match(/userStatusSentinelKey.{1,10}?([A-Za-z0-9+/=]{100,})/);
-      if (!match) return undefined;
+      const innerStr = match?.[1];
+      if (!innerStr) return undefined;
 
-      const inner = Buffer.from(match[1], 'base64');
+      const inner = Buffer.from(innerStr, 'base64');
       // Look for field 33 (cascadeModelConfigData)
       let offset = 0;
       let field33: Buffer | undefined;
@@ -636,6 +641,7 @@ export class QuotaCollector {
     let i = offset;
     while (i < buf.length) {
       const b = buf[i++];
+      if (b === undefined) break;
       value |= (b & 0x7f) << shift;
       shift += 7;
       if (!(b & 0x80)) break;
@@ -678,7 +684,8 @@ export class QuotaCollector {
               qi = qdl;
               const rsub = sub.subarray(qi, qi + ql);
               qi += ql;
-              if (rsub.length >= 2 && rsub[0] >> 3 === 1) {
+              const firstByte = rsub[0];
+              if (rsub.length >= 2 && firstByte !== undefined && firstByte >> 3 === 1) {
                 const { value: sec } = this.readVarint(rsub, 1);
                 resetSec = sec;
               }

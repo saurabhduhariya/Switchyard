@@ -443,7 +443,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
     if (!this.pendingSnapshot && this.detector) {
       const activeCheck = await this.detector.detectActive();
-      if (!('unsupported' in activeCheck)) {
+      if (!('unsupported' in activeCheck) && !('partial' in activeCheck)) {
         this.pendingSnapshot = activeCheck.snapshot;
       }
     }
