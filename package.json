@@ -66,6 +66,10 @@
       {
         "command": "switchyard.importAccount",
         "title": "Switchyard: Import Account from Database / Backup"
+      },
+      {
+        "command": "switchyard.openSettings",
+        "title": "Switchyard: Settings"
       }
     ],
     "walkthroughs": [

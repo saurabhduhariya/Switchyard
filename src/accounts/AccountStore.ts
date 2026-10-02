@@ -36,11 +36,40 @@ export class AccountStore {
 
   /**
    * Lists all saved accounts metadata (never returns session tokens).
+   * Automatically normalizes/heals any legacy false-positive "Pro" plans.
    */
   async list(): Promise<AccountMeta[]> {
     return this.mutex.runExclusive(async () => {
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
-      return Array.isArray(accounts) ? [...accounts] : [];
+      if (!Array.isArray(accounts)) return [];
+
+      let modified = false;
+      for (const account of accounts) {
+        if (account.plan === 'Pro') {
+          let resolvedPlan = 'Antigravity Starter';
+          try {
+            const secretKey = `${SECRET_PREFIX}${account.id}`;
+            const rawSnap = await this.secrets.get(secretKey);
+            if (rawSnap) {
+              const snap = JSON.parse(rawSnap);
+              const identity = parseSnapshot(snap.values);
+              if (identity.plan && identity.plan !== 'Pro') {
+                resolvedPlan = identity.plan;
+              }
+            }
+          } catch {
+            // ignore
+          }
+          account.plan = resolvedPlan;
+          modified = true;
+        }
+      }
+
+      if (modified) {
+        await this.state.update(ACCOUNTS_STATE_KEY, accounts);
+      }
+
+      return [...accounts];
     });
   }
 

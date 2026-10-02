@@ -9,6 +9,7 @@
   import Toast from './components/Toast.svelte';
   import AddAccountGuide from './components/AddAccountGuide.svelte';
   import UnsupportedBanner from './components/UnsupportedBanner.svelte';
+  import SettingsView from './components/SettingsView.svelte';
   import {
     getAccounts,
     getActiveAccount,
@@ -24,6 +25,8 @@
     getAddAccountGuide,
     getUnsupported,
     isUnsupported,
+    getView,
+    setView,
     handleMessage,
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
@@ -40,62 +43,66 @@
 </script>
 
 <main class="container">
-  <Header />
+  {#if getView() === 'settings'}
+    <SettingsView onBack={() => setView('accounts')} />
+  {:else}
+    <Header />
 
-  {#if isBusy()}
-    <SwitchOverlay message={getBusyMessage()} />
-  {/if}
-
-  {#if getError()}
-    <ErrorBanner message={getError()} />
-  {/if}
-
-  {#if getUnsupported()}
-    <UnsupportedBanner
-      reason={getUnsupported()?.reason}
-      version={getUnsupported()?.version}
-    />
-  {/if}
-
-  {#if getToast()}
-    <Toast message={getToast()} accountId={getToastAccountId()} />
-  {/if}
-
-  {#if getAddAccountGuide()?.active}
-    <AddAccountGuide guide={getAddAccountGuide()!} />
-  {/if}
-
-  <div class="content">
-    {#if isLoading()}
-      <div class="loading" aria-label="Loading accounts">
-        <div class="loading-shimmer"></div>
-        <div class="loading-shimmer short"></div>
-      </div>
-    {:else if getAccounts().length === 0 && !getAddAccountGuide()?.active && !getUnsupported()}
-      <EmptyState />
-    {:else}
-
-      <ul class="account-list" aria-label="Accounts">
-        {#if getActiveAccount()}
-          <li>
-            <ActiveCard account={getActiveAccount()!} masked={getMaskEmails()} />
-          </li>
-        {/if}
-
-        {#if getOtherAccounts().length > 0}
-          <li class="section-label">Other Accounts</li>
-          {#each getOtherAccounts() as account (account.id)}
-            <li>
-              <AccountCard {account} masked={getMaskEmails()} disabled={isUnsupported()} />
-            </li>
-          {/each}
-        {/if}
-      </ul>
+    {#if isBusy()}
+      <SwitchOverlay message={getBusyMessage()} />
     {/if}
-  </div>
 
-  {#if !isLoading() && getAccounts().length > 0}
-    <Footer disabled={isUnsupported()} />
+    {#if getError()}
+      <ErrorBanner message={getError()} />
+    {/if}
+
+    {#if getUnsupported()}
+      <UnsupportedBanner
+        reason={getUnsupported()?.reason}
+        version={getUnsupported()?.version}
+      />
+    {/if}
+
+    {#if getToast()}
+      <Toast message={getToast()} accountId={getToastAccountId()} />
+    {/if}
+
+    {#if getAddAccountGuide()?.active}
+      <AddAccountGuide guide={getAddAccountGuide()!} />
+    {/if}
+
+    <div class="content">
+      {#if isLoading()}
+        <div class="loading" aria-label="Loading accounts">
+          <div class="loading-shimmer"></div>
+          <div class="loading-shimmer short"></div>
+        </div>
+      {:else if getAccounts().length === 0 && !getAddAccountGuide()?.active && !getUnsupported()}
+        <EmptyState />
+      {:else}
+
+        <ul class="account-list" aria-label="Accounts">
+          {#if getActiveAccount()}
+            <li>
+              <ActiveCard account={getActiveAccount()!} masked={getMaskEmails()} />
+            </li>
+          {/if}
+
+          {#if getOtherAccounts().length > 0}
+            <li class="section-label">Other Accounts</li>
+            {#each getOtherAccounts() as account (account.id)}
+              <li>
+                <AccountCard {account} masked={getMaskEmails()} disabled={isUnsupported()} />
+              </li>
+            {/each}
+          {/if}
+        </ul>
+      {/if}
+    </div>
+
+    {#if !isLoading() && getAccounts().length > 0}
+      <Footer disabled={isUnsupported()} />
+    {/if}
   {/if}
 </main>
 

@@ -100,19 +100,19 @@ export class QuotaCollector {
     if (!endpoint) return undefined;
 
     try {
-      return await this.fetchLiveQuota(endpoint);
+      return await this.requestLiveQuota(endpoint);
     } catch (err) {
       // Clear cache and retry discovery once
       this.cachedEndpoint = undefined;
       const retryEndpoint = await this.getOrDiscoverEndpoint();
       if (retryEndpoint) {
-        return await this.fetchLiveQuota(retryEndpoint);
+        return await this.requestLiveQuota(retryEndpoint);
       }
       throw err;
     }
   }
 
-  private async fetchLiveQuota(endpoint: LSServerEndpoint): Promise<AccountQuotaSummary | undefined> {
+  private async requestLiveQuota(endpoint: LSServerEndpoint): Promise<AccountQuotaSummary | undefined> {
     // 1. Fetch userTier from GetUserStatus if available
     let tierName: string | undefined;
     try {
@@ -498,6 +498,7 @@ export class QuotaCollector {
       // Look for field 33 (cascadeModelConfigData)
       let offset = 0;
       let field33: Buffer | undefined;
+      let field36: Buffer | undefined;
 
       while (offset < inner.length) {
         const { fieldNum, wireType, nextOffset } = this.readVarintKey(inner, offset);
@@ -509,8 +510,10 @@ export class QuotaCollector {
           offset += length;
           if (fieldNum === 33) {
             field33 = subdata;
-            break;
+          } else if (fieldNum === 36) {
+            field36 = subdata;
           }
+          if (field33 && field36) break;
         } else if (wireType === 0) {
           const { nextOffset: no } = this.readVarint(inner, offset);
           offset = no;
@@ -522,6 +525,34 @@ export class QuotaCollector {
       }
 
       if (!field33) return undefined;
+
+      let tierName = 'Antigravity Quota';
+      if (field36) {
+        let sOffset = 0;
+        let tName: string | undefined;
+        let tId: string | undefined;
+        while (sOffset < field36.length) {
+          const { fieldNum: fn, wireType: wt, nextOffset: sNxt } = this.readVarintKey(field36, sOffset);
+          sOffset = sNxt;
+          if (wt === 2) {
+            const { length: sLen, nextOffset: sDOff } = this.readVarint(field36, sOffset);
+            sOffset = sDOff;
+            const sub = field36.subarray(sOffset, sOffset + sLen);
+            sOffset += sLen;
+            if (fn === 1) tId = sub.toString('utf8');
+            else if (fn === 2) tName = sub.toString('utf8');
+          } else if (wt === 0) {
+            const { nextOffset: no } = this.readVarint(field36, sOffset);
+            sOffset = no;
+          } else if (wt === 1) sOffset += 8;
+          else if (wt === 5) sOffset += 4;
+        }
+        if (tName) {
+          tierName = tName;
+        } else if (tId) {
+          tierName = tId === 'free-tier' || tId === 'starter-tier' ? 'Antigravity Starter Quota' : tId;
+        }
+      }
 
       // Parse models in field 33
       let geminiRemaining: number | undefined;
@@ -557,7 +588,7 @@ export class QuotaCollector {
       }
 
       return {
-        tierName: 'Antigravity Quota',
+        tierName,
         gemini: {
           name: 'Gemini',
           weekly: {

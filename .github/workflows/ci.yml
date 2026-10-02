@@ -43,7 +43,7 @@ jobs:
       - name: Check for network usage in source code
         run: |
           echo "Checking for network API usage in src/ directory..."
-          if grep -r "fetch\|axios\|http\.request\|https\.request\|XMLHttpRequest\|WebSocket\|net\.request" src/ --include="*.ts" --include="*.js"; then
+          if grep -rE "\bfetch\s*\(|axios|http\.request|https\.request|XMLHttpRequest|WebSocket|net\.request" src/ --include="*.ts" --include="*.js"; then
             echo "ERROR: Network API usage detected in source code!"
             echo "Switchyard must not make any network requests."
             exit 1

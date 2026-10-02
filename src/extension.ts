@@ -121,7 +121,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
         e.affectsConfiguration('switchyard.maskEmails') ||
-        e.affectsConfiguration('switchyard.mode')
+        e.affectsConfiguration('switchyard.mode') ||
+        e.affectsConfiguration('switchyard.confirmBeforeSwitch') ||
+        e.affectsConfiguration('switchyard.backupRetention')
       ) {
         const currentMode = vscode.workspace
           .getConfiguration('switchyard')
@@ -363,6 +365,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         logger.error('Failed to import account from database', err);
         vscode.window.showErrorMessage(`Switchyard: Failed to import account: ${err instanceof Error ? err.message : String(err)}`);
       }
+    }),
+
+    // switchyard.openSettings: open in-panel settings
+    vscode.commands.registerCommand('switchyard.openSettings', async () => {
+      await vscode.commands.executeCommand('agSwitchyard.panel.focus');
+      await panelProvider.showSettings();
     })
   );
 

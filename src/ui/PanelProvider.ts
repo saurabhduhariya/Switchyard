@@ -114,8 +114,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             break;
 
           case 'openSettings':
+            await this.view?.webview.postMessage({ type: 'openSettings' });
+            break;
+
+          case 'openSettingsEditor':
             await vscode.commands.executeCommand('workbench.action.openSettings', 'switchyard');
             break;
+
+          case 'updateSetting': {
+            const config = vscode.workspace.getConfiguration('switchyard');
+            await config.update(msg.key, msg.value, vscode.ConfigurationTarget.Global);
+            await this.push();
+            break;
+          }
 
           case 'revealProfile':
             await this.handleRevealProfile(msg.id);
@@ -153,6 +164,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('switchyard');
     const maskEmails = config.get<boolean>('maskEmails', false);
     const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+    const confirmBeforeSwitch = config.get<boolean>('confirmBeforeSwitch', true);
+    const backupRetention = config.get<number>('backupRetention', 5);
 
     const pinnedIds = this.ctx.globalState?.get<string[]>('switchyard.pinned', []) ?? [];
     const accounts = rawAccounts.map((acc) => ({
@@ -193,6 +206,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       activeId,
       maskEmails,
       mode,
+      confirmBeforeSwitch,
+      backupRetention,
       addAccountGuide,
       ...overrides,
     };
@@ -200,6 +215,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     await this.view?.webview.postMessage(msg);
     this.statusBar.update(accounts, activeId, maskEmails);
     void vscode.commands.executeCommand('setContext', 'switchyard.hasAccounts', accounts.length > 0);
+  }
+
+  public async showSettings(): Promise<void> {
+    await this.view?.webview.postMessage({ type: 'openSettings' });
   }
 
 

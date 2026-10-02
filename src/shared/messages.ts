@@ -57,6 +57,8 @@ export type ToWebview =
       activeId?: string;
       maskEmails?: boolean;
       mode?: 'profile' | 'tokenSwap';
+      confirmBeforeSwitch?: boolean;
+      backupRetention?: number;
       addAccountGuide?: AddAccountGuideState;
       unsupported?: {
         reason: string;
@@ -65,7 +67,8 @@ export type ToWebview =
     }
   | { type: 'busy'; message: string }
   | { type: 'error'; message: string }
-  | { type: 'toast'; message: string; accountId?: string };
+  | { type: 'toast'; message: string; accountId?: string }
+  | { type: 'openSettings' };
 
 export type ToHost =
   | { type: 'ready' }
@@ -81,6 +84,8 @@ export type ToHost =
   | { type: 'dismissToast' }
   | { type: 'saveDetected'; id: string }
   | { type: 'openSettings' }
+  | { type: 'openSettingsEditor' }
+  | { type: 'updateSetting'; key: string; value: unknown }
   | { type: 'openBackupsFolder' }
   | { type: 'restoreBackup' }
   | { type: 'revealProfile'; id: string }

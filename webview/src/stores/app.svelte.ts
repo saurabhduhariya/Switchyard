@@ -14,13 +14,32 @@ let busyMessage = $state('');
 let error = $state('');
 let maskEmails = $state(false);
 let mode = $state<'profile' | 'tokenSwap'>('profile');
+let confirmBeforeSwitch = $state(true);
+let backupRetention = $state(5);
+let currentView = $state<'accounts' | 'settings'>('accounts');
 let toast = $state('');
 let toastAccountId = $state<string | undefined>(undefined);
 let loading = $state(true);
 let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
 
-// ── Getters ──
+// ── Getters & Setters ──
+
+export function getView(): 'accounts' | 'settings' {
+  return currentView;
+}
+
+export function setView(view: 'accounts' | 'settings'): void {
+  currentView = view;
+}
+
+export function getConfirmBeforeSwitch(): boolean {
+  return confirmBeforeSwitch;
+}
+
+export function getBackupRetention(): number {
+  return backupRetention;
+}
 
 export function getMode(): 'profile' | 'tokenSwap' {
   return mode;
@@ -97,11 +116,17 @@ export function handleMessage(data: ToWebview): void {
       activeId = data.activeId;
       maskEmails = data.maskEmails ?? false;
       mode = data.mode ?? 'profile';
+      confirmBeforeSwitch = data.confirmBeforeSwitch ?? true;
+      backupRetention = data.backupRetention ?? 5;
       addAccountGuide = data.addAccountGuide;
       unsupported = data.unsupported;
       busy = false;
       busyMessage = '';
       loading = false;
+      break;
+
+    case 'openSettings':
+      currentView = 'settings';
       break;
 
 

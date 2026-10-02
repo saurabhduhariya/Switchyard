@@ -1,5 +1,6 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
+  import { setView } from '../stores/app.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
 
@@ -18,13 +19,13 @@
   }
 
   function handleSettings() {
-    postToHost({ type: 'openSettings' });
+    setView('settings');
   }
 
   let menuItems = [
+    { label: 'Settings', icon: 'settings' as const, action: handleSettings },
     { label: 'Open Backups Folder', icon: 'folder' as const, action: handleOpenBackups },
     { label: 'Restore Backup…', icon: 'restore' as const, action: handleRestoreBackup },
-    { label: 'Settings', icon: 'settings' as const, action: handleSettings },
   ];
 </script>
 
@@ -41,6 +42,14 @@
       title="Refresh"
     >
       <Icon name="refresh" size={14} />
+    </button>
+    <button
+      class="icon-btn"
+      onclick={handleSettings}
+      aria-label="Switchyard Settings"
+      title="Settings"
+    >
+      <Icon name="settings" size={14} />
     </button>
     <button
       class="icon-btn"

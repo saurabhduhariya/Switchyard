@@ -130,4 +130,57 @@ describe('accounts/identity', () => {
     const email = extractEmailFromBuffer(outerBinary);
     expect(email).toBe('kkpncc8831@gmail.com');
   });
+
+  it('extracts Antigravity Starter tier correctly from protobuf userTier (field 36)', () => {
+    // Build field 36 submessage: field 1 = 'free-tier', field 2 = 'Antigravity Starter Quota'
+    const idBuf = Buffer.from('free-tier', 'utf8');
+    const nameBuf = Buffer.from('Antigravity Starter Quota', 'utf8');
+    const tierData = Buffer.concat([
+      Buffer.from([0x0a, idBuf.length]),
+      idBuf,
+      Buffer.from([0x12, nameBuf.length]),
+      nameBuf,
+    ]);
+
+    // Field 36, wireType 2: (36 << 3) | 2 = 290 => varint 0xa2, 0x02
+    const msg = Buffer.concat([
+      Buffer.from([0xa2, 0x02, tierData.length]),
+      tierData,
+    ]);
+
+    const plan = extractPlanFromBuffer(msg);
+    expect(plan).toBe('Antigravity Starter');
+  });
+
+  it('extracts Google AI Pro tier correctly from protobuf userTier (field 36)', () => {
+    const idBuf = Buffer.from('g1-pro-tier', 'utf8');
+    const nameBuf = Buffer.from('Google AI Pro', 'utf8');
+    const tierData = Buffer.concat([
+      Buffer.from([0x0a, idBuf.length]),
+      idBuf,
+      Buffer.from([0x12, nameBuf.length]),
+      nameBuf,
+    ]);
+
+    const msg = Buffer.concat([
+      Buffer.from([0xa2, 0x02, tierData.length]),
+      tierData,
+    ]);
+
+    const plan = extractPlanFromBuffer(msg);
+    expect(plan).toBe('Google AI Pro');
+  });
+
+  it('does NOT misidentify model names like "Gemini 3.1 Pro (High)" as a Pro plan', () => {
+    // A free account payload containing model names but no paid userTier
+    const modelConfigText = 'Gemini 3.1 Pro (High) Gemini 3.1 Pro (Low) Claude Sonnet 4.6';
+    const textBuf = Buffer.from(modelConfigText, 'utf8');
+    const msg = Buffer.concat([
+      Buffer.from([0x0a, textBuf.length]),
+      textBuf,
+    ]);
+
+    const plan = extractPlanFromBuffer(msg);
+    expect(plan).toBeUndefined();
+  });
 });

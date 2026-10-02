@@ -19,7 +19,10 @@
     | 'close'
     | 'lock'
     | 'bell'
-    | 'login';
+    | 'login'
+    | 'arrow-left'
+    | 'check'
+    | 'external';
 
   interface Props {
     name: IconName;
@@ -229,6 +232,33 @@
       d="M10.5 11.5l3.5-3.5-3.5-3.5M14 8H5.5"
       stroke="currentColor"
       stroke-width="1.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      fill="none"
+    />
+  {:else if name === 'arrow-left'}
+    <path
+      d="M10 3.5L5.5 8l4.5 4.5"
+      stroke="currentColor"
+      stroke-width="1.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      fill="none"
+    />
+  {:else if name === 'check'}
+    <path
+      d="M3.5 8.5l3 3 6-7"
+      stroke="currentColor"
+      stroke-width="1.3"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      fill="none"
+    />
+  {:else if name === 'external'}
+    <path
+      d="M6 3.5H3.5a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V10M9 3.5h3.5m0 0V7m0-3.5L7.5 8.5"
+      stroke="currentColor"
+      stroke-width="1.25"
       stroke-linecap="round"
       stroke-linejoin="round"
       fill="none"

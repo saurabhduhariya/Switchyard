@@ -193,18 +193,110 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
   return undefined;
 }
 
+export interface UserTierInfo {
+  id?: string;
+  name?: string;
+}
+
+/**
+ * Parses userTier (field 36) from protobuf buffers recursively.
+ */
+export function extractTierFromProtobuf(buf: Buffer): UserTierInfo | undefined {
+  if (!buf || buf.length === 0) return undefined;
+
+  const fields = readProtobufFields(buf);
+  for (const field of fields) {
+    if (field.fieldNumber === 36 && field.wireType === 2) {
+      const subfields = readProtobufFields(field.data);
+      let id: string | undefined;
+      let name: string | undefined;
+      for (const sf of subfields) {
+        if (sf.fieldNumber === 1 && sf.wireType === 2) {
+          id = sf.data.toString('utf8');
+        } else if (sf.fieldNumber === 2 && sf.wireType === 2) {
+          name = sf.data.toString('utf8');
+        }
+      }
+      if (id || name) {
+        return { id, name };
+      }
+    }
+
+    if (field.wireType === 2) {
+      const str = field.data.toString('utf8');
+      if (str.length >= 20 && /^[A-Za-z0-9+/=\r\n]+$/.test(str.trim())) {
+        try {
+          const innerBuf = Buffer.from(str.trim(), 'base64');
+          const innerTier = extractTierFromProtobuf(innerBuf);
+          if (innerTier) return innerTier;
+        } catch {
+          // ignore
+        }
+      }
+
+      const subTier = extractTierFromProtobuf(field.data);
+      if (subTier) return subTier;
+    }
+  }
+
+  // Scan embedded base64 chunks for userTier
+  const latinStr = buf.toString('latin1');
+  const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
+  for (const chunk of b64Chunks) {
+    try {
+      const decodedBuf = Buffer.from(chunk, 'base64');
+      const innerTier = extractTierFromProtobuf(decodedBuf);
+      if (innerTier) return innerTier;
+    } catch {
+      // ignore
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Normalizes userTier id and name into a human-readable plan name.
+ */
+export function formatPlanFromTier(tier: UserTierInfo): string | undefined {
+  const id = tier.id?.toLowerCase();
+  const name = tier.name;
+
+  if (id === 'free-tier' || id === 'starter-tier' || name?.toLowerCase().includes('starter') || name?.toLowerCase().includes('free')) {
+    return 'Antigravity Starter';
+  }
+  if (id === 'g1-ultra-tier' || name?.toLowerCase().includes('ultra')) {
+    return 'Google AI Ultra';
+  }
+  if (id === 'g1-pro-tier' || name?.toLowerCase().includes('google ai pro')) {
+    return 'Google AI Pro';
+  }
+  if (name?.toLowerCase().includes('ai pro')) {
+    return 'AI Pro';
+  }
+  return name || tier.id;
+}
+
 /**
  * Scans a buffer for subscription plan or tier indications.
  */
 export function extractPlanFromBuffer(buf: Buffer): string | undefined {
   if (!buf || buf.length === 0) return undefined;
-  let bestPlan: string | undefined;
 
-  const direct = findPlanInString(buf.toString('utf8'));
-  if (direct) {
-    bestPlan = direct;
+  // 1. Direct protobuf userTier check (highest fidelity)
+  const tier = extractTierFromProtobuf(buf);
+  if (tier) {
+    const formatted = formatPlanFromTier(tier);
+    if (formatted) return formatted;
   }
 
+  // 2. Direct string check in buffer utf8 representation
+  const direct = findPlanInString(buf.toString('utf8'));
+  if (direct) {
+    return direct;
+  }
+
+  // 3. Recursive traversal of length-delimited protobuf fields
   const fields = readProtobufFields(buf);
   for (const field of fields) {
     if (field.wireType === 2) {
@@ -213,52 +305,54 @@ export function extractPlanFromBuffer(buf: Buffer): string | undefined {
         try {
           const innerBuf = Buffer.from(str.trim(), 'base64');
           const innerPlan = extractPlanFromBuffer(innerBuf);
-          if (innerPlan && (!bestPlan || innerPlan.length > bestPlan.length)) {
-            bestPlan = innerPlan;
-          }
+          if (innerPlan) return innerPlan;
         } catch {
           // ignore
         }
       }
 
       const subPlan = extractPlanFromBuffer(field.data);
-      if (subPlan && (!bestPlan || subPlan.length > bestPlan.length)) {
-        bestPlan = subPlan;
-      }
+      if (subPlan) return subPlan;
     }
   }
 
-  // Also scan embedded base64 chunks for plan
+  // 4. Also scan embedded base64 chunks for plan
   const latinStr = buf.toString('latin1');
   const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
   for (const chunk of b64Chunks) {
     try {
       const decodedBuf = Buffer.from(chunk, 'base64');
       const innerPlan = extractPlanFromBuffer(decodedBuf);
-      if (innerPlan && (!bestPlan || innerPlan.length > bestPlan.length)) {
-        bestPlan = innerPlan;
-      }
+      if (innerPlan) return innerPlan;
     } catch {
       // ignore
     }
   }
 
-  return bestPlan;
+  return undefined;
 }
 
 function findPlanInString(text: string): string | undefined {
-  const candidates = [
+  // Check Starter / Free tiers first
+  if (/\b(?:free-tier|starter-tier|Antigravity Starter(?:\s+Quota)?|Starter Quota)\b/i.test(text)) {
+    return 'Antigravity Starter';
+  }
+  // Check Ultra
+  if (/\b(?:g1-ultra-tier|Google\s+(?:One\s+)?AI\s+Ultra|Gemini Ultra)\b/i.test(text)) {
+    return 'Google AI Ultra';
+  }
+  // Check Pro candidates (MUST be specific — never match standalone 'Pro' because model names like 'Gemini 3.1 Pro' contain it!)
+  const proCandidates = [
     'Google One AI Premium',
+    'Google AI Pro',
     'AI Pro',
     'Gemini Advanced',
-    'Gemini Ultra',
-    'Ultra',
-    'Pro',
+    'g1-pro-tier',
   ];
-  for (const candidate of candidates) {
+  for (const candidate of proCandidates) {
     const regex = new RegExp(`\\b${candidate}\\b`, 'i');
     if (regex.test(text)) {
-      return candidate;
+      return candidate === 'g1-pro-tier' ? 'Google AI Pro' : candidate;
     }
   }
   return undefined;
