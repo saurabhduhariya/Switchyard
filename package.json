@@ -2,17 +2,17 @@
   "name": "ag-switchyard",
   "displayName": "Switchyard – Account Switcher for Antigravity",
   "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
-  "publisher": "saurabh",
+  "publisher": "saurabhduhariya",
   "version": "0.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/saurabh/Switchyard"
+    "url": "https://github.com/saurabhduhariya/Switchyard"
   },
   "bugs": {
-    "url": "https://github.com/saurabh/Switchyard/issues"
+    "url": "https://github.com/saurabhduhariya/Switchyard/issues"
   },
-  "homepage": "https://github.com/saurabh/Switchyard#readme",
+  "homepage": "https://github.com/saurabhduhariya/Switchyard#readme",
   "icon": "media/icon.png",
   "galleryBanner": {
     "color": "#1e1e2e",

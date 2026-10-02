@@ -9,3 +9,5 @@ spike/
 .DS_Store
 README.md
 IMPLEMENTATION_PLAN.md
+*.txt
+token.txt
