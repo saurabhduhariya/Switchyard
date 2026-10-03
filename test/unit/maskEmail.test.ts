@@ -6,11 +6,11 @@ import { maskEmail } from '../../webview/src/lib/maskEmail';
 
 describe('maskEmail', () => {
   it('masks a standard email', () => {
-    expect(maskEmail('rahul@gmail.com')).toBe('r****@gmail.com');
+    expect(maskEmail('developer@example.com')).toBe('d****@example.com');
   });
 
   it('masks a long local part', () => {
-    expect(maskEmail('saurabhduhariya2007@gmail.com')).toBe('s****@gmail.com');
+    expect(maskEmail('superlongaccountname@example.com')).toBe('s****@example.com');
   });
 
   it('masks a short local part (2 chars)', () => {

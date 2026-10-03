@@ -119,7 +119,7 @@ describe('accounts/identity', () => {
 
   it('extracts email embedded in raw binary buffer with base64 chunks', () => {
     // Simulate Google internal protobuf containing an embedded base64 payload
-    const innerText = 'kkpncc: kkpncc8831@gmail.com';
+    const innerText = 'developer: developer@example.com';
     const b64 = Buffer.from(innerText).toString('base64');
     const outerBinary = Buffer.concat([
       Buffer.from([0x01, 0x02, 0x03]),
@@ -128,7 +128,7 @@ describe('accounts/identity', () => {
     ]);
 
     const email = extractEmailFromBuffer(outerBinary);
-    expect(email).toBe('kkpncc8831@gmail.com');
+    expect(email).toBe('developer@example.com');
   });
 
   it('extracts Antigravity Starter tier correctly from protobuf userTier (field 36)', () => {

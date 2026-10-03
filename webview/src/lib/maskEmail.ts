@@ -1,6 +1,6 @@
 /**
  * Email masking utility.
- * "rahul@gmail.com" → "r****@gmail.com"
+ * "user@example.com" → "u****@example.com"
  */
 export function maskEmail(email: string): string {
   const at = email.indexOf('@');

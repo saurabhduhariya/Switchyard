@@ -14,7 +14,7 @@ const DAY = 86_400_000;
 const MOCK_ACCOUNTS: AccountMeta[] = [
   {
     id: 'acc-1',
-    email: 'saurabhduhariya2007@gmail.com',
+    email: 'developer@example.com',
     label: 'Personal',
     plan: 'Pro',
     addedAt: NOW - 30 * DAY,
@@ -22,7 +22,7 @@ const MOCK_ACCOUNTS: AccountMeta[] = [
   },
   {
     id: 'acc-2',
-    email: 'saurabh@company.dev',
+    email: 'team@company.dev',
     label: 'Work',
     plan: 'Enterprise',
     addedAt: NOW - 20 * DAY,

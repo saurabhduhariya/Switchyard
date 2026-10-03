@@ -14,8 +14,8 @@ The following test scenarios represent the mandatory manual verification checkli
 | # | Scenario | Windows | macOS | Linux (Active) | Status | Notes |
 |---|----------|:---:|:-----:|:-----:|:------:|-------|
 | **1** | Fresh install, no accounts → empty state | Planned | Planned | ✅ Verified | **PASS** | Shows clean empty state illustration and "Save Current Login" button |
-| **2** | Save current active account | Planned | Planned | ✅ Verified | **PASS** | Auto-detects Google account (`saurabhduhariya2007@gmail.com`), saves metadata in Memento & snapshot in SecretStorage |
-| **3** | Add second account (guided sign-out flow) | Planned | Planned | ✅ Verified | **PASS** | `signOutAndRestart` wipes auth keys, restarts IDE, detects new login (`kkpncc8831@gmail.com`), offers toast to save |
+| **2** | Save current active account | Planned | Planned | ✅ Verified | **PASS** | Auto-detects Google account (`primary@example.com`), saves metadata in Memento & snapshot in SecretStorage |
+| **3** | Add second account (guided sign-out flow) | Planned | Planned | ✅ Verified | **PASS** | `signOutAndRestart` wipes auth keys, restarts IDE, detects new login (`secondary@example.com`), offers toast to save |
 | **4** | Switch A → B → A cycle | Planned | Planned | ✅ Verified | **PASS** | Successfully swapped sessions without browser OAuth prompts |
 | **5** | Switch with unsaved editor files | Planned | Planned | ✅ Verified | **PASS** | IDE quit prompts to save dirty buffers; helper waits safely until parent PID fully exits |
 | **6** | Switch with 2 IDE windows open | Planned | Planned | ✅ Verified | **PASS** | Displays warning dialog to close all other Antigravity windows before proceeding |
@@ -23,7 +23,7 @@ The following test scenarios represent the mandatory manual verification checkli
 | **8** | Restore backup from panel / command | Planned | Planned | ✅ Verified | **PASS** | In-panel settings "Restore Backup" and command `switchyard.restoreBackup` list timestamped backups and restore cleanly |
 | **9** | Remove account | Planned | Planned | ✅ Verified | **PASS** | Modal confirmation; deletes metadata from Memento and securely wipes snapshot from SecretStorage |
 | **10** | Theme compatibility (Dark, Light, High Contrast) | Planned | Planned | ✅ Verified | **PASS** | Uses native `--vscode-*` CSS variables; crisp SVG vector icons rendered correctly across themes |
-| **11** | Upgrade install over older version | Planned | Planned | ✅ Verified | **PASS** | Migrated extension in `~/.antigravity-ide/extensions/saurabh.ag-switchyard-0.1.0/`; sanitizes legacy metadata |
+| **11** | Upgrade install over older version | Planned | Planned | ✅ Verified | **PASS** | Migrated extension in `~/.antigravity-ide/extensions/saurabhduhariya.ag-switchyard-0.1.0/`; sanitizes legacy metadata |
 | **12** | Uninstall / clean state check | Planned | Planned | ✅ Verified | **PASS** | No lingering global daemons or rogue processes; backups safely contained in globalStorage |
 
 ---

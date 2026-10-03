@@ -55,8 +55,8 @@ Comparing full database dumps (`ItemTable` with 1,694 keys) across two distinct 
   2. Locate and base64 decode the embedded inner base64 block.
   3. The user's Google email address is stored as a plain UTF-8 string inside the inner message.
 * **Verified Accounts:**
-  - Account A: `saurabhduhariya2007@gmail.com`
-  - Account B: `kkpncc8831@gmail.com`
+  - Account A: `user.a@example.com`
+  - Account B: `user.b@example.com`
 * **Identity Rule:**
   - Primary: Extract email from `userStatus`.
   - Fallback: SHA256 fingerprint (`sha256(oauthToken).slice(0, 12)`).
