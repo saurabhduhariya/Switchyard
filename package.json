@@ -3,7 +3,7 @@
   "displayName": "Switchyard – Account Switcher for Antigravity",
   "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
   "publisher": "saurabhduhariya",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -142,12 +142,12 @@
             "tokenSwap",
             "profile"
           ],
-          "description": "tokenSwap = switch accounts in the same window (restarts IDE). profile = launch isolated windows side-by-side."
+          "description": "tokenSwap = switch accounts in the same window (fast restart). profile = launch isolated windows side-by-side."
         },
         "switchyard.confirmBeforeSwitch": {
           "type": "boolean",
           "default": true,
-          "description": "Ask for confirmation before restarting the IDE when switching accounts in tokenSwap mode."
+          "description": "Ask for confirmation before switching accounts in tokenSwap mode."
         },
         "switchyard.backupRetention": {
           "type": "number",

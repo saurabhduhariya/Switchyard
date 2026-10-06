@@ -32,6 +32,7 @@ import { fingerprint } from '../../src/accounts/identity';
 import { KEYS } from '../../src/constants';
 import { TokenSwapEngine } from '../../src/switch/TokenSwapEngine';
 import { Logger } from '../../src/util/logger';
+import { writeSyntheticDb } from '../fixtures/makeDb';
 
 class MemoryMemento implements MementoLike {
   private data = new Map<string, unknown>();
@@ -76,10 +77,10 @@ describe('switch/TokenSwapEngine', () => {
   let secrets: MemorySecretStorage;
   let logger: Logger;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'switchyard-swap-test-'));
     dbPath = path.join(tmpDir, 'state.vscdb');
-    fs.writeFileSync(dbPath, 'dummy-db-content');
+    await writeSyntheticDb(dbPath, {});
 
     memento = new MemoryMemento();
     secrets = new MemorySecretStorage();
@@ -163,7 +164,86 @@ describe('switch/TokenSwapEngine', () => {
     expect(result.error).toMatch(/Session credentials for nocreds@example.com not found/);
   });
 
-  it('successfully builds job, spawns helper, marks pendingSwitch, and triggers quit', async () => {
+  it('swaps tokens via process relaunch, marks pendingSwitch, and quits to restart', async () => {
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-target', email: 'target@example.com', addedAt: Date.now(), fingerprint: '4444' },
+    ]);
+
+    // Seed target snapshot in secret storage
+    await store.saveSnapshot('acc-target', {
+      values: { [KEYS.oauth]: 'secret-token' },
+      capturedAt: Date.now(),
+    });
+
+    // User confirms dialog
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Switch and Restart' as any);
+
+    const fakeSpawner = vi.fn().mockReturnValue({ pid: 12345, unref: vi.fn() });
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      spawner: fakeSpawner as any,
+      executableFinder: () => '/mock/antigravity-ide',
+    });
+
+    const result = await engine.switchTo('acc-target');
+
+    expect(result.ok).toBe(true);
+    // Spawner SHOULD be called now that we always use process relaunch
+    expect(fakeSpawner).toHaveBeenCalled();
+
+    // Verify pendingSwitch was recorded in memento
+    const pending = memento.get<any>('switchyard.pendingSwitch');
+    expect(pending).toBeDefined();
+    expect(pending.targetId).toBe('acc-target');
+    expect(pending.targetEmail).toBe('target@example.com');
+
+    // Verify quit was triggered (not reload)
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
+  });
+
+  it('signs out and restarts IDE via process relaunch', async () => {
+    const fakeSpawner = vi.fn().mockReturnValue({ pid: 12346, unref: vi.fn() });
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      spawner: fakeSpawner as any,
+      executableFinder: () => '/mock/antigravity-ide',
+    });
+
+    const result = await engine.signOutAndRestart({
+      previousId: 'acc-prev',
+      previousEmail: 'prev@example.com',
+      expectedEmail: 'new@example.com',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fakeSpawner).toHaveBeenCalled();
+
+    // Verify addingAccount was stored in memento
+    const adding = memento.get<any>('switchyard.addingAccount');
+    expect(adding).toBeDefined();
+    expect(adding.previousId).toBe('acc-prev');
+    expect(adding.previousEmail).toBe('prev@example.com');
+    expect(adding.expectedEmail).toBe('new@example.com');
+
+    // Verify quit was triggered (not reload)
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
+  });
+
+  it('successfully builds job, spawns helper, marks pendingSwitch, and triggers quit to restart', async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((_key: string, defaultVal: any) => defaultVal),
+    } as any);
+
     await memento.update('switchyard.accounts', [
       { id: 'acc-target', email: 'target@example.com', addedAt: Date.now(), fingerprint: '4444' },
     ]);
@@ -228,7 +308,11 @@ describe('switch/TokenSwapEngine', () => {
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
   });
 
-  it('signOutAndRestart builds a job with deleteKeys, stores addingAccount in memento, and quits IDE', async () => {
+  it('signOutAndRestart builds a job with deleteKeys, stores addingAccount in memento, and quits IDE to restart', async () => {
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValue({
+      get: vi.fn((_key: string, defaultVal: any) => defaultVal),
+    } as any);
+
     let spawnedCmd = '';
     let spawnedArgs: string[] = [];
     let spawnedEnv: any = {};

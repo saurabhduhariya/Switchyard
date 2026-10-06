@@ -55,7 +55,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const panelProvider = new PanelProvider(context, store, detector, logger, statusBar, switchEngine);
 
   // 2b. Reconcile any pending switch from a previous IDE quit/restart
-  void reconcilePendingSwitch(context.globalState, store, logger);
+  void reconcilePendingSwitch(context.globalState, store, logger, dbPath);
 
   // 3. Register Webview Provider & Status Bar
   context.subscriptions.push(

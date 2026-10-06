@@ -62,7 +62,7 @@ describe('switch/reconcile', () => {
   });
 
   it('does nothing when no pending switch is recorded', async () => {
-    await reconcilePendingSwitch(memento, store, logger);
+    await reconcilePendingSwitch(memento, store, logger, undefined);
     expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
     expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
   });
@@ -78,7 +78,7 @@ describe('switch/reconcile', () => {
       startedAt: Date.now() - 5000,
     });
 
-    await reconcilePendingSwitch(memento, store, logger);
+    await reconcilePendingSwitch(memento, store, logger, undefined);
 
     // Verify active account was updated
     const active = await store.activeId();
@@ -107,7 +107,7 @@ describe('switch/reconcile', () => {
 
     vi.mocked(vscode.window.showErrorMessage).mockResolvedValueOnce('Restore Backup' as any);
 
-    await reconcilePendingSwitch(memento, store, logger);
+    await reconcilePendingSwitch(memento, store, logger, undefined);
 
     // Active account should NOT be changed
     expect(await store.activeId()).toBeUndefined();

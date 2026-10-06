@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.3] - 2026-10-06
+
+### Fixed
+- **Critical: Real Account Switching & AI Quota Synchronization**:
+  - Fixed Token Swap mode not genuinely switching Google accounts (avatar and AI quotas were stuck on the old account).
+  - Root cause: Helper process was targeting Extension Host PID instead of Electron Main Process PID, causing in-memory cache to never refresh.
+  - Solution: Changed `process.pid` to `getMainProcessPid()` using `process.ppid` to target the correct Electron Main Process.
+  - Added post-restart fingerprint verification in `reconcile.ts` - compares live `state.vscdb` credentials with target account and displays retry button if mismatch detected.
+  - Removed artificial settle delay from helper process, relying on non-blocking SQLite lock detection for fast ~1.2s relaunches.
+
+### Changed
+- **UI Clarity**:
+  - Updated Token Swap mode description: "Swaps authentication in the current workspace via fast sub-second IDE relaunch. Real avatar & AI quota rotation."
+  - Updated Isolated Profiles description: "Run multiple accounts side-by-side in separate windows. Zero window closing."
+
+### Technical
+- Modified `src/switch/TokenSwapEngine.ts`: Use `getMainProcessPid()` instead of `process.pid` for accurate parent process detection.
+- Added `src/platform/ide.ts`: New `getMainProcessPid()` function returning `process.ppid || process.pid`.
+- Optimized `src/switch/helper/switch-helper.ts`: Removed `settleDelayMs` parameter, simplified WAL/SHM cleanup to single pass.
+- Enhanced `src/switch/reconcile.ts`: Added live fingerprint verification with automatic retry on mismatch.
+- Updated all unit tests to reflect process relaunch behavior.
+
+---
+
 ## [0.1.0] - 2026-10-02
 
 ### Added

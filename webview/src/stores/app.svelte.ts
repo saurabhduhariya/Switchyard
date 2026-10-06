@@ -33,6 +33,7 @@ export function setView(view: 'accounts' | 'settings'): void {
   currentView = view;
 }
 
+
 export function getConfirmBeforeSwitch(): boolean {
   return confirmBeforeSwitch;
 }

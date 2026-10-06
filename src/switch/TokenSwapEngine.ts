@@ -7,7 +7,7 @@ import * as vscode from 'vscode';
 import { AuthDetector } from '../accounts/AuthDetector';
 import { parseSnapshot } from '../accounts/identity';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
-import { findExecutable } from '../platform/ide';
+import { findExecutable, getMainProcessPid } from '../platform/ide';
 import { findStateDb, getBackupsDir } from '../platform/paths';
 import { KEYS } from '../constants';
 import { Logger } from '../util/logger';
@@ -179,7 +179,7 @@ export class TokenSwapEngine implements SwitchEngine {
 
     const job: SwitchJob = {
       version: 1,
-      parentPid: process.pid,
+      parentPid: getMainProcessPid(), // Use Electron Main Process PID, not Extension Host PID
       dbPath: resolvedDb,
       targetEmail: account.email,
       targetFingerprint,
@@ -325,7 +325,7 @@ export class TokenSwapEngine implements SwitchEngine {
 
     const job: SwitchJob = {
       version: 1,
-      parentPid: process.pid,
+      parentPid: getMainProcessPid(), // Use Electron Main Process PID, not Extension Host PID
       dbPath: resolvedDb,
       targetEmail: '',
       targetFingerprint: '',

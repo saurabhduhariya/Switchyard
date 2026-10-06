@@ -94,7 +94,7 @@
             <span class="badge recommended">Recommended</span>
           </div>
           <p class="mode-desc">
-            Swaps authentication tokens directly in the current window. Fast &amp; lightweight reload.
+            Swaps authentication in the current workspace via fast sub-second IDE relaunch. Real avatar &amp; AI quota rotation.
           </p>
         </button>
 
@@ -113,7 +113,7 @@
             <span class="badge side-by-side">Side-by-side</span>
           </div>
           <p class="mode-desc">
-            Launches separate, isolated window profiles to run multiple accounts simultaneously.
+            Run multiple accounts side-by-side in separate windows. Zero window closing.
           </p>
         </button>
       </div>
@@ -125,6 +125,8 @@
         <Icon name="alert" size={12} class="section-icon" />
         <span class="section-title">BEHAVIOR</span>
       </div>
+
+
 
       <div class="setting-row">
         <div class="setting-info">

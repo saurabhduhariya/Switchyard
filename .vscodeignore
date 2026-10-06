@@ -14,6 +14,8 @@ eslint.config.mjs
 .editorconfig
 .gitignore
 IMPLEMENTATION_PLAN.md
+*_plan.md
+*plan*.md
 .github/**
 *.txt
 token.txt

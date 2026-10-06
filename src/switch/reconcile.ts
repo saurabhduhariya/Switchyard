@@ -3,6 +3,9 @@ import * as vscode from 'vscode';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
 import { Logger } from '../util/logger';
 import { SwitchResultFile } from './job';
+import { parseSnapshot } from '../accounts/identity';
+import { readKeys } from '../db/StateDb';
+import { KEYS } from '../constants';
 
 export interface PendingSwitchState {
   targetId: string;
@@ -18,7 +21,8 @@ export interface PendingSwitchState {
 export async function reconcilePendingSwitch(
   memento: MementoLike,
   store: AccountStore,
-  logger: Logger
+  logger: Logger,
+  dbPath?: string
 ): Promise<void> {
   const pending = memento.get<PendingSwitchState | undefined>(
     'switchyard.pendingSwitch',
@@ -50,6 +54,34 @@ export async function reconcilePendingSwitch(
   }
 
   if (resultFileContent?.ok) {
+    // Verify that the live state.vscdb fingerprint matches the target account
+    const targetAccount = await store.get(pending.targetId);
+    if (targetAccount && dbPath) {
+      try {
+        const liveSnapshot = await readKeys(dbPath, [KEYS.oauth, KEYS.userStatus]);
+        const liveIdentity = parseSnapshot(liveSnapshot);
+
+        if (liveIdentity.fingerprint !== targetAccount.fingerprint) {
+          logger.warn(
+            `Fingerprint mismatch after switch! Expected ${targetAccount.fingerprint}, got ${liveIdentity.fingerprint}`
+          );
+          const choice = await vscode.window.showWarningMessage(
+            `Switchyard: Account switch completed, but verification detected a mismatch. The IDE may still be on the previous account.`,
+            'Retry Switch',
+            'Dismiss'
+          );
+          if (choice === 'Retry Switch') {
+            // Trigger switch command again
+            void vscode.commands.executeCommand('switchyard.switchToAccount', pending.targetId);
+          }
+          return;
+        }
+      } catch (err) {
+        logger.warn('Failed to verify fingerprint after switch:', err);
+        // Continue anyway - the helper process reported success
+      }
+    }
+
     await store.setActive(pending.targetId);
     logger.info(`Successfully reconciled switch to account: ${pending.targetEmail}`);
     void vscode.window.showInformationMessage(

@@ -248,11 +248,44 @@ export async function deleteKeys(dbPath: string, keys: string[]): Promise<void> 
 }
 
 /**
- * Writes data to a temp file, fsyncs, and atomically renames over targetPath with retry backoff.
+ * Writes data to file with retry backoff.
+ * When targetPath already exists, writes in-place (r+ and ftruncate) to preserve the file descriptor
+ * and inode held by any running IDE processes.
+ * When targetPath does not exist, writes to a temp file and atomically renames.
  */
 async function atomicWriteFile(targetPath: string, data: Buffer, retries = 3, delayMs = 100): Promise<void> {
   const dir = path.dirname(targetPath);
   fs.mkdirSync(dir, { recursive: true });
+
+  if (fs.existsSync(targetPath)) {
+    let attempt = 0;
+    while (true) {
+      try {
+        const fd = fs.openSync(targetPath, 'r+');
+        try {
+          fs.ftruncateSync(fd, 0);
+          fs.writeFileSync(fd, data);
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        return;
+      } catch (err: unknown) {
+        attempt++;
+        const isLockError =
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          ((err as { code: string }).code === 'EPERM' || (err as { code: string }).code === 'EBUSY');
+
+        if (attempt >= retries || !isLockError) {
+          throw err;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+
   const tmpPath = path.join(
     dir,
     `.${path.basename(targetPath)}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`

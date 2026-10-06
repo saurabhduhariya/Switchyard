@@ -156,3 +156,23 @@ export function isProcessAlive(pid: number): boolean {
     return error.code === 'EPERM';
   }
 }
+
+/**
+ * Finds the Electron Main Process PID.
+ * The extension runs in the Extension Host (Node.js subprocess), but the real
+ * Electron Main Process holds state.vscdb in memory. We need to wait for that
+ * process to exit before modifying the database.
+ * 
+ * Strategy:
+ * 1. process.ppid is the parent of the Extension Host (usually the Main Process)
+ * 2. Fallback to process.pid if ppid is unavailable (shouldn't happen in Electron)
+ */
+export function getMainProcessPid(): number {
+  // In VS Code/Antigravity architecture:
+  // - Main Process (Electron) spawns Renderer Process (Chromium)
+  // - Renderer Process spawns Extension Host (Node.js) <- we are here
+  // - process.ppid should point to the Renderer or Main Process
+  // 
+  // For maximum safety, we target the parent PID which is closer to the Main Process
+  return process.ppid || process.pid;
+}

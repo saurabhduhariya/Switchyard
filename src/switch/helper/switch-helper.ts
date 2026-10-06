@@ -15,7 +15,8 @@ export interface WaitForExitOptions {
 
 /**
  * Waits for a process PID to terminate.
- * Polls isProcessAlive every pollIntervalMs until dead, then waits settleDelayMs for handles to close.
+ * Polls isProcessAlive every pollIntervalMs until dead.
+ * No artificial settle delay - we rely on SQLite lock checking instead.
  */
 export async function waitForExit(
   pid: number,
@@ -23,7 +24,6 @@ export async function waitForExit(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 200;
-  const settleDelayMs = options.settleDelayMs ?? 500;
 
   const start = Date.now();
   while (isProcessAlive(pid)) {
@@ -35,10 +35,8 @@ export async function waitForExit(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  // Allow extra time for SQLite and file descriptors to fully release
-  if (settleDelayMs > 0) {
-    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
-  }
+  // Process is dead - no additional settle delay needed
+  // SQLite will return EBUSY if files are still locked
 }
 
 /**
@@ -74,30 +72,23 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     // 2. Create full backup of state.vscdb and sidecars before writing
     backupInfo = await createBackup(job.dbPath, job.backupDir);
 
-    // Clean up old WAL/SHM companion files before writing so stale uncheckpointed frames aren't reused
+    // 3. Clean up old WAL/SHM companion files before writing
+    // This ensures we don't replay stale uncommitted transactions from the previous session
     const walFile = `${job.dbPath}-wal`;
     const shmFile = `${job.dbPath}-shm`;
     try {
       if (fs.existsSync(walFile)) fs.rmSync(walFile, { force: true });
       if (fs.existsSync(shmFile)) fs.rmSync(shmFile, { force: true });
     } catch {
-      // ignore WAL removal errors
+      // WAL removal is best-effort
     }
 
-    // 3. Write target session keys
+    // 4. Write target session keys
     await writeKeys(job.dbPath, job.values);
 
-    // 4. Delete requested keys if any
+    // 5. Delete requested keys if any
     if (job.deleteKeys && job.deleteKeys.length > 0) {
       await deleteKeys(job.dbPath, job.deleteKeys);
-    }
-
-    // 5. Clean up old WAL/SHM companion files again so SQLite doesn't replay obsolete transactions
-    try {
-      if (fs.existsSync(walFile)) fs.rmSync(walFile, { force: true });
-      if (fs.existsSync(shmFile)) fs.rmSync(shmFile, { force: true });
-    } catch {
-      // ignore WAL removal errors
     }
 
     // 6. Verify written values match target fingerprint
