@@ -494,7 +494,6 @@ export class CaptureManager {
 
       // Cleanup and mark done
       await this.cleanup(session.dir, session.pid);
-      this.lastDetectedSnapshots.delete(session.sessionId);
 
       session.state = 'done';
       await this.persistSession(session);
@@ -588,14 +587,10 @@ export class CaptureManager {
       return { ok: false, error: 'No active capture session waiting for sign-in.' };
     }
 
-    // Check if window is still alive
-    if (session.pid) {
-      try {
-        process.kill(session.pid, 0); // Check if process exists
-        return { ok: false, error: 'Window is still open.' };
-      } catch {
-        // Process doesn't exist, proceed to reopen
-      }
+    // Check if the real window is still alive (the spawn PID may be a launcher wrapper)
+    const alive = await this.processFinder(session.dir);
+    if (alive.length > 0) {
+      return { ok: false, error: 'Window is still open.' };
     }
 
     // Relaunch window
@@ -681,45 +676,12 @@ export class CaptureManager {
   }
 
   /**
-   * Waits for the window process to exit.
+   * Closes any leftover capture window, deletes the capture directory and drops cached tokens.
    */
-  private async waitForWindowClose(pid: number | undefined, timeoutMs: number): Promise<void> {
-    if (!pid) {
-      return;
-    }
-
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeoutMs) {
-      try {
-        process.kill(pid, 0); // Check if process exists
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      } catch {
-        // Process has exited
-        return;
-      }
-    }
-
-    // Timeout reached, force kill
-    try {
-      process.kill(pid, 'SIGTERM');
-      this.logger.info(`Force killed capture window PID ${pid}`);
-    } catch {
-      // Already dead
-    }
-  }
-
-  /**
-   * Cleans up capture directory and optionally kills process.
-   */
-  private async cleanup(dir: string, pid?: number): Promise<void> {
-    // Kill process if alive
-    if (pid) {
-      try {
-        process.kill(pid, 'SIGTERM');
-      } catch {
-        // Already dead
-      }
-    }
+  private async cleanup(dir: string, _legacyPid?: number): Promise<void> {
+    // NOTE: a persisted PID is never signalled. After an IDE restart or reboot the OS may
+    // have reused it for an unrelated program. The real window is found by --user-data-dir.
+    this.lastDetectedSnapshots.delete(path.basename(dir)); // do not keep tokens in memory
 
     // Make sure the real window is gone (the PID above may only be a launcher wrapper),
     // otherwise it would keep running with its profile deleted underneath it.

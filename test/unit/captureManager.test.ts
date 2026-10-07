@@ -352,4 +352,39 @@ describe('capture/CaptureManager', () => {
       manager.dispose();
     });
   });
+
+  it('cleanup never signals a persisted (possibly recycled) PID', async () => {
+    const killSpy = vi.spyOn(process, 'kill');
+    const manager = new CaptureManager({
+      store,
+      logger,
+      globalStorageUri,
+      memento,
+      spawner: vi.fn().mockReturnValue({ pid: 424242, unref: vi.fn() }) as any,
+      executableFinder: () => '/mock/antigravity',
+      processFinder: async () => [],
+    });
+    await manager.startCapture();
+    await manager.cancel();
+    expect(killSpy).not.toHaveBeenCalledWith(424242, expect.anything());
+    killSpy.mockRestore();
+    manager.dispose();
+  });
+
+  it('reopenWindow refuses while the real window process is alive', async () => {
+    const manager = new CaptureManager({
+      store,
+      logger,
+      globalStorageUri,
+      memento,
+      spawner: vi.fn().mockReturnValue({ pid: 1, unref: vi.fn() }) as any,
+      executableFinder: () => '/mock/antigravity',
+      processFinder: async () => [777],
+    });
+    await manager.startCapture();
+    const res = await manager.reopenWindow();
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('still open');
+    manager.dispose();
+  });
 });
