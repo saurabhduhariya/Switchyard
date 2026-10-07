@@ -20,6 +20,9 @@ export type CaptureWatchStatus =
 export class CaptureWatcher {
   private dbPath: string;
   private polling = false;
+  private partialSignedInCount = 0;
+  private signedInFired = false;
+  private onSignedInUnflushedCallback?: () => void;
   private lastStatus?: CaptureWatchStatus;
   private onStatusCallback?: (status: CaptureWatchStatus, detail: string) => void;
   private logger: Logger;
@@ -47,6 +50,15 @@ export class CaptureWatcher {
    */
   onStatus(callback: (status: CaptureWatchStatus, detail: string) => void): void {
     this.onStatusCallback = callback;
+  }
+
+  /**
+   * Fired once when the side window is clearly signed in (profile URL present) but its
+   * tokens are not yet in state.vscdb. Antigravity only writes them when the window
+   * closes, so the caller should close the window and read the DB afterwards.
+   */
+  onSignedInUnflushed(callback: () => void): void {
+    this.onSignedInUnflushedCallback = callback;
   }
 
   private setStatus(status: CaptureWatchStatus, detail: string): void {
@@ -163,7 +175,20 @@ export class CaptureWatcher {
           'signed in, but tokens are not in state.vscdb (likely OS secret store)'
         );
         this.resetDebounce();
+        // Only a profile URL proves a real login (state-sync keys alone may exist in a fresh
+        // profile). Require two consecutive reads before acting.
+        if (result.profileUrl) {
+          this.partialSignedInCount++;
+          if (this.partialSignedInCount >= 2 && !this.signedInFired) {
+            this.signedInFired = true;
+            this.logger.info('Side window is signed in but tokens are unflushed; finishing automatically');
+            this.onSignedInUnflushedCallback?.();
+          }
+        } else {
+          this.partialSignedInCount = 0;
+        }
       } else if ('unsupported' in result) {
+        this.partialSignedInCount = 0;
         const wal = this.walBytes();
         if (wal > 0) {
           this.setStatus(
@@ -175,6 +200,7 @@ export class CaptureWatcher {
         }
         this.resetDebounce();
       } else {
+        this.partialSignedInCount = 0;
         this.setStatus('full', 'auth tokens found');
         await this.handleDetection(result);
       }

@@ -204,6 +204,12 @@ export class CaptureManager {
 
     // Start watcher
     this.watcher = new CaptureWatcher(dbPath, this.logger);
+    this.watcher.onSignedInUnflushed(() => {
+      const current = this.getCurrentSession();
+      if (current && current.sessionId === session.sessionId && current.state === 'waitingForSignIn') {
+        void this.finishSignIn();
+      }
+    });
     this.watcher.onStatus((status) => {
       const current = this.getCurrentSession();
       if (!current || current.sessionId !== session.sessionId || current.state !== 'waitingForSignIn') {
@@ -276,7 +282,7 @@ export class CaptureManager {
       case 'walPending':
         return 'Sign-in may still be buffered by the other window. Click "I\'ve signed in" to finish.';
       case 'partial':
-        return 'The other window is signed in, but its credentials are not readable from state.vscdb on this system.';
+        return 'Sign-in detected in the other window. Closing it to read your login...';
       case 'error':
         return 'Could not read the sign-in window data yet. Click "I\'ve signed in" once login is complete.';
       default:

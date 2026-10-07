@@ -180,4 +180,34 @@ describe('capture/CaptureWatcher', () => {
     await (watcher as any).poll();
     expect(callback).toHaveBeenCalledTimes(1);
   });
+
+  it('auto-fires onSignedInUnflushed after two partial reads that have a profileUrl', async () => {
+    const watcher = new CaptureWatcher(dbPath, logger);
+    const cb = vi.fn();
+    watcher.onSignedInUnflushed(cb);
+
+    mockDetectActive.mockResolvedValue({
+      partial: true,
+      profileUrl: 'https://example.com/avatar.png',
+      availableValues: {},
+    });
+    await (watcher as any).poll();
+    expect(cb).not.toHaveBeenCalled();
+    await (watcher as any).poll();
+    expect(cb).toHaveBeenCalledTimes(1);
+    await (watcher as any).poll();
+    expect(cb).toHaveBeenCalledTimes(1); // fires only once
+  });
+
+  it('does NOT auto-fire for partial detection without a profileUrl (fresh profile)', async () => {
+    const watcher = new CaptureWatcher(dbPath, logger);
+    const cb = vi.fn();
+    watcher.onSignedInUnflushed(cb);
+
+    mockDetectActive.mockResolvedValue({ partial: true, availableValues: { sync: '1' } });
+    await (watcher as any).poll();
+    await (watcher as any).poll();
+    await (watcher as any).poll();
+    expect(cb).not.toHaveBeenCalled();
+  });
 });
