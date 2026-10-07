@@ -387,4 +387,153 @@ describe('capture/CaptureManager', () => {
     expect(res.error).toContain('still open');
     manager.dispose();
   });
+
+  describe('profile promotion, done card and expiry', () => {
+    const STATUS = Buffer.from('xx promoted.user@example.com yy').toString('base64');
+    const values = {
+      'antigravityUnifiedStateSync.oauthToken': 'dG9rZW4=',
+      'antigravityUnifiedStateSync.userStatus': STATUS,
+    };
+
+    const mk = (extra: Record<string, unknown> = {}) =>
+      new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 4242, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+        processFinder: async () => [],
+        ...extra,
+      });
+
+    const detect = async (manager: CaptureManager, opts?: { promoteToProfile?: boolean }) => {
+      await manager.startCapture(opts);
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+        identity: { email: 'promoted.user@example.com', fingerprint: 'fp-p' },
+        snapshot: { values, capturedAt: Date.now() },
+      } as any);
+      await manager.finishSignIn();
+    };
+
+    it('profile mode: capture folder becomes the account profile (no markers left)', async () => {
+      const manager = mk();
+      await detect(manager, { promoteToProfile: true });
+      const dir = manager.getCurrentSession()!.dir;
+      fs.mkdirSync(path.join(dir, 'User', 'globalStorage'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'User', 'globalStorage', 'sentinel.txt'), 'signed-in-data');
+
+      const res = await manager.saveAccount('Work');
+      expect(res.ok).toBe(true);
+
+      const session = manager.getCurrentSession()!;
+      expect(session.state).toBe('done');
+      expect(session.promoted).toBe(true);
+      expect(session.savedEmail).toBe('promoted.user@example.com');
+
+      const profileDir = path.join(
+        path.dirname(globalStorageUri.fsPath),
+        'profiles',
+        session.savedAccountId!
+      );
+      expect(fs.readFileSync(path.join(profileDir, 'User', 'globalStorage', 'sentinel.txt'), 'utf8')).toBe(
+        'signed-in-data'
+      );
+      expect(fs.existsSync(path.join(profileDir, CAPTURE_MARKER_FILE))).toBe(false);
+      expect(fs.existsSync(dir)).toBe(false);
+      manager.dispose();
+    });
+
+    it('profile mode: keeps an existing signed-in profile and just deletes the capture folder', async () => {
+      const manager = mk();
+      await detect(manager, { promoteToProfile: true });
+      const dir = manager.getCurrentSession()!.dir;
+
+      // pre-create a signed-in profile for the same account id
+      const { createAccountId } = await import('../../src/accounts/types');
+      const id = createAccountId('promoted.user@example.com');
+      const existing = path.join(path.dirname(globalStorageUri.fsPath), 'profiles', id, 'User', 'globalStorage');
+      fs.mkdirSync(existing, { recursive: true });
+      fs.writeFileSync(path.join(existing, 'state.vscdb'), 'old');
+
+      await manager.saveAccount();
+      const session = manager.getCurrentSession()!;
+      expect(session.promoted).toBe(false);
+      expect(fs.readFileSync(path.join(existing, 'state.vscdb'), 'utf8')).toBe('old');
+      expect(fs.existsSync(dir)).toBe(false);
+      manager.dispose();
+    });
+
+    it('token-swap mode never promotes', async () => {
+      const manager = mk();
+      await detect(manager);
+      await manager.saveAccount();
+      expect(manager.getCurrentSession()?.promoted).toBe(false);
+      manager.dispose();
+    });
+
+    it('done state exposes the saved account id so the UI can offer "Switch"; dismiss() clears it', async () => {
+      const manager = mk();
+      await detect(manager);
+      await manager.saveAccount();
+      const session = manager.getCurrentSession()!;
+      expect(session.state).toBe('done');
+      expect(session.savedAccountId).toBeTruthy();
+      expect(session.updated).toBe(false);
+
+      await manager.dismiss();
+      expect(manager.getCurrentSession()).toBeUndefined();
+      manager.dispose();
+    });
+
+    it('marks an already-saved account as updated instead of adding a duplicate', async () => {
+      const manager = mk();
+      await detect(manager);
+      await manager.saveAccount();
+      const count = (await store.list()).length;
+      await manager.dismiss();
+
+      await detect(manager);
+      await manager.saveAccount();
+      expect((await store.list()).length).toBe(count);
+      expect(manager.getCurrentSession()?.updated).toBe(true);
+      manager.dispose();
+    });
+
+    it('discards a detected-but-unsaved account after the TTL and deletes its tokens from disk', async () => {
+      const manager = mk({ detectedTtlMs: 60 });
+      await detect(manager);
+      const dir = manager.getCurrentSession()!.dir;
+      expect(manager.getCurrentSession()?.state).toBe('detected');
+      expect(fs.existsSync(dir)).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 400));
+      const session = manager.getCurrentSession()!;
+      expect(session.state).toBe('timedOut');
+      expect(session.error).toContain('not saved in time');
+      expect(fs.existsSync(dir)).toBe(false);
+      manager.dispose();
+    });
+
+    it('saving cancels the expiry timer', async () => {
+      const manager = mk({ detectedTtlMs: 150 });
+      await detect(manager);
+      await manager.saveAccount();
+      await new Promise((r) => setTimeout(r, 400));
+      expect(manager.getCurrentSession()?.state).toBe('done');
+      manager.dispose();
+    });
+
+    it('resume() re-arms the expiry for a detected session after a reload', async () => {
+      const manager = mk({ detectedTtlMs: 60 });
+      await detect(manager);
+      manager.dispose(); // simulate window reload: timers die, session stays in memento
+
+      const manager2 = mk({ detectedTtlMs: 60 });
+      await manager2.resume();
+      await new Promise((r) => setTimeout(r, 400));
+      expect(manager2.getCurrentSession()?.state).toBe('timedOut');
+      manager2.dispose();
+    });
+  });
 });

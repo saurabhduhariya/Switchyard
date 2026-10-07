@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Profile mode now uses the side-window sign-in: the window's data becomes the account's isolated profile, so the real email is saved and the first Switch opens already signed in.
+- "Switch to this account" button on the saved card (with Dismiss).
+- A detected-but-unsaved account is discarded (and its tokens deleted) after 10 minutes.
+
+### Fixed
+- Sign-in folder is also deleted when saving fails; startup sweep now removes stale capture folders after 1 hour (was 3).
+
+
+### Added
 - **Side-Window Add Account Flow** (Major Feature):
   - New non-disruptive method to add Google accounts without closing your main IDE window.
   - Opens a separate temporary Antigravity window for sign-in, automatically detects the new account, and saves it.

@@ -66,6 +66,15 @@ export interface CaptureSessionState {
   detectedEmail?: string;
   diagnostic?: string;
   error?: string;
+  /** Set when state === 'done' */
+  savedAccountId?: string;
+  savedEmail?: string;
+  /** true when an already-saved account's session was refreshed instead of added */
+  updated?: boolean;
+  /** true when the sign-in window became this account's profile (profile mode) */
+  promoted?: boolean;
+  /** epoch ms when an unsaved detected account is discarded */
+  expiresAt?: number;
 }
 
 export type ToWebview =
@@ -114,5 +123,6 @@ export type ToHost =
   | { type: 'saveCaptured'; label?: string }
   | { type: 'cancelCapture' }
   | { type: 'finishCapture' }
+  | { type: 'dismissCapture' }
   | { type: 'reopenCaptureWindow' };
 

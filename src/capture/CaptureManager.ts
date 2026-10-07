@@ -11,10 +11,13 @@ import {
   CAPTURE_TIMEOUT_MS,
   CAPTURE_CLOSE_WAIT_MS,
   CAPTURE_FLUSH_WAIT_MS,
+  CAPTURE_DETECTED_TTL_MS,
+  CAPTURE_DONE_LINGER_MS,
+  CAPTURE_STALE_SWEEP_MS,
 } from '../constants';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
-import { getCaptureDir, getCaptureRoot } from '../platform/paths';
+import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
 import { Logger } from '../util/logger';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
 import { findCaptureMainPids, forceKill, requestGracefulClose } from './processes';
@@ -41,6 +44,18 @@ export interface CaptureSessionData {
   /** Human-readable hint about why sign-in has not been detected yet. */
   diagnostic?: string;
   error?: string;
+  /** Profile mode: keep the sign-in window's data as this account's profile. */
+  promoteToProfile?: boolean;
+  /** When the account was detected (epoch ms); drives the unsaved-account expiry. */
+  detectedAt?: number;
+  savedAccountId?: string;
+  savedEmail?: string;
+  updated?: boolean;
+  promoted?: boolean;
+}
+
+export interface StartCaptureOptions {
+  promoteToProfile?: boolean;
 }
 
 export interface CaptureManagerOptions {
@@ -53,6 +68,8 @@ export interface CaptureManagerOptions {
   executableFinder?: (customPath?: string) => string;
   /** Test seam: finds the real window process ids for a capture dir. */
   processFinder?: (dir: string) => Promise<number[]>;
+  /** Test seam: how long a detected-but-unsaved account is kept. */
+  detectedTtlMs?: number;
 }
 
 /**
@@ -68,6 +85,9 @@ export class CaptureManager {
   private spawner: ProcessSpawner;
   private executableFinder: (customPath?: string) => string;
   private processFinder: (dir: string) => Promise<number[]>;
+  private detectedTtlMs: number;
+  private detectedTimer?: NodeJS.Timeout;
+  private doneTimer?: NodeJS.Timeout;
 
   private watcher?: CaptureWatcher;
   private timeoutTimer?: NodeJS.Timeout;
@@ -83,6 +103,7 @@ export class CaptureManager {
     this.spawner = options.spawner ?? spawn;
     this.executableFinder = options.executableFinder ?? findExecutable;
     this.processFinder = options.processFinder ?? findCaptureMainPids;
+    this.detectedTtlMs = options.detectedTtlMs ?? CAPTURE_DETECTED_TTL_MS;
   }
 
   /**
@@ -102,7 +123,7 @@ export class CaptureManager {
   /**
    * Starts a new capture session by launching an isolated window.
    */
-  async startCapture(): Promise<{ ok: boolean; error?: string }> {
+  async startCapture(options?: StartCaptureOptions): Promise<{ ok: boolean; error?: string }> {
     // Check for existing session
     const existing = this.getCurrentSession();
     if (existing && !['done', 'cancelled', 'timedOut', 'failed'].includes(existing.state)) {
@@ -158,6 +179,7 @@ export class CaptureManager {
       dir: captureDir,
       startedAt: Date.now(),
       state: 'launching',
+      promoteToProfile: options?.promoteToProfile === true,
     };
 
     await this.persistSession(session);
@@ -201,6 +223,110 @@ export class CaptureManager {
     return { ok: true };
   }
 
+  /** Moves a session to 'detected', remembers the snapshot and starts the unsaved-account expiry. */
+  private async markDetected(
+    session: CaptureSessionData,
+    identity: { email?: string; fingerprint?: string },
+    values?: Record<string, string>
+  ): Promise<void> {
+    if (values) {
+      this.lastDetectedSnapshots.set(session.sessionId, values);
+    }
+    session.state = 'detected';
+    session.detectedEmail = identity.email;
+    session.detectedFingerprint = identity.fingerprint;
+    session.detectedAt = Date.now();
+    await this.persistSession(session);
+    this.notifyStateChange(session);
+    this.armDetectedExpiry(session.sessionId, this.detectedTtlMs);
+  }
+
+  private armDetectedExpiry(sessionId: string, delayMs: number): void {
+    this.clearDetectedExpiry();
+    this.detectedTimer = setTimeout(() => {
+      void this.expireDetected(sessionId);
+    }, Math.max(0, delayMs));
+  }
+
+  private clearDetectedExpiry(): void {
+    if (this.detectedTimer) {
+      clearTimeout(this.detectedTimer);
+      this.detectedTimer = undefined;
+    }
+  }
+
+  /** Discards a detected account that was never saved: its tokens must not linger on disk. */
+  private async expireDetected(sessionId: string): Promise<void> {
+    const session = this.getCurrentSession();
+    if (!session || session.sessionId !== sessionId || session.state !== 'detected') {
+      return;
+    }
+    this.logger.warn(`Detected account not saved within the time limit; discarding ${sessionId}`);
+    this.detectedTimer = undefined;
+    session.state = 'timedOut';
+    session.error = 'The detected account was not saved in time and was discarded for security. Add it again to retry.';
+    await this.persistSession(session);
+    await this.cleanup(session.dir);
+    this.notifyStateChange(session);
+  }
+
+  /** Clears a finished (done / failed / timed out / cancelled) session so its card disappears. */
+  async dismiss(): Promise<void> {
+    const session = this.getCurrentSession();
+    if (!session || !['done', 'cancelled', 'timedOut', 'failed'].includes(session.state)) {
+      return;
+    }
+    if (this.doneTimer) {
+      clearTimeout(this.doneTimer);
+      this.doneTimer = undefined;
+    }
+    await this.memento.update(CAPTURE_SESSION_STATE_KEY, undefined);
+    this.notifyStateChange(session);
+  }
+
+  /**
+   * Profile mode: instead of deleting the sign-in window's data, turn it into the account's
+   * isolated profile so the first Switch opens already signed in. Returns false when it
+   * could not (existing signed-in profile, window still open, rename blocked); the caller
+   * then falls back to normal cleanup and the user signs in on first switch.
+   */
+  private async promoteToProfile(dir: string, accountId: string): Promise<boolean> {
+    const profilesRoot = getProfilesDir(path.dirname(this.globalStorageUri.fsPath));
+    const target = path.join(profilesRoot, accountId);
+    try {
+      if (fs.existsSync(path.join(target, 'User', 'globalStorage', 'state.vscdb'))) {
+        this.logger.info(`Profile for ${accountId} already exists; keeping it`);
+        return false;
+      }
+      if ((await this.processFinder(dir)).length > 0) {
+        this.logger.warn('Capture window still open; cannot promote to profile');
+        return false;
+      }
+      // Marker files would make the profile window think it is a capture window.
+      fs.rmSync(path.join(dir, CAPTURE_MARKER_FILE), { force: true });
+      fs.rmSync(path.join(dir, CAPTURE_CLOSE_REQUEST_FILE), { force: true });
+      fs.mkdirSync(profilesRoot, { recursive: true });
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true }); // empty shell from an earlier attempt
+      }
+      for (let i = 0; i < 4; i++) {
+        try {
+          fs.renameSync(dir, target);
+          this.logger.info(`Capture window data promoted to profile: ${target}`);
+          return true;
+        } catch (err) {
+          if (i === 3) {
+            throw err;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500)); // Windows file locks
+        }
+      }
+    } catch (err) {
+      this.logger.warn(`Could not promote capture data to a profile: ${err}`);
+    }
+    return false;
+  }
+
   /**
    * Starts the watcher to poll for sign-in completion.
    */
@@ -231,15 +357,7 @@ export class CaptureManager {
 
       this.logger.info(`Detected sign-in: ${identity.email || identity.fingerprint}`);
 
-      if (detectedSnapshot) {
-        this.lastDetectedSnapshots.set(session.sessionId, detectedSnapshot.values);
-      }
-
-      current.state = 'detected';
-      current.detectedEmail = identity.email;
-      current.detectedFingerprint = identity.fingerprint;
-      await this.persistSession(current);
-      this.notifyStateChange(current);
+      await this.markDetected(current, identity, detectedSnapshot?.values);
 
       // Stop watching
       this.watcher?.stop();
@@ -325,12 +443,7 @@ export class CaptureManager {
       const result = await new CaptureWatcher(dbPath, this.logger).readOnce();
 
       if (result && !('unsupported' in result) && !('partial' in result)) {
-        this.lastDetectedSnapshots.set(session.sessionId, result.snapshot.values);
-        session.state = 'detected';
-        session.detectedEmail = result.identity.email;
-        session.detectedFingerprint = result.identity.fingerprint;
-        await this.persistSession(session);
-        this.notifyStateChange(session);
+        await this.markDetected(session, result.identity, result.snapshot.values);
         return { ok: true };
       }
 
@@ -418,6 +531,7 @@ export class CaptureManager {
       return { ok: false, error: 'No account detected yet.' };
     }
 
+    this.clearDetectedExpiry();
     session.state = 'saving';
     await this.persistSession(session);
     this.notifyStateChange(session);
@@ -466,12 +580,17 @@ export class CaptureManager {
       const identity = parseSnapshot(snapshot);
       this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
-      // Check if email already exists
+      // Check if the account is already saved
       const existingAccounts = await this.store.list();
-      const duplicate = existingAccounts.find((acc) => acc.email === identity.email);
+      const duplicate = identity.email
+        ? existingAccounts.find((acc) => acc.email === identity.email)
+        : undefined;
+
+      let savedId: string;
+      let savedEmail: string | undefined = identity.email;
+      let updated = false;
 
       if (duplicate) {
-        // Offer to refresh
         this.logger.info(`Account ${identity.email} already exists, refreshing snapshot`);
         await this.store.saveSnapshot(duplicate.id, {
           values: snapshot,
@@ -480,33 +599,48 @@ export class CaptureManager {
         if (label || duplicate.label) {
           await this.store.updateMeta(duplicate.id, { label: label || duplicate.label });
         }
+        savedId = duplicate.id;
+        updated = true;
       } else {
         // Save new account (do NOT set as active)
-        await this.store.upsertFromSnapshot(
-          {
-            values: snapshot,
-            capturedAt: Date.now(),
-          },
+        const meta = await this.store.upsertFromSnapshot(
+          { values: snapshot, capturedAt: Date.now() },
           label
         );
+        savedId = meta.id;
+        savedEmail = meta.email;
         this.logger.info(`Saved new account: ${identity.email || identity.fingerprint}`);
       }
 
-      // Cleanup and mark done
-      await this.cleanup(session.dir, session.pid);
+      // Profile mode: keep the window's data as the account's profile; otherwise delete it
+      let promoted = false;
+      if (session.promoteToProfile) {
+        promoted = await this.promoteToProfile(session.dir, savedId);
+      }
+      if (!promoted) {
+        await this.cleanup(session.dir);
+      }
+      this.lastDetectedSnapshots.delete(session.sessionId);
 
       session.state = 'done';
+      session.savedAccountId = savedId;
+      session.savedEmail = savedEmail;
+      session.updated = updated;
+      session.promoted = promoted;
       await this.persistSession(session);
       this.notifyStateChange(session);
 
-      // Auto-clear done session after 4s so card dismisses gracefully
-      setTimeout(async () => {
+      // Keep the card long enough for "Switch to this account", then dismiss it
+      if (this.doneTimer) {
+        clearTimeout(this.doneTimer);
+      }
+      this.doneTimer = setTimeout(() => {
+        this.doneTimer = undefined;
         const cur = this.getCurrentSession();
         if (cur && cur.sessionId === session.sessionId && cur.state === 'done') {
-          await this.memento.update(CAPTURE_SESSION_STATE_KEY, undefined);
-          this.notifyStateChange({ ...session, state: 'done' });
+          void this.dismiss();
         }
-      }, 4000);
+      }, CAPTURE_DONE_LINGER_MS);
 
       return { ok: true };
     } catch (err) {
@@ -515,6 +649,7 @@ export class CaptureManager {
       session.state = 'failed';
       session.error = msg;
       await this.persistSession(session);
+      await this.cleanup(session.dir); // the folder holds live tokens; never leave it behind
       this.notifyStateChange(session);
       return { ok: false, error: msg };
     }
@@ -533,6 +668,7 @@ export class CaptureManager {
 
     this.watcher?.stop();
     this.watcher = undefined;
+    this.clearDetectedExpiry();
 
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer);
@@ -567,7 +703,10 @@ export class CaptureManager {
       return;
     }
     if (session.state === 'detected' && dirExists) {
-      return; // user can still Save (final read comes from the capture DB)
+      // user can still Save (final read comes from the capture DB); keep the expiry running
+      const remaining = (session.detectedAt ?? Date.now()) + this.detectedTtlMs - Date.now();
+      this.armDetectedExpiry(session.sessionId, remaining);
+      return;
     }
 
     this.logger.info(`Clearing stale capture session ${session.sessionId} (${session.state})`);
@@ -634,7 +773,7 @@ export class CaptureManager {
       return;
     }
 
-    const staleThreshold = Date.now() - 3 * 60 * 60 * 1000; // 3 hours
+    const staleThreshold = Date.now() - CAPTURE_STALE_SWEEP_MS;
     const currentSession = this.getCurrentSession();
 
     try {
@@ -733,6 +872,11 @@ export class CaptureManager {
    * Disposes resources.
    */
   dispose(): void {
+    this.clearDetectedExpiry();
+    if (this.doneTimer) {
+      clearTimeout(this.doneTimer);
+      this.doneTimer = undefined;
+    }
     this.watcher?.stop();
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer);

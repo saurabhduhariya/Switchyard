@@ -4,6 +4,7 @@ import { AccountStore } from '../accounts/AccountStore';
 import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
 import { CaptureManager } from '../capture/CaptureManager';
+import { CAPTURE_DETECTED_TTL_MS } from '../constants';
 import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
@@ -165,6 +166,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           case 'finishCapture':
             await this.handleFinishCapture();
             break;
+
+          case 'dismissCapture':
+            await this.captureManager?.dismiss();
+            await this.push();
+            break;
         }
       } catch (err) {
         this.logger.error('Failed to handle webview message', err);
@@ -239,6 +245,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         detectedEmail: captureSession.detectedEmail,
         diagnostic: captureSession.diagnostic,
         error: captureSession.error,
+        savedAccountId: captureSession.savedAccountId,
+        savedEmail: captureSession.savedEmail,
+        updated: captureSession.updated,
+        promoted: captureSession.promoted,
+        expiresAt:
+          captureSession.state === 'detected' && captureSession.detectedAt
+            ? captureSession.detectedAt + CAPTURE_DETECTED_TTL_MS
+            : undefined,
       } : undefined,
       ...overrides,
     };
@@ -647,6 +661,17 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const addAccountMethod = config.get<'sideWindow' | 'signOutRestart'>('addAccountMethod', 'sideWindow');
 
     if (mode === 'profile') {
+      // Preferred: sign in once in a side window; its data becomes the account's profile,
+      // so the real email is known and the first Switch opens already signed in.
+      if (addAccountMethod === 'sideWindow' && this.captureManager) {
+        const started = await this.captureManager.startCapture({ promoteToProfile: true });
+        if (started.ok) {
+          return;
+        }
+        vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${started.error}`);
+      }
+
+      // Fallback: manual label + empty isolated profile (sign in on first launch)
       const label = await vscode.window.showInputBox({
         title: 'Add Account (Profile Mode)',
         prompt: 'Enter a label or identifier for the new isolated profile',
@@ -755,7 +780,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     // "Try Again" after a timeout/failure must start a fresh session
     const current = this.captureManager.getCurrentSession();
     if (current && ['timedOut', 'failed', 'cancelled'].includes(current.state)) {
-      const started = await this.captureManager.startCapture();
+      const mode = vscode.workspace
+        .getConfiguration('switchyard')
+        .get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+      const started = await this.captureManager.startCapture({ promoteToProfile: mode === 'profile' });
       if (!started.ok) {
         vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${started.error}`);
       }

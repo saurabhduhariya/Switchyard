@@ -17,6 +17,31 @@
     postToHost({ type: 'cancelCapture' });
   }
 
+  function handleSwitchNow() {
+    if (capture.savedAccountId) {
+      postToHost({ type: 'switch', id: capture.savedAccountId });
+    }
+    postToHost({ type: 'dismissCapture' });
+  }
+
+  function handleDismiss() {
+    postToHost({ type: 'dismissCapture' });
+  }
+
+  function minutesLeft(): number {
+    return capture.expiresAt ? Math.max(1, Math.ceil((capture.expiresAt - Date.now()) / 60000)) : 10;
+  }
+
+  function doneDescription(): string {
+    if (capture.updated) {
+      return 'This account was already saved. Its session was refreshed.';
+    }
+    if (capture.promoted) {
+      return 'Added. Its sign-in window is now this account\'s profile, so it opens already signed in.';
+    }
+    return 'Your new account has been added.';
+  }
+
   function handleFinish() {
     postToHost({ type: 'finishCapture' });
   }
@@ -38,7 +63,7 @@
     },
     detected: {
       title: 'Account detected!',
-      description: 'Sign-in complete. Add an optional label and click Save to add this account.',
+      description: 'Sign-in complete. Add an optional label and click Save to add this account. Unsaved accounts are discarded after 10 minutes.',
       badge: 'Detected',
     },
     finishing: {
@@ -53,12 +78,12 @@
     },
     done: {
       title: 'Account saved',
-      description: 'Your new account has been added successfully!',
+      description: 'Your new account has been added.',
       badge: 'Complete',
     },
     timedOut: {
       title: 'Sign-in timed out',
-      description: 'No sign-in detected after 10 minutes. You can reopen the window or cancel.',
+      description: 'The sign-in window timed out. Try again or cancel.',
       badge: 'Timed Out',
     },
     cancelled: {
@@ -97,9 +122,14 @@
   </h3>
 
   <p class="capture-desc">
-    {stateMessages[capture.state].description}
-    {#if capture.detectedEmail}
+    {capture.state === 'done' ? doneDescription() : stateMessages[capture.state].description}
+    {#if capture.state === 'done' && capture.savedEmail}
+      <strong>{capture.savedEmail}</strong>
+    {:else if capture.detectedEmail}
       <strong>{capture.detectedEmail}</strong>
+    {/if}
+    {#if capture.state === 'detected' && capture.expiresAt}
+      <em>(about {minutesLeft()} min left)</em>
     {/if}
   </p>
 
@@ -157,6 +187,15 @@
       </button>
       <button class="btn btn-secondary" onclick={handleCancel} aria-label="Discard and cancel">
         Discard
+      </button>
+    {:else if capture.state === 'done'}
+      {#if capture.savedAccountId}
+        <button class="btn btn-primary" onclick={handleSwitchNow} aria-label="Switch to this account now">
+          Switch to this account
+        </button>
+      {/if}
+      <button class="btn btn-ghost" onclick={handleDismiss} aria-label="Dismiss">
+        Dismiss
       </button>
     {:else if capture.state === 'timedOut' || capture.state === 'failed'}
       <button class="btn btn-secondary" onclick={handleReopen} aria-label="Try again">
