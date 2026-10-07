@@ -145,4 +145,39 @@ describe('capture/CaptureWatcher', () => {
     expect((watcher as any).pollTimer).toBeUndefined();
     expect((watcher as any).fsWatcher).toBeUndefined();
   });
+
+  it('reports why nothing was detected (walPending / partial / noDb)', async () => {
+    const statuses: string[] = [];
+    const watcher = new CaptureWatcher(dbPath, logger);
+    watcher.onStatus((status) => statuses.push(status));
+
+    // buffered writes in a non-empty -wal, no auth keys visible yet
+    fs.writeFileSync(`${dbPath}-wal`, 'x'.repeat(64));
+    mockDetectActive.mockResolvedValueOnce({ unsupported: true, reason: 'no keys' });
+    await (watcher as any).poll();
+
+    mockDetectActive.mockResolvedValueOnce({ partial: true, availableValues: {} });
+    await (watcher as any).poll();
+
+    fs.rmSync(dbPath);
+    await (watcher as any).poll();
+
+    expect(statuses).toEqual(['walPending', 'partial', 'noDb']);
+  });
+
+  it('does not run overlapping polls (fs.watch burst cannot fake a double read)', async () => {
+    const watcher = new CaptureWatcher(dbPath, logger);
+    const callback = vi.fn();
+    watcher.onDetection(callback);
+    const result = {
+      identity: { email: 'a@example.com', fingerprint: 'fp' },
+      snapshot: { values: {}, capturedAt: 1 },
+    };
+    mockDetectActive.mockResolvedValue(result);
+
+    await Promise.all([(watcher as any).poll(), (watcher as any).poll()]);
+    expect(callback).not.toHaveBeenCalled(); // only ONE read counted
+    await (watcher as any).poll();
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
 });

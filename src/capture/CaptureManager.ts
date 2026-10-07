@@ -10,17 +10,19 @@ import {
   CAPTURE_SESSION_STATE_KEY,
   CAPTURE_TIMEOUT_MS,
   CAPTURE_CLOSE_WAIT_MS,
+  CAPTURE_FLUSH_WAIT_MS,
 } from '../constants';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot } from '../platform/paths';
 import { Logger } from '../util/logger';
-import { CaptureWatcher } from './CaptureWatcher';
+import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
 
 export type CaptureState =
   | 'launching'
   | 'waitingForSignIn'
   | 'detected'
+  | 'finishing'
   | 'saving'
   | 'done'
   | 'cancelled'
@@ -35,6 +37,8 @@ export interface CaptureSessionData {
   state: CaptureState;
   detectedEmail?: string;
   detectedFingerprint?: string;
+  /** Human-readable hint about why sign-in has not been detected yet. */
+  diagnostic?: string;
   error?: string;
 }
 
@@ -200,6 +204,14 @@ export class CaptureManager {
 
     // Start watcher
     this.watcher = new CaptureWatcher(dbPath, this.logger);
+    this.watcher.onStatus((status) => {
+      const current = this.getCurrentSession();
+      if (!current || current.sessionId !== session.sessionId || current.state !== 'waitingForSignIn') {
+        return;
+      }
+      current.diagnostic = this.describeStatus(status);
+      void this.persistSession(current).then(() => this.notifyStateChange(current));
+    });
     this.watcher.onDetection(async (identity, detectedSnapshot) => {
       const current = this.getCurrentSession();
       if (!current || current.sessionId !== session.sessionId) {
@@ -259,6 +271,108 @@ export class CaptureManager {
     }
   }
 
+  private describeStatus(status: CaptureWatchStatus): string | undefined {
+    switch (status) {
+      case 'walPending':
+        return 'Sign-in may still be buffered by the other window. Click "I\'ve signed in" to finish.';
+      case 'partial':
+        return 'The other window is signed in, but its credentials are not readable from state.vscdb on this system.';
+      case 'error':
+        return 'Could not read the sign-in window data yet. Click "I\'ve signed in" once login is complete.';
+      default:
+        return undefined;
+    }
+  }
+
+  /**
+   * Manual "I've signed in" path. Closes the side window (which makes the IDE flush
+   * its state), then reads the capture DB one final time. Works even when the live
+   * DB cannot be read while the other window is still running.
+   */
+  async finishSignIn(): Promise<{ ok: boolean; error?: string }> {
+    const session = this.getCurrentSession();
+    if (!session || session.state !== 'waitingForSignIn') {
+      return { ok: false, error: 'No capture session is waiting for sign-in.' };
+    }
+
+    this.watcher?.stop();
+    this.watcher = undefined;
+    if (this.timeoutTimer) {
+      clearTimeout(this.timeoutTimer);
+      this.timeoutTimer = undefined;
+    }
+
+    session.state = 'finishing';
+    session.diagnostic = undefined;
+    await this.persistSession(session);
+    this.notifyStateChange(session);
+
+    try {
+      await this.closeWindowAndWaitForFlush(session);
+
+      const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
+      const result = await new CaptureWatcher(dbPath, this.logger).readOnce();
+
+      if (result && !('unsupported' in result) && !('partial' in result)) {
+        this.lastDetectedSnapshots.set(session.sessionId, result.snapshot.values);
+        session.state = 'detected';
+        session.detectedEmail = result.identity.email;
+        session.detectedFingerprint = result.identity.fingerprint;
+        await this.persistSession(session);
+        this.notifyStateChange(session);
+        return { ok: true };
+      }
+
+      const reason =
+        result && 'partial' in result
+          ? 'You are signed in in the side window, but the credentials are stored in the OS secret store and cannot be copied. Use the "signOutRestart" add-account method (setting: switchyard.addAccountMethod) on this system.'
+          : 'No sign-in was found in the side window. Make sure login finished (you should see your account in that window), then try Add Account again.';
+      this.logger.warn(`finishSignIn: ${reason}`);
+      session.state = 'failed';
+      session.error = reason;
+      await this.persistSession(session);
+      this.notifyStateChange(session);
+      await this.cleanup(session.dir, session.pid);
+      return { ok: false, error: reason };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`finishSignIn failed: ${msg}`);
+      session.state = 'failed';
+      session.error = msg;
+      await this.persistSession(session);
+      this.notifyStateChange(session);
+      await this.cleanup(session.dir, session.pid);
+      return { ok: false, error: msg };
+    }
+  }
+
+  /**
+   * Asks the side window to quit, then waits until the process is gone AND the
+   * SQLite WAL has been checkpointed (or timeout). The launcher PID can be a short-lived
+   * wrapper, so process exit alone is not proof the real window has flushed.
+   */
+  private async closeWindowAndWaitForFlush(session: CaptureSessionData): Promise<void> {
+    fs.writeFileSync(path.join(session.dir, CAPTURE_CLOSE_REQUEST_FILE), '');
+    await this.waitForWindowClose(session.pid, CAPTURE_CLOSE_WAIT_MS);
+
+    const walPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb-wal');
+    const deadline = Date.now() + CAPTURE_FLUSH_WAIT_MS;
+    while (Date.now() < deadline) {
+      let walSize = 0;
+      try {
+        walSize = fs.statSync(walPath).size;
+      } catch {
+        walSize = 0;
+      }
+      if (walSize === 0) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    // small settle so the OS releases file handles
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
   /**
    * Saves the detected account with optional label.
    */
@@ -277,12 +391,8 @@ export class CaptureManager {
     this.notifyStateChange(session);
 
     try {
-      // Request window 2 to close cooperatively
-      const closeRequestPath = path.join(session.dir, CAPTURE_CLOSE_REQUEST_FILE);
-      fs.writeFileSync(closeRequestPath, '');
-
-      // Wait for cooperative close
-      await this.waitForWindowClose(session.pid, CAPTURE_CLOSE_WAIT_MS);
+      // Request window 2 to close cooperatively and wait for its DB to flush
+      await this.closeWindowAndWaitForFlush(session);
 
       // Final read of capture DB (picks up latest tokens after flush)
       const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
@@ -387,9 +497,41 @@ export class CaptureManager {
 
     session.state = 'cancelled';
     await this.persistSession(session);
-    this.notifyStateChange(session);
-
     await this.cleanup(session.dir, session.pid);
+
+    // Clear the session so the card dismisses (a 'cancelled' card has no actions)
+    await this.memento.update(CAPTURE_SESSION_STATE_KEY, undefined);
+    this.notifyStateChange(session);
+  }
+
+  /**
+   * Called on activation. Restores or clears a session left over from a reload/crash,
+   * otherwise the card would stay stuck with no watcher running.
+   */
+  async resume(): Promise<void> {
+    const session = this.getCurrentSession();
+    if (!session) {
+      return;
+    }
+
+    const terminal = ['done', 'cancelled', 'timedOut', 'failed'];
+    const dirExists = fs.existsSync(session.dir);
+
+    if (session.state === 'waitingForSignIn' && dirExists) {
+      this.logger.info(`Resuming capture session ${session.sessionId}`);
+      await this.startWatching(session);
+      return;
+    }
+    if (session.state === 'detected' && dirExists) {
+      return; // user can still Save (final read comes from the capture DB)
+    }
+
+    this.logger.info(`Clearing stale capture session ${session.sessionId} (${session.state})`);
+    if (!terminal.includes(session.state) && dirExists) {
+      await this.cleanup(session.dir, session.pid);
+    }
+    await this.memento.update(CAPTURE_SESSION_STATE_KEY, undefined);
+    this.notifyStateChange(session);
   }
 
   /**

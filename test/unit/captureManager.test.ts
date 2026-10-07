@@ -19,6 +19,7 @@ vi.mock('vscode', () => {
 
 import { AccountStore, MementoLike, SecretStorageLike } from '../../src/accounts/AccountStore';
 import { CaptureManager } from '../../src/capture/CaptureManager';
+import { CaptureWatcher } from '../../src/capture/CaptureWatcher';
 import { CAPTURE_MARKER_FILE } from '../../src/constants';
 import { getCaptureRoot } from '../../src/platform/paths';
 import { Logger } from '../../src/util/logger';
@@ -150,8 +151,13 @@ describe('capture/CaptureManager', () => {
     const session = manager.getCurrentSession()!;
     const dir = session.dir;
 
+    const seen: string[] = [];
+    manager.onStateChange((sess) => seen.push(sess.state));
+
     await manager.cancel();
-    expect(manager.getCurrentSession()?.state).toBe('cancelled');
+    // Session is cleared so the UI card dismisses instead of sticking on "Cancelled"
+    expect(manager.getCurrentSession()).toBeUndefined();
+    expect(seen).toContain('cancelled');
     expect(fs.existsSync(dir)).toBe(false);
 
     manager.dispose();
@@ -215,5 +221,88 @@ describe('capture/CaptureManager', () => {
     expect(fs.existsSync(oldDir)).toBe(false);
 
     manager.dispose();
+  });
+
+  describe('finishSignIn()', () => {
+    const makeManager = () =>
+      new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 99999, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+      });
+
+    it('moves to detected when the final read finds a full login', async () => {
+      const manager = makeManager();
+      await manager.startCapture();
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+        identity: { email: 'new@example.com', fingerprint: 'fp-new' },
+        snapshot: { values: { k: 'v' }, capturedAt: Date.now() },
+      } as any);
+
+      const result = await manager.finishSignIn();
+      expect(result.ok).toBe(true);
+      const session = manager.getCurrentSession()!;
+      expect(session.state).toBe('detected');
+      expect(session.detectedEmail).toBe('new@example.com');
+      // the active account of window 1 is untouched
+      expect(await store.activeId()).toBe('acc-main');
+      manager.dispose();
+    });
+
+    it('fails with a clear message and cleans up when tokens are in the OS secret store', async () => {
+      const manager = makeManager();
+      await manager.startCapture();
+      const dir = manager.getCurrentSession()!.dir;
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+        partial: true,
+        availableValues: {},
+      } as any);
+
+      const result = await manager.finishSignIn();
+      expect(result.ok).toBe(false);
+      expect(manager.getCurrentSession()?.state).toBe('failed');
+      expect(manager.getCurrentSession()?.error).toContain('secret store');
+      expect(fs.existsSync(dir)).toBe(false);
+      manager.dispose();
+    });
+
+    it('fails when nothing was signed in', async () => {
+      const manager = makeManager();
+      await manager.startCapture();
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue(undefined);
+
+      const result = await manager.finishSignIn();
+      expect(result.ok).toBe(false);
+      expect(manager.getCurrentSession()?.error).toContain('No sign-in was found');
+      manager.dispose();
+    });
+
+    it('rejects when no session is waiting', async () => {
+      const manager = makeManager();
+      const result = await manager.finishSignIn();
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  it('resume() clears a stale session whose directory is gone', async () => {
+    const manager = new CaptureManager({
+      store,
+      logger,
+      globalStorageUri,
+      memento,
+      spawner: vi.fn() as any,
+      executableFinder: () => '/mock/antigravity',
+    });
+    await memento.update('switchyard.captureSession', {
+      sessionId: 's1',
+      dir: path.join(tmpDir, 'missing'),
+      startedAt: Date.now(),
+      state: 'waitingForSignIn',
+    });
+    await manager.resume();
+    expect(manager.getCurrentSession()).toBeUndefined();
   });
 });

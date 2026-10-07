@@ -161,6 +161,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           case 'reopenCaptureWindow':
             await this.handleReopenCaptureWindow();
             break;
+
+          case 'finishCapture':
+            await this.handleFinishCapture();
+            break;
         }
       } catch (err) {
         this.logger.error('Failed to handle webview message', err);
@@ -233,6 +237,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       captureSession: captureSession ? {
         state: captureSession.state,
         detectedEmail: captureSession.detectedEmail,
+        diagnostic: captureSession.diagnostic,
         error: captureSession.error,
       } : undefined,
       ...overrides,
@@ -714,6 +719,20 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Manual finish: closes the side window, flushes its DB and reads the login.
+   */
+  public async handleFinishCapture(): Promise<void> {
+    if (!this.captureManager) {
+      return;
+    }
+    const result = await this.captureManager.finishSignIn();
+    if (!result.ok && result.error) {
+      vscode.window.showWarningMessage(`Switchyard: ${result.error}`);
+    }
+    await this.push();
+  }
+
+  /**
    * Handles canceling the capture session.
    */
   public async handleCancelCapture(): Promise<void> {
@@ -730,6 +749,16 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    */
   public async handleReopenCaptureWindow(): Promise<void> {
     if (!this.captureManager) {
+      return;
+    }
+
+    // "Try Again" after a timeout/failure must start a fresh session
+    const current = this.captureManager.getCurrentSession();
+    if (current && ['timedOut', 'failed', 'cancelled'].includes(current.state)) {
+      const started = await this.captureManager.startCapture();
+      if (!started.ok) {
+        vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${started.error}`);
+      }
       return;
     }
 

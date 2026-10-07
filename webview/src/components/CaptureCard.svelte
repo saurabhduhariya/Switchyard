@@ -17,6 +17,10 @@
     postToHost({ type: 'cancelCapture' });
   }
 
+  function handleFinish() {
+    postToHost({ type: 'finishCapture' });
+  }
+
   function handleReopen() {
     postToHost({ type: 'reopenCaptureWindow' });
   }
@@ -36,6 +40,11 @@
       title: 'Account detected!',
       description: 'Sign-in complete. Add an optional label and click Save to add this account.',
       badge: 'Detected',
+    },
+    finishing: {
+      title: 'Reading sign-in...',
+      description: 'Closing the sign-in window and reading your new login.',
+      badge: 'Finishing',
     },
     saving: {
       title: 'Saving account...',
@@ -71,8 +80,8 @@
 
 <div class="capture-card" class:detected={capture.state === 'detected'} class:error={capture.state === 'failed' || capture.state === 'timedOut'} role="region" aria-label="Account capture status">
   <div class="capture-header">
-    <div class="capture-badge" class:pulsing={capture.state === 'launching' || capture.state === 'waitingForSignIn' || capture.state === 'saving'}>
-      {#if capture.state === 'launching' || capture.state === 'waitingForSignIn' || capture.state === 'saving'}
+    <div class="capture-badge" class:pulsing={capture.state === 'launching' || capture.state === 'waitingForSignIn' || capture.state === 'finishing' || capture.state === 'saving'}>
+      {#if capture.state === 'launching' || capture.state === 'waitingForSignIn' || capture.state === 'finishing' || capture.state === 'saving'}
         <span class="spinner"></span>
       {:else if capture.state === 'detected'}
         <span class="check-icon">✓</span>
@@ -93,6 +102,10 @@
       <strong>{capture.detectedEmail}</strong>
     {/if}
   </p>
+
+  {#if capture.diagnostic && capture.state === 'waitingForSignIn'}
+    <p class="capture-desc"><em>{capture.diagnostic}</em></p>
+  {/if}
 
   {#if capture.error}
     <div class="error-message">
@@ -121,6 +134,9 @@
 
   <div class="capture-actions">
     {#if capture.state === 'waitingForSignIn'}
+      <button class="btn btn-primary" onclick={handleFinish} aria-label="I have signed in">
+        I've signed in
+      </button>
       <button class="btn btn-secondary" onclick={handleReopen} aria-label="Reopen sign-in window">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="23 4 23 10 17 10"/>
@@ -149,8 +165,8 @@
       <button class="btn btn-ghost" onclick={handleCancel} aria-label="Cancel">
         Cancel
       </button>
-    {:else if capture.state === 'launching' || capture.state === 'saving'}
-      <button class="btn btn-ghost" onclick={handleCancel} aria-label="Cancel" disabled={capture.state === 'saving'}>
+    {:else if capture.state === 'launching' || capture.state === 'saving' || capture.state === 'finishing'}
+      <button class="btn btn-ghost" onclick={handleCancel} aria-label="Cancel" disabled={capture.state !== 'launching'}>
         Cancel
       </button>
     {/if}

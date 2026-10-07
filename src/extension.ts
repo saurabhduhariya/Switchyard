@@ -84,7 +84,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   // 2e. Sweep stale capture sessions on startup
-  void captureManager.sweepStaleSessions();
+  void captureManager.sweepStaleSessions().then(() => captureManager.resume());
 
   // 2f. Reconcile any pending switch from a previous IDE quit/restart
   void reconcilePendingSwitch(context.globalState, store, logger, dbPath);

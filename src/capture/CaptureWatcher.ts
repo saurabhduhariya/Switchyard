@@ -9,8 +9,19 @@ import { Logger } from '../util/logger';
  * Watches a capture window's state.vscdb for sign-in completion.
  * Implements double-read debounce to ensure stable detection.
  */
+export type CaptureWatchStatus =
+  | 'noDb' // capture DB not created yet (window still starting / not signed in)
+  | 'signedOut' // DB exists but holds no auth keys yet
+  | 'walPending' // DB exists, no auth yet, but a non-empty -wal is buffering writes
+  | 'partial' // user looks signed in but tokens are not in state.vscdb (OS secret store)
+  | 'full' // tokens + identity readable
+  | 'error';
+
 export class CaptureWatcher {
   private dbPath: string;
+  private polling = false;
+  private lastStatus?: CaptureWatchStatus;
+  private onStatusCallback?: (status: CaptureWatchStatus, detail: string) => void;
   private logger: Logger;
   private pollTimer?: NodeJS.Timeout;
   private fsWatcher?: fs.FSWatcher;
@@ -31,6 +42,31 @@ export class CaptureWatcher {
   }
 
   /**
+   * Registers callback fired whenever the observed status changes.
+   * Used for diagnostics so the UI/logs can say WHY nothing was detected.
+   */
+  onStatus(callback: (status: CaptureWatchStatus, detail: string) => void): void {
+    this.onStatusCallback = callback;
+  }
+
+  private setStatus(status: CaptureWatchStatus, detail: string): void {
+    if (status === this.lastStatus) {
+      return;
+    }
+    this.lastStatus = status;
+    this.logger.info(`Capture watcher status: ${status} (${detail})`);
+    this.onStatusCallback?.(status, detail);
+  }
+
+  private walBytes(): number {
+    try {
+      return fs.statSync(`${this.dbPath}-wal`).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * Starts polling the capture DB for sign-in.
    */
   start(): void {
@@ -41,7 +77,17 @@ export class CaptureWatcher {
       void this.poll();
     }, CAPTURE_POLL_INTERVAL_MS);
 
-    // Also watch filesystem for hints (not relied upon alone)
+    this.attachFsWatcher();
+
+    // Initial poll
+    void this.poll();
+  }
+
+  /** Attaches fs.watch once the capture globalStorage folder exists. */
+  private attachFsWatcher(): void {
+    if (this.fsWatcher) {
+      return;
+    }
     try {
       const dbDir = path.dirname(this.dbPath);
       if (fs.existsSync(dbDir)) {
@@ -60,9 +106,6 @@ export class CaptureWatcher {
     } catch (err) {
       this.logger.warn(`Failed to setup fs.watch on capture DB: ${err}`);
     }
-
-    // Initial poll
-    void this.poll();
   }
 
   /**
@@ -83,37 +126,64 @@ export class CaptureWatcher {
   }
 
   /**
+   * Reads the capture DB once without touching debounce state.
+   * Used for the manual "I've signed in" path after the window has closed.
+   */
+  async readOnce(): Promise<DetectionResult | undefined> {
+    if (!fs.existsSync(this.dbPath)) {
+      return undefined;
+    }
+    return new AuthDetector(this.dbPath).detectActive();
+  }
+
+  /**
    * Polls the DB once and checks for sign-in.
    */
   private async poll(): Promise<void> {
-    if (!fs.existsSync(this.dbPath)) {
-      // DB doesn't exist yet, sign-in not started
-      this.resetDebounce();
+    // fs.watch bursts + the interval timer must not overlap, otherwise a single
+    // state can be counted as "two consecutive reads".
+    if (this.polling) {
       return;
     }
-
+    this.polling = true;
     try {
-      const detector = new AuthDetector(this.dbPath);
-      const result: DetectionResult = await detector.detectActive();
+      this.attachFsWatcher();
 
-      if (!('unsupported' in result) && !('partial' in result)) {
-        // Full detection (DetectedAuth: identity and snapshot available)
-        await this.handleDetection(result);
-      } else if ('partial' in result) {
-        // Partial detection - tokens might be in OS keychain (R2 risk)
-        this.logger.warn('Partial detection in capture DB - tokens may be in OS keychain');
+      if (!fs.existsSync(this.dbPath)) {
+        this.setStatus('noDb', 'state.vscdb not created yet');
+        this.resetDebounce();
+        return;
+      }
+
+      const result: DetectionResult = await new AuthDetector(this.dbPath).detectActive();
+
+      if ('partial' in result) {
+        this.setStatus(
+          'partial',
+          'signed in, but tokens are not in state.vscdb (likely OS secret store)'
+        );
         this.resetDebounce();
       } else if ('unsupported' in result) {
-        // DB exists but no tokens yet (e.g. user hasn't signed in yet)
+        const wal = this.walBytes();
+        if (wal > 0) {
+          this.setStatus(
+            'walPending',
+            `no auth keys visible yet, but state.vscdb-wal has ${wal} bytes buffered`
+          );
+        } else {
+          this.setStatus('signedOut', result.reason);
+        }
         this.resetDebounce();
       } else {
-        // No account yet
-        this.resetDebounce();
+        this.setStatus('full', 'auth tokens found');
+        await this.handleDetection(result);
       }
     } catch (err) {
       // DB might be locked or malformed during write
-      this.logger.debug(`Poll error (will retry): ${err}`);
+      this.setStatus('error', String(err));
       this.resetDebounce();
+    } finally {
+      this.polling = false;
     }
   }
 

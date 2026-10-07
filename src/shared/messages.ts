@@ -54,6 +54,7 @@ export type CaptureState =
   | 'launching'
   | 'waitingForSignIn'
   | 'detected'
+  | 'finishing'
   | 'saving'
   | 'done'
   | 'cancelled'
@@ -63,6 +64,7 @@ export type CaptureState =
 export interface CaptureSessionState {
   state: CaptureState;
   detectedEmail?: string;
+  diagnostic?: string;
   error?: string;
 }
 
@@ -111,5 +113,6 @@ export type ToHost =
   | { type: 'refreshQuota'; accountId?: string }
   | { type: 'saveCaptured'; label?: string }
   | { type: 'cancelCapture' }
+  | { type: 'finishCapture' }
   | { type: 'reopenCaptureWindow' };
 
