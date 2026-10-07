@@ -90,7 +90,14 @@ export function setupCompanionMode(
         clearInterval(pollTimer);
         pollTimer = undefined;
       }
-      void vscode.commands.executeCommand('workbench.action.quit');
+      void Promise.resolve(vscode.commands.executeCommand('workbench.action.quit')).catch((err) => {
+        logger.warn(`workbench.action.quit failed: ${err}`);
+      });
+      // Fallback if quit is ignored: close just this window
+      setTimeout(() => {
+        logger.warn('Capture window still open after quit; trying workbench.action.closeWindow');
+        void Promise.resolve(vscode.commands.executeCommand('workbench.action.closeWindow')).catch(() => undefined);
+      }, 2000);
     }
   };
 

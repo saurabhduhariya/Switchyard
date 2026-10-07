@@ -15,12 +15,12 @@ describe('formatQuota', () => {
     });
 
     it('formats days and hours correctly', () => {
-      const future = new Date(Date.now() + (2 * 86400 + 3 * 3600) * 1000).toISOString();
+      const future = new Date(Date.now() + (2 * 86400 + 3 * 3600 + 30) * 1000).toISOString();
       expect(formatCountdown(future)).toBe('Resets in 2d 3h');
     });
 
     it('formats hours and minutes correctly', () => {
-      const future = new Date(Date.now() + (4 * 3600 + 15 * 60) * 1000).toISOString();
+      const future = new Date(Date.now() + (4 * 3600 + 15 * 60 + 30) * 1000).toISOString();
       expect(formatCountdown(future)).toBe('Resets in 4h 15m');
     });
 

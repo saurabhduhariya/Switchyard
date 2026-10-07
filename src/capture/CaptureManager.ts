@@ -17,6 +17,7 @@ import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot } from '../platform/paths';
 import { Logger } from '../util/logger';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
+import { findCaptureMainPids, forceKill, requestGracefulClose } from './processes';
 
 export type CaptureState =
   | 'launching'
@@ -50,6 +51,8 @@ export interface CaptureManagerOptions {
   memento: MementoLike;
   spawner?: ProcessSpawner;
   executableFinder?: (customPath?: string) => string;
+  /** Test seam: finds the real window process ids for a capture dir. */
+  processFinder?: (dir: string) => Promise<number[]>;
 }
 
 /**
@@ -64,6 +67,7 @@ export class CaptureManager {
   private memento: MementoLike;
   private spawner: ProcessSpawner;
   private executableFinder: (customPath?: string) => string;
+  private processFinder: (dir: string) => Promise<number[]>;
 
   private watcher?: CaptureWatcher;
   private timeoutTimer?: NodeJS.Timeout;
@@ -78,6 +82,7 @@ export class CaptureManager {
     this.memento = options.memento;
     this.spawner = options.spawner ?? spawn;
     this.executableFinder = options.executableFinder ?? findExecutable;
+    this.processFinder = options.processFinder ?? findCaptureMainPids;
   }
 
   /**
@@ -357,10 +362,31 @@ export class CaptureManager {
    * SQLite WAL has been checkpointed (or timeout). The launcher PID can be a short-lived
    * wrapper, so process exit alone is not proof the real window has flushed.
    */
-  private async closeWindowAndWaitForFlush(session: CaptureSessionData): Promise<void> {
+  private async closeWindowAndWaitForFlush(session: CaptureSessionData): Promise<boolean> {
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     fs.writeFileSync(path.join(session.dir, CAPTURE_CLOSE_REQUEST_FILE), '');
-    await this.waitForWindowClose(session.pid, CAPTURE_CLOSE_WAIT_MS);
 
+    // 1. Wait for the REAL window process (not the launcher wrapper) to exit.
+    const started = Date.now();
+    let askedOs = false;
+    let closed = false;
+    while (Date.now() - started < CAPTURE_CLOSE_WAIT_MS) {
+      const pids = await this.processFinder(session.dir);
+      if (pids.length === 0) {
+        closed = true;
+        break;
+      }
+      // The companion extension should have quit the window by now; if not, ask the OS.
+      if (!askedOs && Date.now() - started > 2500) {
+        askedOs = true;
+        this.logger.warn(`Capture window still open after 2.5s, requesting close (pids ${pids.join(',')})`);
+        pids.forEach(requestGracefulClose);
+      }
+      await sleep(400);
+    }
+    this.logger.info(`Capture window closed=${closed} after ${Date.now() - started}ms`);
+
+    // 2. Wait for the SQLite WAL to be checkpointed.
     const walPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb-wal');
     const deadline = Date.now() + CAPTURE_FLUSH_WAIT_MS;
     while (Date.now() < deadline) {
@@ -373,10 +399,10 @@ export class CaptureManager {
       if (walSize === 0) {
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await sleep(250);
     }
-    // small settle so the OS releases file handles
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await sleep(300); // let the OS release file handles
+    return closed;
   }
 
   /**
@@ -414,18 +440,31 @@ export class CaptureManager {
         KEYS.legacyInit,
       ];
 
-      let snapshot: Record<string, string> = {};
-      if (fs.existsSync(dbPath)) {
-        snapshot = await readKeys(dbPath, targetKeys);
-      }
-      if (Object.keys(snapshot).length === 0) {
-        const cached = this.lastDetectedSnapshots.get(session.sessionId);
-        if (cached) {
-          snapshot = cached;
-        }
+      const hasToken = (v: Record<string, string>) => Boolean(v[KEYS.oauth] || v[KEYS.legacyInit]);
+
+      const fromDb: Record<string, string> = fs.existsSync(dbPath)
+        ? await readKeys(dbPath, targetKeys)
+        : {};
+      const cached = this.lastDetectedSnapshots.get(session.sessionId) ?? {};
+
+      // Never save a snapshot without a login token: it would create an "unknown" account
+      // that cannot be switched to. Prefer the final read (latest rotated token), else the
+      // snapshot taken when the sign-in was detected.
+      let snapshot: Record<string, string>;
+      if (hasToken(fromDb)) {
+        snapshot = fromDb;
+      } else if (hasToken(cached)) {
+        this.logger.warn('Final read had no token; using snapshot from detection time');
+        snapshot = cached;
+      } else {
+        throw new Error(
+          'The sign-in window did not provide a login token, so nothing was saved. ' +
+            'Add the account again and wait for the side window to close on its own.'
+        );
       }
 
       const identity = parseSnapshot(snapshot);
+      this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
       // Check if email already exists
       const existingAccounts = await this.store.list();
@@ -680,6 +719,19 @@ export class CaptureManager {
       } catch {
         // Already dead
       }
+    }
+
+    // Make sure the real window is gone (the PID above may only be a launcher wrapper),
+    // otherwise it would keep running with its profile deleted underneath it.
+    try {
+      const pids = await this.processFinder(dir);
+      if (pids.length > 0) {
+        this.logger.warn(`Force-closing leftover capture window (pids ${pids.join(',')})`);
+        pids.forEach(forceKill);
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    } catch {
+      // best effort
     }
 
     // Delete directory with retries (Windows may lock files)

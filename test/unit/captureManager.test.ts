@@ -173,16 +173,18 @@ describe('capture/CaptureManager', () => {
       memento,
       spawner: fakeSpawner as any,
       executableFinder: () => '/mock/antigravity',
+      processFinder: async () => [],
     });
 
     await manager.startCapture();
-    const session = manager.getCurrentSession()!;
-    session.state = 'detected';
-    session.detectedEmail = 'captured@example.com';
-
-    // Mock DB in capture folder
-    const dbDir = path.join(session.dir, 'User', 'globalStorage');
-    fs.mkdirSync(dbDir, { recursive: true });
+    vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+      identity: { email: 'captured@example.com', fingerprint: 'fp-cap' },
+      snapshot: {
+        values: { 'antigravityUnifiedStateSync.oauthToken': 'dG9rZW4=' },
+        capturedAt: Date.now(),
+      },
+    } as any);
+    await manager.finishSignIn();
 
     // Save account
     await manager.saveAccount('My Work Account');
@@ -304,5 +306,50 @@ describe('capture/CaptureManager', () => {
     });
     await manager.resume();
     expect(manager.getCurrentSession()).toBeUndefined();
+  });
+
+  describe('saveAccount() safety', () => {
+    const mk = () =>
+      new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 99999, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+        processFinder: async () => [],
+      });
+
+    const detect = async (manager: CaptureManager, values: Record<string, string>) => {
+      await manager.startCapture();
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+        identity: { email: 'new@example.com', fingerprint: 'fp-new' },
+        snapshot: { values, capturedAt: Date.now() },
+      } as any);
+      await manager.finishSignIn();
+    };
+
+    it('refuses to save an account when no login token is available (no junk "unknown" account)', async () => {
+      const manager = mk();
+      // detection snapshot has NO token and the capture DB does not exist
+      await detect(manager, { 'antigravity.profileUrl': 'https://x/y.png' });
+      const before = (await store.list()).length;
+
+      const result = await manager.saveAccount();
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('did not provide a login token');
+      expect((await store.list()).length).toBe(before);
+      manager.dispose();
+    });
+
+    it('falls back to the detection-time snapshot when the final read has no token', async () => {
+      const manager = mk();
+      await detect(manager, { 'antigravityUnifiedStateSync.oauthToken': 'dG9rZW4=' });
+
+      const result = await manager.saveAccount('Work');
+      expect(result.ok).toBe(true);
+      expect((await store.activeId())).toBe('acc-main');
+      manager.dispose();
+    });
   });
 });
