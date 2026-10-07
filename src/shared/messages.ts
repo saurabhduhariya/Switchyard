@@ -50,6 +50,22 @@ export interface AddAccountGuideState {
   expectedEmail?: string;
 }
 
+export type CaptureState =
+  | 'launching'
+  | 'waitingForSignIn'
+  | 'detected'
+  | 'saving'
+  | 'done'
+  | 'cancelled'
+  | 'timedOut'
+  | 'failed';
+
+export interface CaptureSessionState {
+  state: CaptureState;
+  detectedEmail?: string;
+  error?: string;
+}
+
 export type ToWebview =
   | {
       type: 'state';
@@ -60,6 +76,7 @@ export type ToWebview =
       confirmBeforeSwitch?: boolean;
       backupRetention?: number;
       addAccountGuide?: AddAccountGuideState;
+      captureSession?: CaptureSessionState;
       unsupported?: {
         reason: string;
         version?: string;
@@ -91,5 +108,8 @@ export type ToHost =
   | { type: 'revealProfile'; id: string }
   | { type: 'copySettings'; id: string }
   | { type: 'import' }
-  | { type: 'refreshQuota'; accountId?: string };
+  | { type: 'refreshQuota'; accountId?: string }
+  | { type: 'saveCaptured'; label?: string }
+  | { type: 'cancelCapture' }
+  | { type: 'reopenCaptureWindow' };
 

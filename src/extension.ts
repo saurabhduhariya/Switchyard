@@ -4,6 +4,8 @@ import * as vscode from 'vscode';
 import { AccountStore } from './accounts/AccountStore';
 import { AuthDetector } from './accounts/AuthDetector';
 import { parseSnapshot } from './accounts/identity';
+import { CaptureManager } from './capture/CaptureManager';
+import { isCompanionMode, setupCompanionMode, createCompanionStatusBar } from './capture/companion';
 import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
 import { listBackups, restoreBackup } from './db/backup';
 import { readKeys } from './db/StateDb';
@@ -20,6 +22,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   channel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
   const logger = new Logger(channel);
   logger.info('Activating Switchyard extension...');
+
+  // 0. Detect Companion Mode (capture window)
+  if (isCompanionMode(context.globalStorageUri)) {
+    logger.info('Running in companion mode - setting up minimal UI');
+    const companionDisposable = setupCompanionMode(context, logger);
+    const companionStatusBar = createCompanionStatusBar();
+    context.subscriptions.push(channel, companionDisposable, companionStatusBar);
+    // Skip all other initialization for companion mode
+    return;
+  }
 
   // 1. Locate state.vscdb
   const dbPath = findStateDb({ globalStorageUriPath: context.globalStorageUri.fsPath });
@@ -54,7 +66,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusBar = new StatusBar();
   const panelProvider = new PanelProvider(context, store, detector, logger, statusBar, switchEngine);
 
-  // 2b. Reconcile any pending switch from a previous IDE quit/restart
+  // 2c. Initialize Capture Manager for side-window add account flow
+  const captureManager = new CaptureManager({
+    store,
+    logger,
+    globalStorageUri: context.globalStorageUri,
+    extensionUri: context.extensionUri,
+    memento: context.globalState,
+  });
+
+  // 2d. Set capture manager on panel provider
+  panelProvider.setCaptureManager(captureManager);
+
+  // Register capture state change callback
+  captureManager.onStateChange((_session) => {
+    void panelProvider.push(); // Refresh UI when capture state changes
+  });
+
+  // 2e. Sweep stale capture sessions on startup
+  void captureManager.sweepStaleSessions();
+
+  // 2f. Reconcile any pending switch from a previous IDE quit/restart
   void reconcilePendingSwitch(context.globalState, store, logger, dbPath);
 
   // 3. Register Webview Provider & Status Bar
@@ -63,7 +95,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     statusBar,
     vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
       webviewOptions: { retainContextWhenHidden: true },
-    })
+    }),
+    { dispose: () => captureManager.dispose() }
   );
 
   // 4. File Watcher on state.vscdb directory (debounced 500 ms)

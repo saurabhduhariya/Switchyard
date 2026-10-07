@@ -10,6 +10,7 @@
   import AddAccountGuide from './components/AddAccountGuide.svelte';
   import UnsupportedBanner from './components/UnsupportedBanner.svelte';
   import SettingsView from './components/SettingsView.svelte';
+  import CaptureCard from './components/CaptureCard.svelte';
   import {
     getAccounts,
     getActiveAccount,
@@ -28,6 +29,7 @@
     getView,
     setView,
     handleMessage,
+    getCaptureSession,
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
 
@@ -69,6 +71,10 @@
 
     {#if getAddAccountGuide()?.active}
       <AddAccountGuide guide={getAddAccountGuide()!} />
+    {/if}
+
+    {#if getCaptureSession()}
+      <CaptureCard capture={getCaptureSession()!} />
     {/if}
 
     <div class="content">

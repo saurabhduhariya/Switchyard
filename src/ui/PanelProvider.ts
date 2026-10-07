@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { AccountStore } from '../accounts/AccountStore';
 import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
+import { CaptureManager } from '../capture/CaptureManager';
 import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
@@ -20,6 +21,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private dismissedSignOutBanner = false;
   private readonly quotaCollector: QuotaCollector;
   private quotaTimer?: NodeJS.Timeout;
+  private captureManager?: CaptureManager;
 
   constructor(
     private readonly ctx: vscode.ExtensionContext,
@@ -34,6 +36,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
   public setSwitchEngine(switchEngine: SwitchEngine): void {
     this.switchEngine = switchEngine;
+  }
+
+  public setCaptureManager(captureManager: CaptureManager): void {
+    this.captureManager = captureManager;
   }
 
   public resolveWebviewView(view: vscode.WebviewView): void {
@@ -143,6 +149,18 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           case 'refreshQuota':
             await this.handleRefreshQuota(msg.accountId);
             break;
+
+          case 'saveCaptured':
+            await this.handleSaveCaptured(msg.label);
+            break;
+
+          case 'cancelCapture':
+            await this.handleCancelCapture();
+            break;
+
+          case 'reopenCaptureWindow':
+            await this.handleReopenCaptureWindow();
+            break;
         }
       } catch (err) {
         this.logger.error('Failed to handle webview message', err);
@@ -172,6 +190,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       ...acc,
       pinned: pinnedIds.includes(acc.id),
     }));
+
+    // Get capture session state
+    const captureSession = this.captureManager?.getCurrentSession();
 
     // Check addingAccount guide state
     let addAccountGuide: AddAccountGuideState | undefined;
@@ -209,6 +230,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       confirmBeforeSwitch,
       backupRetention,
       addAccountGuide,
+      captureSession: captureSession ? {
+        state: captureSession.state,
+        detectedEmail: captureSession.detectedEmail,
+        error: captureSession.error,
+      } : undefined,
       ...overrides,
     };
 
@@ -613,6 +639,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     this.dismissedSignOutBanner = false;
     const config = vscode.workspace.getConfiguration('switchyard');
     const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+    const addAccountMethod = config.get<'sideWindow' | 'signOutRestart'>('addAccountMethod', 'sideWindow');
 
     if (mode === 'profile') {
       const label = await vscode.window.showInputBox({
@@ -630,6 +657,27 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Token Swap mode: check preferred method
+    if (addAccountMethod === 'sideWindow' && this.captureManager) {
+      // Use side-window capture flow
+      const result = await this.captureManager.startCapture();
+      if (!result.ok) {
+        vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${result.error}`);
+        // Fall back to legacy flow
+        await this.handleAddNewAccountLegacy();
+      }
+      // UI will update via capture state change callback
+      return;
+    }
+
+    // Fall back to legacy sign-out-restart flow
+    await this.handleAddNewAccountLegacy();
+  }
+
+  /**
+   * Legacy add account flow (sign out and restart).
+   */
+  private async handleAddNewAccountLegacy(): Promise<void> {
     // Token Swap mode: modal explanation
     const choice = await vscode.window.showInformationMessage(
       'Switchyard will save your current session, sign you out of Antigravity, and restart the IDE. After restart, sign in with your new Google account; Switchyard will detect and save it automatically.',
@@ -644,6 +692,50 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       } else {
         vscode.window.showErrorMessage('Switchyard: Switch engine does not support signing out.');
       }
+    }
+  }
+
+  /**
+   * Handles saving the captured account with optional label.
+   */
+  public async handleSaveCaptured(label?: string): Promise<void> {
+    if (!this.captureManager) {
+      vscode.window.showErrorMessage('Switchyard: Capture manager not initialized.');
+      return;
+    }
+
+    const result = await this.captureManager.saveAccount(label);
+    if (!result.ok) {
+      vscode.window.showErrorMessage(`Switchyard: Failed to save account: ${result.error}`);
+    } else {
+      vscode.window.showInformationMessage('Switchyard: Account saved successfully!');
+    }
+    await this.push();
+  }
+
+  /**
+   * Handles canceling the capture session.
+   */
+  public async handleCancelCapture(): Promise<void> {
+    if (!this.captureManager) {
+      return;
+    }
+
+    await this.captureManager.cancel();
+    await this.push();
+  }
+
+  /**
+   * Handles reopening the capture window.
+   */
+  public async handleReopenCaptureWindow(): Promise<void> {
+    if (!this.captureManager) {
+      return;
+    }
+
+    const result = await this.captureManager.reopenWindow();
+    if (!result.ok) {
+      vscode.window.showErrorMessage(`Switchyard: Failed to reopen window: ${result.error}`);
     }
   }
 

@@ -1,14 +1,14 @@
-import { ChildProcess, spawn, SpawnOptions } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
 import {
-  buildLaunchArgs,
   findExecutable,
   getSharedExtensionsDir,
   isProcessAlive,
 } from '../platform/ide';
+import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { Logger } from '../util/logger';
 import {
   CopySettingsResult,
@@ -16,12 +16,6 @@ import {
   SwitchOptions,
   SwitchResult,
 } from './SwitchEngine';
-
-export type ProcessSpawner = (
-  command: string,
-  args: string[],
-  options: SpawnOptions
-) => ChildProcess;
 
 export interface ProfileEngineOptions {
   store: AccountStore;
@@ -128,35 +122,19 @@ export class ProfileEngine implements SwitchEngine {
       vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
     const foldersToOpen = options?.folders ?? currentFolders;
 
-    // 5. Build CLI arguments
-    const args = buildLaunchArgs({
-      userDataDir: profileDir,
-      extensionsDir,
-      folders: foldersToOpen,
-      newWindow: true,
-    });
-
     this.logger.info(
       `Launching profile window for ${account.email} [dir=${profileDir}, exe=${exe}]`
     );
 
-    // 6. Spawn detached IDE process with clean environment
+    // 5. Spawn detached IDE process with clean environment
     try {
-      const cleanEnv: Record<string, string | undefined> = { ...process.env };
-      for (const key of Object.keys(cleanEnv)) {
-        if (
-          key.startsWith('VSCODE_') ||
-          key.startsWith('ELECTRON_') ||
-          key.startsWith('ANTIGRAVITY_')
-        ) {
-          delete cleanEnv[key];
-        }
-      }
-
-      const child = this.spawner(exe, args, {
-        detached: true,
-        stdio: 'ignore',
-        env: cleanEnv as NodeJS.ProcessEnv,
+      const child = spawnIsolatedWindow({
+        exe,
+        userDataDir: profileDir,
+        extensionsDir,
+        folders: foldersToOpen,
+        newWindow: true,
+        spawner: this.spawner,
       });
 
       if (child.pid) {
@@ -164,18 +142,16 @@ export class ProfileEngine implements SwitchEngine {
         await this.memento.update('switchyard.profilePids', pids);
         this.logger.debug(`Tracked PID ${child.pid} for account ${accountId}`);
       }
-
-      child.unref();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to spawn profile window: ${msg}`);
       return { ok: false, mode: 'profile', error: msg };
     }
 
-    // 7. Update lastUsedAt timestamp
+    // 6. Update lastUsedAt timestamp
     await this.store.touch(accountId);
 
-    // 8. First-launch user guidance toast
+    // 7. First-launch user guidance toast
     if (isFirstLaunch) {
       void vscode.window.showInformationMessage(
         `Opened new window for ${account.email}. Please sign in once with ${account.email} in the new window.`

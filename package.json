@@ -163,6 +163,19 @@
           "type": "string",
           "default": "",
           "description": "Custom path to the Antigravity IDE executable binary. Leave empty for automatic detection."
+        },
+        "switchyard.addAccountMethod": {
+          "type": "string",
+          "default": "sideWindow",
+          "enum": [
+            "sideWindow",
+            "signOutRestart"
+          ],
+          "enumDescriptions": [
+            "Open a side window to add accounts without closing the main IDE (recommended)",
+            "Sign out and restart the IDE to add accounts (legacy method)"
+          ],
+          "description": "Method for adding new accounts: 'sideWindow' opens a separate window for sign-in without disrupting your work, 'signOutRestart' uses the legacy flow that signs you out and relaunches."
         }
       }
     }

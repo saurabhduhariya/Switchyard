@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Side-Window Add Account Flow** (Major Feature):
+  - New non-disruptive method to add Google accounts without closing your main IDE window.
+  - Opens a separate temporary Antigravity window for sign-in, automatically detects the new account, and saves it.
+  - Your main workspace stays open and uninterrupted during the entire process.
+  - Replaces the previous disruptive sign-out-and-restart flow as the default method.
+  - Configuration option `switchyard.addAccountMethod` to choose between `sideWindow` (default) or `signOutRestart` (legacy).
+
+### Technical
+- **Capture Flow Architecture**:
+  - Created `CaptureManager` with full state machine (launching → waitingForSignIn → detected → saving → done).
+  - Created `CaptureWatcher` with polling and fs.watch integration, implements double-read debounce for stable detection.
+  - Created companion mode detection that allows the side window to close itself when requested.
+  - Session persistence and automatic cleanup of stale sessions older than 1 hour.
+- **UI Components**:
+  - New `CaptureCard.svelte` component showing real-time capture progress with all states and contextual actions.
+  - Integrated capture state into webview stores and main App component.
+- **Shared Infrastructure**:
+  - Extracted `spawnIsolatedWindow()` launcher from ProfileEngine into `src/platform/launch.ts` for reuse.
+  - Added capture-specific constants, paths, and message types.
+- **Configuration**:
+  - New setting `switchyard.addAccountMethod` with options `sideWindow` (recommended) or `signOutRestart` (legacy).
+
+### Changed
+- `handleAddNewAccount()` in PanelProvider now routes to side-window capture by default, with automatic fallback to legacy flow if capture fails.
+
+---
+
 ## [0.1.3] - 2026-10-06
 
 ### Fixed

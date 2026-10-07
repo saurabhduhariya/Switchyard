@@ -3,7 +3,7 @@
  * Receives state from the extension host via postMessage.
  */
 
-import type { AccountMeta, AddAccountGuideState, ToWebview } from '../../../src/shared/messages';
+import type { AccountMeta, AddAccountGuideState, CaptureSessionState, ToWebview } from '../../../src/shared/messages';
 
 // ── Reactive State (Svelte 5 runes) ──
 
@@ -22,6 +22,7 @@ let toastAccountId = $state<string | undefined>(undefined);
 let loading = $state(true);
 let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
+let captureSession = $state<CaptureSessionState | undefined>(undefined);
 
 // ── Getters & Setters ──
 
@@ -108,6 +109,10 @@ export function isLoading(): boolean {
   return loading;
 }
 
+export function getCaptureSession(): CaptureSessionState | undefined {
+  return captureSession;
+}
+
 // ── Message Handler ──
 
 export function handleMessage(data: ToWebview): void {
@@ -121,6 +126,7 @@ export function handleMessage(data: ToWebview): void {
       backupRetention = data.backupRetention ?? 5;
       addAccountGuide = data.addAccountGuide;
       unsupported = data.unsupported;
+      captureSession = data.captureSession;
       busy = false;
       busyMessage = '';
       loading = false;

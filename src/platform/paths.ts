@@ -93,3 +93,11 @@ export function getProfilesDir(globalStorageDir: string): string {
 export function getBackupsDir(globalStorageDir: string): string {
   return path.join(globalStorageDir, 'backups');
 }
+
+export function getCaptureRoot(globalStorageDir: string): string {
+  return path.join(path.dirname(globalStorageDir), 'switchyard-capture');
+}
+
+export function getCaptureDir(globalStorageDir: string, sessionId: string): string {
+  return path.join(getCaptureRoot(globalStorageDir), sessionId);
+}

@@ -4,6 +4,7 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
 
 ## Features
 
+- **Non-Disruptive Account Addition**: Add new Google accounts without closing your main IDE window using the side-window capture flow.
 - **One-Click Switching**: Switch between saved Google accounts without repeating the browser sign-in process.
 - **Model Usage & Quotas**: View live remaining quota percentages (weekly and 5-hour limits) and reset countdowns for Gemini, Claude, and GPT models.
 - **Dual Switching Modes**:
@@ -19,7 +20,9 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
 Open the Accounts panel from the Activity Bar. Switchyard automatically detects your active Google session. Click **Save Current Login** to store it.
 
 ### 2. Add Additional Accounts
-Click **Add Another Account** in the sidebar. Switchyard will save your current session, sign out cleanly, and restart the IDE. Complete the Google sign-in once in the browser, and Switchyard will detect and offer to save the new account.
+Click **Add Another Account** in the sidebar. By default, Switchyard opens a separate temporary window where you can sign in with a new Google account. Once signed in, Switchyard automatically detects the new account and saves it—your main workspace stays open the entire time.
+
+Alternatively, you can use the legacy method (configured via `switchyard.addAccountMethod` setting) which signs you out and restarts the IDE for the new account sign-in.
 
 ### 3. Switch Accounts
 Click **Switch** on any inactive account card to switch into that session.
@@ -36,6 +39,24 @@ Switchyard supports two switching strategies:
 
 You can toggle between these modes at any time in the in-panel settings drawer or via VS Code settings.
 
+## Adding Accounts: Side-Window Flow
+
+By default, Switchyard uses a **non-disruptive side-window flow** to add new Google accounts:
+
+1. Click **Add Another Account** in the sidebar
+2. A separate temporary Antigravity window opens
+3. Sign in with your new Google account in this window
+4. Switchyard automatically detects and saves the new account
+5. The temporary window closes, and you're back to your main workspace
+
+**Your main IDE window never closes or reloads during this process**, allowing you to continue working while adding accounts.
+
+### Legacy Sign-Out Method
+
+If you prefer the traditional approach, you can switch to the legacy method via the `switchyard.addAccountMethod` setting:
+- Set to `signOutRestart` to use the original sign-out and restart flow
+- Set to `sideWindow` (default) for the non-disruptive side-window method
+
 ## Extension Settings
 
 This extension contributes the following settings (`switchyard.*`):
@@ -43,6 +64,7 @@ This extension contributes the following settings (`switchyard.*`):
 | Setting | Default | Description |
 |---|---|---|
 | `switchyard.mode` | `tokenSwap` | Switching method: `tokenSwap` (same window with restart) or `profile` (isolated side-by-side windows). |
+| `switchyard.addAccountMethod` | `sideWindow` | Method for adding new accounts: `sideWindow` (open separate window without closing main IDE) or `signOutRestart` (legacy sign-out and restart flow). |
 | `switchyard.confirmBeforeSwitch` | `true` | Ask for confirmation before restarting the IDE during a switch. |
 | `switchyard.maskEmails` | `false` | Mask email addresses in the panel and status bar (e.g., `s****@gmail.com`). |
 | `switchyard.backupRetention` | `5` | Number of database backups to keep. |
