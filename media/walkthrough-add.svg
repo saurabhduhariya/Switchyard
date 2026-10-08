@@ -5,11 +5,11 @@
   <!-- Badge -->
   <rect x="70" y="55" width="120" height="22" rx="4" fill="#0e639c" fill-opacity="0.25"/>
   <circle cx="82" cy="66" r="4" fill="#3794ff"/>
-  <text x="94" y="70" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="10" font-weight="700" fill="#3794ff" letter-spacing="0.5">ADD NEW ACCOUNT</text>
+  <text x="94" y="70" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="10" font-weight="700" fill="#3794ff" letter-spacing="0.5">SIDE WINDOW</text>
   <!-- Instructions -->
-  <text x="70" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="13" font-weight="600" fill="#ffffff">Sign In with Your Second Account</text>
-  <text x="70" y="125" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="11" fill="#888888">Sign in once in the browser. Switchyard will save it automatically.</text>
+  <text x="70" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="13" font-weight="600" fill="#ffffff">Sign In in the Side Window</text>
+  <text x="70" y="125" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="11" fill="#888888">A new window opens. Sign in there; your main window stays open.</text>
   <!-- Primary button -->
   <rect x="70" y="145" width="260" height="34" rx="6" fill="#0e639c"/>
-  <text x="200" y="167" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="12" font-weight="600" fill="#ffffff" text-anchor="middle">Sign In to Antigravity</text>
+  <text x="200" y="167" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto" font-size="12" font-weight="600" fill="#ffffff" text-anchor="middle">Add Another Account</text>
 </svg>

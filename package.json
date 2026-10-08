@@ -3,7 +3,7 @@
   "displayName": "Switchyard – Account Switcher for Antigravity",
   "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
   "publisher": "saurabhduhariya",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -75,7 +75,7 @@
       },
       {
         "command": "switchyard.addNewAccount",
-        "title": "Switchyard: Add New Account (Sign Out & Switch)"
+        "title": "Switchyard: Add New Account"
       },
       {
         "command": "switchyard.openBackupsFolder",
@@ -115,7 +115,7 @@
           {
             "id": "switchyard.step.addSecond",
             "title": "Add a Second Account",
-            "description": "Click 'Add Another Account' to sign out cleanly, log in with your second Google account, and save it.\n[Add New Account](command:switchyard.addNewAccount)",
+            "description": "Click 'Add Another Account'. A separate sign-in window opens; sign in there and Switchyard saves the account without closing your IDE.\n[Add New Account](command:switchyard.addNewAccount)",
             "media": {
               "svg": "media/walkthrough-add.svg"
             }

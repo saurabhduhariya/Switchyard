@@ -25,6 +25,14 @@ The following test scenarios represent the mandatory manual verification checkli
 | **10** | Theme compatibility (Dark, Light, High Contrast) | Planned | Planned | ✅ Verified | **PASS** | Uses native `--vscode-*` CSS variables; crisp SVG vector icons rendered correctly across themes |
 | **11** | Upgrade install over older version | Planned | Planned | ✅ Verified | **PASS** | Migrated extension in `~/.antigravity-ide/extensions/saurabhduhariya.ag-switchyard-0.1.0/`; sanitizes legacy metadata |
 | **12** | Uninstall / clean state check | Planned | Planned | ✅ Verified | **PASS** | No lingering global daemons or rogue processes; backups safely contained in globalStorage |
+| **13** | Add account via side window (token-swap) | To verify | To verify | To verify | **TO VERIFY** | Side window opens, closes itself after sign-in, card shows detected email; active account unchanged |
+| **14** | Add account via side window (profile mode) | To verify | To verify | To verify | **TO VERIFY** | `profiles/<account>` exists afterwards and Switch opens it already signed in |
+| **15** | Side window never signs in (timeout / cancel) | To verify | To verify | To verify | **TO VERIFY** | Card shows timeout/cancel, no capture folder left behind |
+| **16** | Detected account left unsaved for 10 min | To verify | To verify | To verify | **TO VERIFY** | Card says it was discarded; folder deleted |
+| **17** | Add an already saved / already active account | To verify | To verify | To verify | **TO VERIFY** | Card says so; button reads "Refresh saved session"; no duplicate created |
+| **18** | Two main windows: add account in both | To verify | To verify | To verify | **TO VERIFY** | Second window is told a sign-in is already open; first window's card is unaffected |
+| **19** | Reload main window mid sign-in | To verify | To verify | To verify | **TO VERIFY** | Card comes back and the flow can finish |
+| **20** | Failed sign-in -> "Use sign-out method" | To verify | To verify | To verify | **TO VERIFY** | Old flow starts for the current mode |
 
 ---
 

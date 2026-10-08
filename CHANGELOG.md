@@ -9,46 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] - 2026-10-08
+
 ### Added
-- Profile mode now uses the side-window sign-in: the window's data becomes the account's isolated profile, so the real email is saved and the first Switch opens already signed in.
+- **Side-window Add Account** (default): a separate sign-in window opens, Switchyard detects the login, closes that window and lets you save the account. Your main window is never signed out, closed or reloaded, and your active account never changes.
+- **Profile mode** uses the same flow: the sign-in window's data becomes the account's isolated profile, so the real email is saved and the first Switch opens already signed in.
 - "Switch to this account" button on the saved card (with Dismiss).
-- A detected-but-unsaved account is discarded (and its tokens deleted) after 10 minutes.
+- The card says when the detected account is new, already saved, or already your active account; the button becomes "Refresh saved session" for the last two.
+- "I've signed in" button as a manual way to finish when automatic detection is slow.
 - "Use sign-out method" button on a failed or timed-out sign-in card.
-- The card now says when the detected account is already saved or already active, and the button becomes "Refresh saved session".
-- Settings `switchyard.captureWindowArgs` and `switchyard.captureWindowDisabledExtensions` to make the sign-in window quieter (allowlisted flags only, machine scope).
+- A detected-but-unsaved account is discarded (and its folder deleted) after 10 minutes.
+- Settings `switchyard.addAccountMethod` (`sideWindow` | `signOutRestart`), `switchyard.captureWindowArgs` and `switchyard.captureWindowDisabledExtensions` (allowlisted flags only, machine scope).
+
+### Changed
+- Capture sessions are owned by one Switchyard window (heartbeat lease). Other windows cannot see, cancel, sweep or overwrite a live sign-in; a session abandoned by a closed or crashed window is taken over or cleaned up.
+- The command is now titled "Switchyard: Add New Account" and the walkthrough step describes the side-window flow.
+- On Windows the side-window process is polled less often (1 s) and given longer (8 s) to close, because each lookup starts PowerShell.
 
 ### Fixed
-- Sign-in folder is also deleted when saving fails; startup sweep now removes stale capture folders after 1 hour (was 3).
-
-### Changed
-- Capture sessions are owned by one Switchyard window (with a heartbeat). Other windows can no longer see, cancel, sweep or overwrite a live sign-in; a session abandoned by a closed window is taken over or cleaned up.
-
-
-### Added
-- **Side-Window Add Account Flow** (Major Feature):
-  - New non-disruptive method to add Google accounts without closing your main IDE window.
-  - Opens a separate temporary Antigravity window for sign-in, automatically detects the new account, and saves it.
-  - Your main workspace stays open and uninterrupted during the entire process.
-  - Replaces the previous disruptive sign-out-and-restart flow as the default method.
-  - Configuration option `switchyard.addAccountMethod` to choose between `sideWindow` (default) or `signOutRestart` (legacy).
+- Saving never creates an "unknown" account: a snapshot without a login token is refused.
+- Antigravity can hold a fresh login in memory until its window closes; Switchyard now closes the sign-in window and reads the saved login afterwards.
+- Cancel no longer leaves a stuck "Cancelled" card; Try Again after a timeout or failure starts a fresh sign-in.
+- A persisted PID is never signalled during cleanup (it could have been reused by another program); the real window is found by its `--user-data-dir`.
+- The sign-in folder is deleted when saving fails, and tokens cached in memory are dropped on every end state. The startup sweep removes stale folders after 1 hour.
 
 ### Technical
-- **Capture Flow Architecture**:
-  - Created `CaptureManager` with full state machine (launching → waitingForSignIn → detected → saving → done).
-  - Created `CaptureWatcher` with polling and fs.watch integration, implements double-read debounce for stable detection.
-  - Created companion mode detection that allows the side window to close itself when requested.
-  - Session persistence and automatic cleanup of stale sessions older than 1 hour.
-- **UI Components**:
-  - New `CaptureCard.svelte` component showing real-time capture progress with all states and contextual actions.
-  - Integrated capture state into webview stores and main App component.
-- **Shared Infrastructure**:
-  - Extracted `spawnIsolatedWindow()` launcher from ProfileEngine into `src/platform/launch.ts` for reuse.
-  - Added capture-specific constants, paths, and message types.
-- **Configuration**:
-  - New setting `switchyard.addAccountMethod` with options `sideWindow` (recommended) or `signOutRestart` (legacy).
-
-### Changed
-- `handleAddNewAccount()` in PanelProvider now routes to side-window capture by default, with automatic fallback to legacy flow if capture fails.
+- New `src/capture/` module: `CaptureManager` (state machine, ownership, expiry, profile promotion), `CaptureWatcher`, `companion` (side-window mode), `processes` (find/close the real window), `launchArgs` (flag allowlist) and `src/platform/launch.ts` (shared isolated-window launcher).
+- 190 unit tests, including an end-to-end auto-finish scenario, panel routing tests and real-process lookup tests.
 
 ---
 

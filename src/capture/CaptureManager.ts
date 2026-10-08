@@ -81,6 +81,10 @@ export interface CaptureManagerOptions {
   windowId?: string;
   /** A session whose owner has not sent a heartbeat for this long is considered abandoned. */
   ownerStaleMs?: number;
+  /** How often to look for the side-window process while closing it (ms). */
+  processPollMs?: number;
+  /** How long to wait for the side window to exit before giving up (ms). */
+  closeWaitMs?: number;
   /** Test seam / override for extra side-window launch flags. */
   launchArgsProvider?: () => string[];
 }
@@ -108,6 +112,8 @@ export class CaptureManager {
   private windowId: string;
   private ownerStaleMs: number;
   private launchArgsProvider: () => string[];
+  private processPollMs: number;
+  private closeWaitMs: number;
   private heartbeatTimer?: NodeJS.Timeout;
   private recheckTimer?: NodeJS.Timeout;
   private detectedTimer?: NodeJS.Timeout;
@@ -128,6 +134,10 @@ export class CaptureManager {
     this.executableFinder = options.executableFinder ?? findExecutable;
     this.processFinder = options.processFinder ?? findCaptureMainPids;
     this.detectedTtlMs = options.detectedTtlMs ?? CAPTURE_DETECTED_TTL_MS;
+    // On Windows every process lookup starts PowerShell (~0.5s), so poll less often and wait longer.
+    const isWindows = process.platform === 'win32';
+    this.processPollMs = options.processPollMs ?? (isWindows ? 1000 : 400);
+    this.closeWaitMs = options.closeWaitMs ?? (isWindows ? 8000 : CAPTURE_CLOSE_WAIT_MS);
     this.windowId = options.windowId ?? crypto.randomUUID();
     this.ownerStaleMs = options.ownerStaleMs ?? DEFAULT_OWNER_STALE_MS;
     this.launchArgsProvider = options.launchArgsProvider ?? (() => this.readLaunchArgsFromSettings());
@@ -595,7 +605,7 @@ export class CaptureManager {
     const started = Date.now();
     let askedOs = false;
     let closed = false;
-    while (Date.now() - started < CAPTURE_CLOSE_WAIT_MS) {
+    while (Date.now() - started < this.closeWaitMs) {
       const pids = await this.processFinder(session.dir);
       if (pids.length === 0) {
         closed = true;
@@ -607,7 +617,7 @@ export class CaptureManager {
         this.logger.warn(`Capture window still open after 2.5s, requesting close (pids ${pids.join(',')})`);
         pids.forEach(requestGracefulClose);
       }
-      await sleep(400);
+      await sleep(this.processPollMs);
     }
     this.logger.info(`Capture window closed=${closed} after ${Date.now() - started}ms`);
 

@@ -20,9 +20,9 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
 Open the Accounts panel from the Activity Bar. Switchyard automatically detects your active Google session. Click **Save Current Login** to store it.
 
 ### 2. Add Additional Accounts
-Click **Add Another Account** in the sidebar. By default, Switchyard opens a separate temporary window where you can sign in with a new Google account. Once signed in, Switchyard automatically detects the new account and saves it—your main workspace stays open the entire time.
+Click **Add Another Account**. A separate Antigravity window opens on the sign-in page. Sign in with the new Google account there; Switchyard detects it, closes that window and shows **Save Account** in your main window. Your main window stays open and your current account stays active the whole time.
 
-Alternatively, you can use the legacy method (configured via `switchyard.addAccountMethod` setting) which signs you out and restarts the IDE for the new account sign-in.
+The older flow (sign out and restart the IDE) is still available through the `switchyard.addAccountMethod` setting.
 
 ### 3. Switch Accounts
 Click **Switch** on any inactive account card to switch into that session.
@@ -41,21 +41,29 @@ You can toggle between these modes at any time in the in-panel settings drawer o
 
 ## Adding Accounts: Side-Window Flow
 
-By default, Switchyard uses a **non-disruptive side-window flow** to add new Google accounts:
+1. Click **Add Another Account** in the sidebar.
+2. A temporary Antigravity window opens. Sign in with the new Google account there.
+3. Switchyard notices the sign-in, closes the temporary window and reads the saved login. This is automatic; if it is slow, click **I've signed in**.
+4. The card shows the detected account. Add an optional label and click **Save Account** (or **Refresh saved session** if the account was already saved).
+5. Click **Switch to this account** if you want to use it right away.
 
-1. Click **Add Another Account** in the sidebar
-2. A separate temporary Antigravity window opens
-3. Sign in with your new Google account in this window
-4. Switchyard automatically detects and saves the new account
-5. The temporary window closes, and you're back to your main workspace
+Your main IDE window never closes or reloads during this process, and your active account never changes.
 
-**Your main IDE window never closes or reloads during this process**, allowing you to continue working while adding accounts.
+**Profile mode:** the same flow is used. The temporary window's data becomes the account's isolated profile, so the first Switch opens it already signed in.
 
-### Legacy Sign-Out Method
+**Good to know**
+- The temporary sign-in folder holds live login data, so Switchyard deletes it as soon as the flow ends (saved, cancelled, failed or timed out). A detected account you never save is discarded after 10 minutes.
+- Only one sign-in can run at a time. If another Switchyard window already has one open, you will be told.
+- If the side window cannot be used on your system, use **Use sign-out method** on the failed card or set `switchyard.addAccountMethod` to `signOutRestart`.
 
-If you prefer the traditional approach, you can switch to the legacy method via the `switchyard.addAccountMethod` setting:
-- Set to `signOutRestart` to use the original sign-out and restart flow
-- Set to `sideWindow` (default) for the non-disruptive side-window method
+### Troubleshooting
+
+| Problem | What to try |
+|---|---|
+| The card never turns green | Click **I've signed in**. Then open **View → Output → Switchyard** and look for `Capture watcher status:` lines. |
+| "did not provide a login token" | The sign-in did not finish before the window closed. Add the account again and wait for the window to close by itself. |
+| The side window shows welcome pages | Set `switchyard.captureWindowArgs` (for example `["--skip-welcome", "--skip-release-notes"]`) and `switchyard.captureWindowDisabledExtensions` (for example `["eamodio.gitlens"]`). |
+| The side window will not open | Set `switchyard.executablePath`, or use the sign-out method. |
 
 ## Extension Settings
 
@@ -65,6 +73,8 @@ This extension contributes the following settings (`switchyard.*`):
 |---|---|---|
 | `switchyard.mode` | `tokenSwap` | Switching method: `tokenSwap` (same window with restart) or `profile` (isolated side-by-side windows). |
 | `switchyard.addAccountMethod` | `sideWindow` | Method for adding new accounts: `sideWindow` (open separate window without closing main IDE) or `signOutRestart` (legacy sign-out and restart flow). |
+| `switchyard.captureWindowArgs` | `[]` | Extra flags for the sign-in window. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Machine scope. |
+| `switchyard.captureWindowDisabledExtensions` | `[]` | Extension IDs to disable inside the sign-in window only (Switchyard itself cannot be disabled there). Machine scope. |
 | `switchyard.confirmBeforeSwitch` | `true` | Ask for confirmation before restarting the IDE during a switch. |
 | `switchyard.maskEmails` | `false` | Mask email addresses in the panel and status bar (e.g., `s****@gmail.com`). |
 | `switchyard.backupRetention` | `5` | Number of database backups to keep. |

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('vscode', () => {
   return {
@@ -19,6 +19,7 @@ vi.mock('vscode', () => {
 
 import { AccountStore, MementoLike, SecretStorageLike } from '../../src/accounts/AccountStore';
 import { CaptureManager } from '../../src/capture/CaptureManager';
+import { AuthDetector } from '../../src/accounts/AuthDetector';
 import { CaptureWatcher } from '../../src/capture/CaptureWatcher';
 import { CAPTURE_MARKER_FILE } from '../../src/constants';
 import { getCaptureRoot } from '../../src/platform/paths';
@@ -664,5 +665,99 @@ describe('capture/CaptureManager', () => {
       expect(args).toContain('--user-data-dir');
       m.dispose();
     });
+  });
+
+  describe('end to end: sign-in is finished automatically', () => {
+    // Earlier tests spy on prototypes without restoring; start this scenario from a clean slate.
+    beforeEach(() => {
+      vi.restoreAllMocks();
+    });
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('watcher sees "signed in but unflushed" twice, closes the window, then detects the account', async () => {
+      const STATUS = Buffer.from('xx auto.user@example.com yy').toString('base64');
+      const full = {
+        identity: { email: 'auto.user@example.com', fingerprint: 'fp-auto' },
+        snapshot: {
+          values: {
+            'antigravityUnifiedStateSync.oauthToken': 'dG9rZW4=',
+            'antigravityUnifiedStateSync.userStatus': STATUS,
+          },
+          capturedAt: Date.now(),
+        },
+      };
+      // While the window is open only the profile is visible (tokens are written on close)
+      let windowClosed = false;
+      const closeRequests: string[] = [];
+      vi.spyOn(AuthDetector.prototype, 'detectActive').mockImplementation(async () =>
+        windowClosed ? (full as any) : ({ partial: true, profileUrl: 'https://x/a.png', availableValues: {} } as any)
+      );
+
+      const manager = new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 77, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+        // the "window" exits as soon as it is asked to close
+        processFinder: async (dir: string) => {
+          if (fs.existsSync(path.join(dir, 'close-request'))) {
+            closeRequests.push(dir);
+            windowClosed = true;
+            return [];
+          }
+          return [1234];
+        },
+      });
+
+      await manager.startCapture();
+      const dir = manager.getCurrentSession()!.dir;
+      // the side window creates its database
+      fs.mkdirSync(path.join(dir, 'User', 'globalStorage'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'User', 'globalStorage', 'state.vscdb'), 'x');
+
+      const deadline = Date.now() + 9000;
+      while (Date.now() < deadline && manager.getCurrentSession()?.state !== 'detected') {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+
+      const session = manager.getCurrentSession()!;
+      expect(closeRequests.length).toBeGreaterThan(0);
+      expect(session.state).toBe('detected');
+      expect(session.detectedEmail).toBe('auto.user@example.com');
+      expect(session.detectedKind).toBe('new');
+      // saving it works and leaves the active account alone
+      expect((await manager.saveAccount()).ok).toBe(true);
+      expect(await store.activeId()).toBe('acc-main');
+      manager.dispose();
+    }, 15000);
+
+    it('uses the configured poll interval and wait budget when closing the window', async () => {
+      const calls: number[] = [];
+      const manager = new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 1, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+        processFinder: async () => {
+          calls.push(Date.now());
+          return [999]; // never exits
+        },
+        processPollMs: 20,
+        closeWaitMs: 200,
+      });
+      await manager.startCapture();
+      vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue(undefined);
+      await manager.finishSignIn();
+      // roughly closeWait / poll lookups (plus cleanup), but far fewer than a busy loop
+      expect(calls.length).toBeGreaterThanOrEqual(5);
+      expect(calls.length).toBeLessThan(40);
+      manager.dispose();
+    }, 15000);
   });
 });

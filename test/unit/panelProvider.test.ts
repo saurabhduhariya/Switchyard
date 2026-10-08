@@ -343,6 +343,95 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     await panelProvider.handleAddNewAccount();
     expect(mockSwitchEngine.signOutAndRestart).toHaveBeenCalledOnce();
   });
+
+  describe('add account routing', () => {
+    const useConfig = (values: Record<string, unknown>) => {
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () => ({ get: (key: string, def: unknown) => (key in values ? values[key] : def) }) as any
+      );
+    };
+    const fakeCapture = () => ({
+      startCapture: vi.fn(async () => ({ ok: true })),
+      dismiss: vi.fn(async () => undefined),
+      getCurrentSession: vi.fn(() => undefined),
+    });
+    const fakeEngine = (mode: 'tokenSwap' | 'profile') => ({
+      mode,
+      switchTo: vi.fn(async () => ({ ok: true, mode })),
+      signOutAndRestart: vi.fn(async () => ({ ok: true, mode })),
+    });
+
+    afterEach(() => {
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () => ({ get: vi.fn((_key: string, def: unknown) => def) }) as any
+      );
+      vi.mocked(vscode.window.showInputBox).mockReset();
+    });
+
+    it('token-swap + sideWindow starts a capture and does not sign out', async () => {
+      useConfig({});
+      const capture = fakeCapture();
+      const engine = fakeEngine('tokenSwap');
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+
+      await panelProvider.handleAddNewAccount();
+      expect(capture.startCapture).toHaveBeenCalledOnce();
+      expect(capture.startCapture).toHaveBeenCalledWith();
+      expect(engine.signOutAndRestart).not.toHaveBeenCalled();
+    });
+
+    it('profile mode + sideWindow starts a capture that is promoted to the profile', async () => {
+      useConfig({ mode: 'profile' });
+      const capture = fakeCapture();
+      panelProvider.setSwitchEngine(fakeEngine('profile') as any);
+      panelProvider.setCaptureManager(capture as any);
+
+      await panelProvider.handleAddNewAccount();
+      expect(capture.startCapture).toHaveBeenCalledWith({ promoteToProfile: true });
+      expect(vscode.window.showInputBox).not.toHaveBeenCalled();
+    });
+
+    it('profile mode + signOutRestart keeps the manual label prompt', async () => {
+      useConfig({ mode: 'profile', addAccountMethod: 'signOutRestart' });
+      const capture = fakeCapture();
+      panelProvider.setSwitchEngine(fakeEngine('profile') as any);
+      panelProvider.setCaptureManager(capture as any);
+      vi.mocked(vscode.window.showInputBox).mockResolvedValueOnce(undefined as any);
+
+      await panelProvider.handleAddNewAccount();
+      expect(vscode.window.showInputBox).toHaveBeenCalledOnce();
+      expect(capture.startCapture).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the sign-out flow when the side window cannot start', async () => {
+      useConfig({});
+      const capture = fakeCapture();
+      capture.startCapture.mockResolvedValueOnce({ ok: false, error: 'no executable' } as any);
+      const engine = fakeEngine('tokenSwap');
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Sign Out & Restart' as any);
+
+      await panelProvider.handleAddNewAccount();
+      expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+      expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
+    });
+
+    it('"Use sign-out method" dismisses the failed card and runs the legacy flow', async () => {
+      useConfig({});
+      const capture = fakeCapture();
+      const engine = fakeEngine('tokenSwap');
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Sign Out & Restart' as any);
+
+      await panelProvider.handleUseLegacyAdd();
+      expect(capture.dismiss).toHaveBeenCalledOnce();
+      expect(capture.startCapture).not.toHaveBeenCalled();
+      expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
+    });
+  });
 });
 
 

@@ -222,6 +222,23 @@ try {
 - **Read-only operations safe:** Extension only reads state.vscdb in read-only mode (copies to temp)
 - **Write operations guarded:** Only when IDE is closed (Phase 6 verification)
 
+### 1.11 Sign-In Side Window (Capture Profile)
+
+| Threat | The temporary sign-in profile holds live login data on disk |
+|--------|-------------------------------------------------------------|
+| **Mitigation Claimed** | Short-lived folder, deleted on every end state; no network use; restricted launch flags |
+| **Verification** | ⚠️ UNIT-TESTED, MANUAL CHECK PENDING |
+| **Evidence** | |
+
+- **Location and lifetime:** `<User>/switchyard-capture/<session>/`, created with mode `0700` (POSIX; this has no effect on Windows). Deleted when the account is saved, cancelled, failed or timed out; a detected account that is never saved is discarded after 10 minutes; a startup sweep removes folders older than 1 hour.
+- **Same exposure as the IDE itself:** while the side window is open its `state.vscdb` is as readable as the normal one (see 1.10).
+- **No network:** the capture flow adds no network calls; the sign-in itself is performed by Antigravity.
+- **Never signals stale PIDs:** the window is located by its `--user-data-dir`, not by a saved PID.
+- **Launch flags:** `switchyard.captureWindowArgs` accepts only an allowlist of cosmetic flags (no `--user-data-dir`, `--inspect`, etc.) and is machine-scoped so a workspace cannot set it. The Switchyard extension cannot be disabled inside the side window.
+- **Window ownership:** each session belongs to one window (heartbeat lease), so another window cannot cancel, sweep or save it.
+- **In memory:** the snapshot cached at detection time is dropped on every end state.
+- **Residual risk:** a crash between detection and cleanup can leave the folder until the next startup sweep.
+
 ---
 
 ## 2. Secret Hygiene Audit (Step 8.2)
