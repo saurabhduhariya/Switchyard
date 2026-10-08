@@ -11,8 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      id-token: write
 
     steps:
       - name: Checkout Code
@@ -54,9 +53,12 @@ jobs:
           sha256sum "${VSIX_FILE}" > "${VSIX_FILE}.sha256"
 
       - name: Publish to Open VSX
-        if: ${{ env.OVSX_PAT != '' }}
         run: |
-          npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}" -p "${OVSX_PAT}"
+          if [ -n "${{ secrets.OVSX_PAT }}" ]; then
+            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}" -p "${{ secrets.OVSX_PAT }}"
+          else
+            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
