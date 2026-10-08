@@ -294,10 +294,10 @@ If you're contributing code:
 ## Contact
 
 **Security Issues:** saurabh.duhariya2007@gmail.com  
-**General Issues:** [GitHub Issues](https://github.com/saurabh/Switchyard/issues)  
-**Repository:** [https://github.com/saurabh/Switchyard](https://github.com/saurabh/Switchyard)
+**General Issues:** [GitHub Issues](https://github.com/saurabhduhariya/Switchyard/issues)  
+**Repository:** [https://github.com/saurabhduhariya/Switchyard](https://github.com/saurabhduhariya/Switchyard)
 
 ---
 
-**Last Updated:** October 2, 2026  
-**Version:** 0.1.0
+**Last Updated:** October 8, 2026  
+**Version:** 0.2.0

@@ -86,7 +86,7 @@ The following commands are available from the Command Palette (`Ctrl+Shift+P` / 
 
 - `Switchyard: Switch Account…` — Show account switcher quick pick.
 - `Switchyard: Add Account` — Save the active account.
-- `Switchyard: Add New Account` — Start guided sign-out and capture flow.
+- `Switchyard: Add New Account` — Start add account flow (opens side window by default).
 - `Switchyard: Refresh` — Refresh active account and model quotas.
 - `Switchyard: Restore Last Backup` — Restore session database from a backup.
 - `Switchyard: Open Backups Folder` — Open backups folder in file manager.
