@@ -164,6 +164,20 @@
           "default": "",
           "description": "Custom path to the Antigravity IDE executable binary. Leave empty for automatic detection."
         },
+        "switchyard.captureWindowArgs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extra flags for the sign-in side window to make it quieter. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Anything else is ignored. Clear this setting if the side window misbehaves."
+        },
+        "switchyard.captureWindowDisabledExtensions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "Extension IDs to disable inside the sign-in side window only (for example `eamodio.gitlens`). This extension cannot be disabled there."
+        },
         "switchyard.addAccountMethod": {
           "type": "string",
           "default": "sideWindow",

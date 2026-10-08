@@ -75,6 +75,8 @@ export interface CaptureSessionState {
   promoted?: boolean;
   /** epoch ms when an unsaved detected account is discarded */
   expiresAt?: number;
+  /** Whether the detected account is new, already saved, or the currently active one */
+  detectedKind?: 'new' | 'saved' | 'active';
 }
 
 export type ToWebview =
@@ -124,5 +126,6 @@ export type ToHost =
   | { type: 'cancelCapture' }
   | { type: 'finishCapture' }
   | { type: 'dismissCapture' }
+  | { type: 'useLegacyAdd' }
   | { type: 'reopenCaptureWindow' };
 

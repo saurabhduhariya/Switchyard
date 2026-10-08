@@ -28,6 +28,20 @@
     postToHost({ type: 'dismissCapture' });
   }
 
+  function handleLegacy() {
+    postToHost({ type: 'useLegacyAdd' });
+  }
+
+  function detectedNote(): string {
+    if (capture.detectedKind === 'active') {
+      return 'This is the account you are signed in with right now. Saving refreshes its stored session.';
+    }
+    if (capture.detectedKind === 'saved') {
+      return 'This account is already saved. Saving refreshes its stored session instead of adding a duplicate.';
+    }
+    return '';
+  }
+
   function minutesLeft(): number {
     return capture.expiresAt ? Math.max(1, Math.ceil((capture.expiresAt - Date.now()) / 60000)) : 10;
   }
@@ -128,6 +142,9 @@
     {:else if capture.detectedEmail}
       <strong>{capture.detectedEmail}</strong>
     {/if}
+    {#if capture.state === 'detected' && detectedNote()}
+      <span class="capture-note">{detectedNote()}</span>
+    {/if}
     {#if capture.state === 'detected' && capture.expiresAt}
       <em>(about {minutesLeft()} min left)</em>
     {/if}
@@ -183,7 +200,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="20 6 9 17 4 12"/>
         </svg>
-        Save Account
+        {capture.detectedKind === 'new' || !capture.detectedKind ? 'Save Account' : 'Refresh saved session'}
       </button>
       <button class="btn btn-secondary" onclick={handleCancel} aria-label="Discard and cancel">
         Discard
@@ -200,6 +217,9 @@
     {:else if capture.state === 'timedOut' || capture.state === 'failed'}
       <button class="btn btn-secondary" onclick={handleReopen} aria-label="Try again">
         Try Again
+      </button>
+      <button class="btn btn-secondary" onclick={handleLegacy} aria-label="Use the sign-out method instead">
+        Use sign-out method
       </button>
       <button class="btn btn-ghost" onclick={handleCancel} aria-label="Cancel">
         Cancel
@@ -319,6 +339,13 @@
     line-height: 1.5;
     color: var(--vscode-descriptionForeground, #999);
     margin: 0;
+  }
+
+  .capture-note {
+    display: block;
+    margin-top: 6px;
+    font-size: 11px;
+    opacity: 0.85;
   }
 
   .capture-desc strong {

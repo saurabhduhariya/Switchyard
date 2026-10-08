@@ -7,6 +7,8 @@ export interface LaunchArgsOptions {
   extensionsDir?: string;
   folders?: string[];
   newWindow?: boolean;
+  /** Extra, already-validated CLI flags (e.g. from the capture window settings). */
+  extraArgs?: string[];
 }
 
 /**
@@ -22,6 +24,10 @@ export function buildLaunchArgs(options: LaunchArgsOptions): string[] {
 
   if (options.newWindow !== false) {
     args.push('--new-window');
+  }
+
+  if (options.extraArgs && options.extraArgs.length > 0) {
+    args.push(...options.extraArgs);
   }
 
   if (options.folders && options.folders.length > 0) {

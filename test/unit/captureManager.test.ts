@@ -536,4 +536,133 @@ describe('capture/CaptureManager', () => {
       manager2.dispose();
     });
   });
+
+  describe('multi-window ownership, classification and launch args', () => {
+    const mkWin = (windowId: string, extra: Record<string, unknown> = {}) =>
+      new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: vi.fn().mockReturnValue({ pid: 5, unref: vi.fn() }) as any,
+        executableFinder: () => '/mock/antigravity',
+        processFinder: async () => [],
+        windowId,
+        ...extra,
+      });
+
+    it('another window cannot see, start over, or cancel a live session', async () => {
+      const a = mkWin('win-A');
+      const b = mkWin('win-B');
+      expect((await a.startCapture()).ok).toBe(true);
+
+      expect(a.getCurrentSession()).toBeDefined();
+      expect(b.getCurrentSession()).toBeUndefined();
+
+      const second = await b.startCapture();
+      expect(second.ok).toBe(false);
+      expect(second.error).toContain('another Switchyard window');
+
+      await b.cancel(); // must be a no-op for a session it does not own
+      expect(a.getCurrentSession()?.state).toBe('waitingForSignIn');
+      a.dispose();
+      b.dispose();
+    });
+
+    it('the sign-in folder of a live session in another window survives the startup sweep', async () => {
+      const a = mkWin('win-A');
+      const b = mkWin('win-B');
+      await a.startCapture();
+      const dir = a.getCurrentSession()!.dir;
+      await b.sweepStaleSessions();
+      expect(fs.existsSync(dir)).toBe(true);
+      a.dispose();
+      b.dispose();
+    });
+
+    it('a session abandoned by a dead window can be taken over by resume()', async () => {
+      const a = mkWin('win-A');
+      await a.startCapture();
+      const sessionId = a.getCurrentSession()!.sessionId;
+      a.dispose(); // reload/close: releases the lease
+
+      const b = mkWin('win-B');
+      await b.resume();
+      expect(b.getCurrentSession()?.sessionId).toBe(sessionId);
+      b.dispose();
+    });
+
+    it('a stale foreign session no longer blocks a new capture and its folder is cleaned', async () => {
+      const a = mkWin('win-A');
+      await a.startCapture();
+      const oldDir = a.getCurrentSession()!.dir;
+      // simulate a crashed window: heartbeat is long gone
+      const raw = memento.get<any>('switchyard.captureSession');
+      await memento.update('switchyard.captureSession', { ...raw, heartbeatAt: Date.now() - 60_000 });
+
+      const b = mkWin('win-B');
+      const res = await b.startCapture();
+      expect(res.ok).toBe(true);
+      expect(fs.existsSync(oldDir)).toBe(false);
+      a.dispose();
+      b.dispose();
+    });
+
+    it('classifies a detected account as new, saved or active', async () => {
+      const STATUS = Buffer.from('xx kind.user@example.com yy').toString('base64');
+      const values = {
+        'antigravityUnifiedStateSync.oauthToken': 'dG9rZW4=',
+        'antigravityUnifiedStateSync.userStatus': STATUS,
+      };
+      const run = async () => {
+        const m = mkWin('win-K');
+        await m.startCapture();
+        vi.spyOn(CaptureWatcher.prototype, 'readOnce').mockResolvedValue({
+          identity: { email: 'kind.user@example.com', fingerprint: 'fp-k' },
+          snapshot: { values, capturedAt: Date.now() },
+        } as any);
+        await m.finishSignIn();
+        const kind = m.getCurrentSession()?.detectedKind;
+        return { m, kind };
+      };
+
+      const first = await run();
+      expect(first.kind).toBe('new');
+      await first.m.saveAccount();
+      await first.m.dismiss();
+      first.m.dispose();
+
+      const second = await run();
+      expect(second.kind).toBe('saved');
+      await second.m.saveAccount();
+      await second.m.dismiss();
+      second.m.dispose();
+
+      const id = (await store.list()).find((a) => a.email === 'kind.user@example.com')!.id;
+      await store.setActive(id);
+      const third = await run();
+      expect(third.kind).toBe('active');
+      third.m.dispose();
+    });
+
+    it('passes the configured side-window flags to the launcher', async () => {
+      const spawner = vi.fn().mockReturnValue({ pid: 9, unref: vi.fn() });
+      const m = new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: spawner as any,
+        executableFinder: () => '/mock/antigravity',
+        processFinder: async () => [],
+        launchArgsProvider: () => ['--skip-welcome', '--disable-extension', 'eamodio.gitlens'],
+      });
+      await m.startCapture();
+      const args: string[] = spawner.mock.calls[0][1];
+      expect(args).toContain('--skip-welcome');
+      expect(args).toContain('eamodio.gitlens');
+      expect(args).toContain('--user-data-dir');
+      m.dispose();
+    });
+  });
 });

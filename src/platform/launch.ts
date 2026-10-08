@@ -13,6 +13,7 @@ export interface SpawnIsolatedWindowOptions {
   extensionsDir?: string;
   folders?: string[];
   newWindow?: boolean;
+  extraArgs?: string[];
   spawner?: ProcessSpawner;
 }
 
@@ -31,6 +32,7 @@ export function spawnIsolatedWindow(
     extensionsDir,
     folders = [],
     newWindow = true,
+    extraArgs = [],
     spawner = spawn,
   } = options;
 
@@ -40,6 +42,7 @@ export function spawnIsolatedWindow(
     extensionsDir,
     folders,
     newWindow,
+    extraArgs,
   });
 
   // Clean environment: strip all VSCODE_*, ELECTRON_*, ANTIGRAVITY_* variables

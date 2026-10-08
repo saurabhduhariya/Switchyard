@@ -167,6 +167,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             await this.handleFinishCapture();
             break;
 
+          case 'useLegacyAdd':
+            await this.handleUseLegacyAdd();
+            break;
+
           case 'dismissCapture':
             await this.captureManager?.dismiss();
             await this.push();
@@ -249,6 +253,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         savedEmail: captureSession.savedEmail,
         updated: captureSession.updated,
         promoted: captureSession.promoted,
+        detectedKind: captureSession.detectedKind,
         expiresAt:
           captureSession.state === 'detected' && captureSession.detectedAt
             ? captureSession.detectedAt + CAPTURE_DETECTED_TTL_MS
@@ -672,18 +677,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
 
       // Fallback: manual label + empty isolated profile (sign in on first launch)
-      const label = await vscode.window.showInputBox({
-        title: 'Add Account (Profile Mode)',
-        prompt: 'Enter a label or identifier for the new isolated profile',
-        placeHolder: 'e.g. Work, Secondary, Client B',
-      });
-      if (!label) return;
-      const meta = await this.store.upsertFromSnapshot({
-        values: {},
-        capturedAt: Date.now(),
-      }, label);
-      await this.push();
-      await this.handleSwitch(meta.id);
+      await this.handleAddProfileByLabel();
       return;
     }
 
@@ -741,6 +735,41 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       vscode.window.showInformationMessage('Switchyard: Account saved successfully!');
     }
     await this.push();
+  }
+
+  /**
+   * Profile mode, manual path: ask for a label and create an empty isolated profile.
+   * The user signs in the first time that profile is opened.
+   */
+  private async handleAddProfileByLabel(): Promise<void> {
+    const label = await vscode.window.showInputBox({
+      title: 'Add Account (Profile Mode)',
+      prompt: 'Enter a label or identifier for the new isolated profile',
+      placeHolder: 'e.g. Work, Secondary, Client B',
+    });
+    if (!label) {
+      return;
+    }
+    const meta = await this.store.upsertFromSnapshot({ values: {}, capturedAt: Date.now() }, label);
+    await this.push();
+    await this.handleSwitch(meta.id);
+  }
+
+  /**
+   * "Use sign-out method instead" on a failed/timed-out card: drop the card and run the
+   * older flow for the current mode.
+   */
+  public async handleUseLegacyAdd(): Promise<void> {
+    await this.captureManager?.dismiss();
+    await this.push();
+    const mode = vscode.workspace
+      .getConfiguration('switchyard')
+      .get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+    if (mode === 'profile') {
+      await this.handleAddProfileByLabel();
+    } else {
+      await this.handleAddNewAccountLegacy();
+    }
   }
 
   /**

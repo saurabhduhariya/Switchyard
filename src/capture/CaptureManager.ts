@@ -19,6 +19,7 @@ import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
 import { Logger } from '../util/logger';
+import { sanitizeCaptureLaunchArgs } from './launchArgs';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
 import { findCaptureMainPids, forceKill, requestGracefulClose } from './processes';
 
@@ -52,6 +53,12 @@ export interface CaptureSessionData {
   savedEmail?: string;
   updated?: boolean;
   promoted?: boolean;
+  /** Window (extension host) that owns this session; other windows must not touch it. */
+  ownerId?: string;
+  /** Last time the owner proved it is alive (epoch ms). */
+  heartbeatAt?: number;
+  /** Whether the detected account is new, already saved, or the currently active one. */
+  detectedKind?: 'new' | 'saved' | 'active';
 }
 
 export interface StartCaptureOptions {
@@ -70,7 +77,19 @@ export interface CaptureManagerOptions {
   processFinder?: (dir: string) => Promise<number[]>;
   /** Test seam: how long a detected-but-unsaved account is kept. */
   detectedTtlMs?: number;
+  /** Identifies this window; defaults to a random id per activation. */
+  windowId?: string;
+  /** A session whose owner has not sent a heartbeat for this long is considered abandoned. */
+  ownerStaleMs?: number;
+  /** Test seam / override for extra side-window launch flags. */
+  launchArgsProvider?: () => string[];
 }
+
+const ACTIVE_STATES = ['launching', 'waitingForSignIn', 'detected', 'finishing', 'saving'];
+const HEARTBEAT_INTERVAL_MS = 5000;
+const DEFAULT_OWNER_STALE_MS = 20000;
+
+type Ownership = 'mine' | 'foreign-live' | 'foreign-stale';
 
 /**
  * Manages the side-window capture flow for adding new accounts without quitting the main window.
@@ -86,6 +105,11 @@ export class CaptureManager {
   private executableFinder: (customPath?: string) => string;
   private processFinder: (dir: string) => Promise<number[]>;
   private detectedTtlMs: number;
+  private windowId: string;
+  private ownerStaleMs: number;
+  private launchArgsProvider: () => string[];
+  private heartbeatTimer?: NodeJS.Timeout;
+  private recheckTimer?: NodeJS.Timeout;
   private detectedTimer?: NodeJS.Timeout;
   private doneTimer?: NodeJS.Timeout;
 
@@ -104,6 +128,9 @@ export class CaptureManager {
     this.executableFinder = options.executableFinder ?? findExecutable;
     this.processFinder = options.processFinder ?? findCaptureMainPids;
     this.detectedTtlMs = options.detectedTtlMs ?? CAPTURE_DETECTED_TTL_MS;
+    this.windowId = options.windowId ?? crypto.randomUUID();
+    this.ownerStaleMs = options.ownerStaleMs ?? DEFAULT_OWNER_STALE_MS;
+    this.launchArgsProvider = options.launchArgsProvider ?? (() => this.readLaunchArgsFromSettings());
   }
 
   /**
@@ -116,8 +143,61 @@ export class CaptureManager {
   /**
    * Returns the current capture session if one exists.
    */
-  getCurrentSession(): CaptureSessionData | undefined {
+  /** The session stored for the whole app (any window), or undefined. */
+  private rawSession(): CaptureSessionData | undefined {
     return this.memento.get<CaptureSessionData>(CAPTURE_SESSION_STATE_KEY);
+  }
+
+  private ownership(session: CaptureSessionData): Ownership {
+    // Sessions written before ownership existed belong to whoever reads them first.
+    if (!session.ownerId || session.ownerId === this.windowId) {
+      return 'mine';
+    }
+    const lastSeen = session.heartbeatAt ?? session.startedAt;
+    const alive = ACTIVE_STATES.includes(session.state) && Date.now() - lastSeen < this.ownerStaleMs;
+    return alive ? 'foreign-live' : 'foreign-stale';
+  }
+
+  /**
+   * The session THIS window owns. Sessions owned by another Switchyard window are invisible
+   * here, so two windows can never save, cancel or clean up each other's sign-in.
+   */
+  getCurrentSession(): CaptureSessionData | undefined {
+    const session = this.rawSession();
+    return session && this.ownership(session) === 'mine' ? session : undefined;
+  }
+
+  private readLaunchArgsFromSettings(): string[] {
+    const config = vscode.workspace.getConfiguration('switchyard');
+    const { args, rejected } = sanitizeCaptureLaunchArgs(
+      config.get('captureWindowArgs'),
+      config.get('captureWindowDisabledExtensions')
+    );
+    if (rejected.length > 0) {
+      this.logger.warn(`Ignoring unsupported side-window launch settings: ${rejected.join(', ')}`);
+    }
+    return args;
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      const session = this.getCurrentSession();
+      if (!session || !ACTIVE_STATES.includes(session.state)) {
+        this.stopHeartbeat();
+        return;
+      }
+      session.heartbeatAt = Date.now();
+      void this.memento.update(CAPTURE_SESSION_STATE_KEY, session);
+    }, HEARTBEAT_INTERVAL_MS);
+    this.heartbeatTimer.unref?.();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
   }
 
   /**
@@ -125,10 +205,23 @@ export class CaptureManager {
    */
   async startCapture(options?: StartCaptureOptions): Promise<{ ok: boolean; error?: string }> {
     // Check for existing session
-    const existing = this.getCurrentSession();
-    if (existing && !['done', 'cancelled', 'timedOut', 'failed'].includes(existing.state)) {
-      this.logger.warn('Capture session already in progress');
-      return { ok: false, error: 'A capture session is already in progress.' };
+    const existing = this.rawSession();
+    if (existing) {
+      const owner = this.ownership(existing);
+      if (ACTIVE_STATES.includes(existing.state) && owner !== 'foreign-stale') {
+        this.logger.warn(`Capture session already in progress (${owner})`);
+        return {
+          ok: false,
+          error:
+            owner === 'foreign-live'
+              ? 'A sign-in window is already open from another Switchyard window. Finish or close it first.'
+              : 'A capture session is already in progress.',
+        };
+      }
+      if (owner === 'foreign-stale' && existing.dir && fs.existsSync(existing.dir)) {
+        this.logger.info(`Cleaning up abandoned capture session ${existing.sessionId}`);
+        await this.cleanup(existing.dir);
+      }
     }
 
     // Generate session ID
@@ -183,6 +276,7 @@ export class CaptureManager {
     };
 
     await this.persistSession(session);
+    this.startHeartbeat();
     this.notifyStateChange(session);
 
     // Spawn isolated window (no folders, opens on sign-in page)
@@ -191,6 +285,7 @@ export class CaptureManager {
         exe,
         userDataDir: captureDir,
         extensionsDir,
+        extraArgs: this.launchArgsProvider(),
         folders: [], // Empty folders array opens sign-in page
         newWindow: true,
         spawner: this.spawner,
@@ -232,6 +327,7 @@ export class CaptureManager {
     if (values) {
       this.lastDetectedSnapshots.set(session.sessionId, values);
     }
+    session.detectedKind = await this.classifyDetected(identity.email);
     session.state = 'detected';
     session.detectedEmail = identity.email;
     session.detectedFingerprint = identity.fingerprint;
@@ -239,6 +335,22 @@ export class CaptureManager {
     await this.persistSession(session);
     this.notifyStateChange(session);
     this.armDetectedExpiry(session.sessionId, this.detectedTtlMs);
+  }
+
+  /** Tells the user whether the detected account is new, already saved, or already active. */
+  private async classifyDetected(email?: string): Promise<'new' | 'saved' | 'active'> {
+    if (!email) {
+      return 'new';
+    }
+    try {
+      const match = (await this.store.list()).find((acc) => acc.email === email);
+      if (!match) {
+        return 'new';
+      }
+      return (await this.store.activeId()) === match.id ? 'active' : 'saved';
+    } catch {
+      return 'new';
+    }
   }
 
   private armDetectedExpiry(sessionId: string, delayMs: number): void {
@@ -689,9 +801,36 @@ export class CaptureManager {
    * otherwise the card would stay stuck with no watcher running.
    */
   async resume(): Promise<void> {
-    const session = this.getCurrentSession();
-    if (!session) {
+    const raw = this.rawSession();
+    if (!raw) {
       return;
+    }
+
+    if (this.ownership(raw) === 'foreign-live') {
+      // Another Switchyard window is actively handling it. If that window is the one that
+      // just reloaded, its heartbeat will go stale shortly, so look again then.
+      const staleIn = (raw.heartbeatAt ?? raw.startedAt) + this.ownerStaleMs - Date.now();
+      if (this.recheckTimer) {
+        clearTimeout(this.recheckTimer);
+      }
+      this.recheckTimer = setTimeout(() => {
+        this.recheckTimer = undefined;
+        void this.resume();
+      }, Math.max(500, staleIn + 500));
+      this.recheckTimer.unref?.();
+      this.logger.info('Capture session belongs to another window; leaving it alone');
+      return;
+    }
+
+    // Mine, or abandoned by a window that is gone: take it over.
+    const session = raw;
+    if (session.ownerId !== this.windowId) {
+      this.logger.info(`Adopting abandoned capture session ${session.sessionId}`);
+      session.ownerId = this.windowId;
+      await this.persistSession(session);
+    }
+    if (ACTIVE_STATES.includes(session.state)) {
+      this.startHeartbeat();
     }
 
     const terminal = ['done', 'cancelled', 'timedOut', 'failed'];
@@ -743,6 +882,7 @@ export class CaptureManager {
         exe,
         userDataDir: session.dir,
         extensionsDir,
+        extraArgs: this.launchArgsProvider(),
         folders: [],
         newWindow: true,
         spawner: this.spawner,
@@ -774,7 +914,9 @@ export class CaptureManager {
     }
 
     const staleThreshold = Date.now() - CAPTURE_STALE_SWEEP_MS;
-    const currentSession = this.getCurrentSession();
+    const raw = this.rawSession();
+    const currentSession =
+      raw && this.ownership(raw) !== 'foreign-stale' ? raw : undefined;
 
     try {
       const entries = fs.readdirSync(captureRoot, { withFileTypes: true });
@@ -856,6 +998,8 @@ export class CaptureManager {
    * Persists session data to memento.
    */
   private async persistSession(session: CaptureSessionData): Promise<void> {
+    session.ownerId = session.ownerId ?? this.windowId;
+    session.heartbeatAt = Date.now();
     await this.memento.update(CAPTURE_SESSION_STATE_KEY, session);
   }
 
@@ -872,6 +1016,17 @@ export class CaptureManager {
    * Disposes resources.
    */
   dispose(): void {
+    this.stopHeartbeat();
+    if (this.recheckTimer) {
+      clearTimeout(this.recheckTimer);
+      this.recheckTimer = undefined;
+    }
+    // Releasing the lease lets a reloaded window take the session over right away.
+    const mine = this.getCurrentSession();
+    if (mine && ACTIVE_STATES.includes(mine.state)) {
+      mine.heartbeatAt = 0;
+      void this.memento.update(CAPTURE_SESSION_STATE_KEY, mine);
+    }
     this.clearDetectedExpiry();
     if (this.doneTimer) {
       clearTimeout(this.doneTimer);
