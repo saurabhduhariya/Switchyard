@@ -1,8 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 
 describe('Phase 1 Scaffold Smoke Tests', () => {
+  beforeAll(() => {
+    const extPath = path.resolve(__dirname, '../../dist/extension.js');
+    if (!fs.existsSync(extPath)) {
+      execSync('npm run build', { cwd: path.resolve(__dirname, '../..'), stdio: 'inherit' });
+    }
+  });
+
   it('sql-wasm.wasm is present in dist', () => {
     const wasmPath = path.resolve(__dirname, '../../dist/sql-wasm.wasm');
     expect(fs.existsSync(wasmPath)).toBe(true);
