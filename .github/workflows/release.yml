@@ -50,20 +50,24 @@ jobs:
         run: |
           VSIX_FILE=$(ls ag-switchyard-*.vsix | sort -V | tail -n 1)
           echo "vsix_file=${VSIX_FILE}" >> $GITHUB_OUTPUT
-          echo "Packaged: ${VSIX_FILE}"
+          VERSION=$(node -p "require('./package.json').version")
+          echo "tag=v${VERSION}" >> $GITHUB_OUTPUT
+          echo "Packaged: ${VSIX_FILE} (v${VERSION})"
           sha256sum "${VSIX_FILE}" > "${VSIX_FILE}.sha256"
 
       - name: Publish to Open VSX
         run: |
           if [ -n "${{ secrets.OVSX_PAT }}" ]; then
-            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}" -p "${{ secrets.OVSX_PAT }}"
+            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}" -p "${{ secrets.OVSX_PAT }}" --skip-duplicate
           else
-            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}"
+            npx ovsx publish "${{ steps.package-info.outputs.vsix_file }}" --skip-duplicate
           fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || steps.package-info.outputs.tag }}
+          name: Release ${{ github.ref_type == 'tag' && github.ref_name || steps.package-info.outputs.tag }}
           files: |
             ${{ steps.package-info.outputs.vsix_file }}
             ${{ steps.package-info.outputs.vsix_file }}.sha256
