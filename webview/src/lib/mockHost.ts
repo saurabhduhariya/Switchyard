@@ -5,11 +5,38 @@
  * Only loads in standalone browser dev mode (when acquireVsCodeApi is absent).
  */
 
-import type { AccountMeta, ToWebview } from '../../../src/shared/messages';
+import type { AccountMeta, AccountQuotaSummary, ToWebview } from '../../../src/shared/messages';
 
 const NOW = Date.now();
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
+
+function mockQuota(
+  tierName: string,
+  updatedAt: number,
+  gemini: [number, number],
+  claude: [number, number],
+  withFiveHour: boolean
+): AccountQuotaSummary {
+  const reset = (ms: number) => new Date(NOW + ms).toISOString();
+  const five = (pct: number) =>
+    withFiveHour ? { remainingPercent: pct, resetTime: reset(4 * HOUR) } : undefined;
+  return {
+    tierName,
+    updatedAt,
+    source: 'cache',
+    gemini: {
+      name: 'Gemini',
+      weekly: { remainingPercent: gemini[0], resetTime: reset(5 * DAY) },
+      fiveHour: five(gemini[1]),
+    },
+    claudeGpt: {
+      name: 'Claude + GPT',
+      weekly: { remainingPercent: claude[0], resetTime: reset(6 * DAY) },
+      fiveHour: five(claude[1]),
+    },
+  };
+}
 
 const MOCK_ACCOUNTS: AccountMeta[] = [
   {
@@ -19,6 +46,7 @@ const MOCK_ACCOUNTS: AccountMeta[] = [
     plan: 'Pro',
     addedAt: NOW - 30 * DAY,
     lastUsedAt: NOW - 2 * HOUR,
+    quota: mockQuota('Google AI Pro Quota', NOW - 5 * 60_000, [99.95, 100], [100, 100], true),
   },
   {
     id: 'acc-2',
@@ -27,12 +55,15 @@ const MOCK_ACCOUNTS: AccountMeta[] = [
     plan: 'Enterprise',
     addedAt: NOW - 20 * DAY,
     lastUsedAt: NOW - 1 * DAY,
+    quota: mockQuota('Google AI Pro Quota', NOW - 2 * HOUR, [8.4, 55.2], [27.5, 0], true),
   },
   {
     id: 'acc-3',
     email: 'freelance.saurabh@outlook.com',
     addedAt: NOW - 10 * DAY,
     lastUsedAt: NOW - 5 * DAY,
+    // Starter tier: weekly quota only, no 5-hour window
+    quota: mockQuota('Antigravity Starter Quota', NOW - 4 * DAY, [100, 0], [100, 0], false),
   },
 ];
 

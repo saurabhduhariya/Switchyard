@@ -4,6 +4,7 @@
  */
 
 import type { AccountMeta, AddAccountGuideState, CaptureSessionState, ToWebview } from '../../../src/shared/messages';
+import { getVsCodeApi } from '../lib/vscode';
 
 // ── Reactive State (Svelte 5 runes) ──
 
@@ -24,7 +25,34 @@ let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
 let captureSession = $state<CaptureSessionState | undefined>(undefined);
 
+// Compact view is a per-user display preference, kept in the webview's own state.
+function loadCompactView(): boolean {
+  try {
+    const saved = getVsCodeApi()?.getState() as { compactView?: boolean } | undefined;
+    return saved?.compactView === true;
+  } catch {
+    return false;
+  }
+}
+let compactView = $state(loadCompactView());
+
 // ── Getters & Setters ──
+
+export function isCompactView(): boolean {
+  return compactView;
+}
+
+export function setCompactView(value: boolean): void {
+  compactView = value;
+  try {
+    const api = getVsCodeApi();
+    const previous = (api?.getState() as Record<string, unknown> | undefined) ?? {};
+    api?.setState({ ...previous, compactView: value });
+  } catch {
+    // state persistence is best effort
+  }
+}
+
 
 export function getView(): 'accounts' | 'settings' {
   return currentView;

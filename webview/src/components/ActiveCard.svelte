@@ -8,6 +8,7 @@
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode } from '../stores/app.svelte';
+  import { shortTierName } from '../lib/tier';
 
   interface Props {
     account: AccountMeta;
@@ -135,7 +136,7 @@
     <span class="active-badge">{getMode() === 'profile' ? 'THIS WINDOW' : 'ACTIVE'}</span>
     <span class="tier-pill" title="Tier: {tierName}">
       <Icon name="sparkle" size={10} class="pill-icon" />
-      <span>{tierName}</span>
+      <span>{shortTierName(tierName)}</span>
     </span>
     <span class="time-pill" title="Last updated">
       <Icon name="clock" size={10} class="pill-icon" />
@@ -144,7 +145,7 @@
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} />
+  <QuotaBoxes quota={account.quota} {tierName} />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />

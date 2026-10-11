@@ -299,5 +299,5 @@ If you're contributing code:
 
 ---
 
-**Last Updated:** October 8, 2026  
-**Version:** 0.2.0
+**Last Updated:** October 11, 2026  
+**Version:** 0.2.1

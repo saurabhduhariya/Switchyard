@@ -95,7 +95,7 @@
           {/if}
 
           {#if getOtherAccounts().length > 0}
-            <li class="section-label">Other Accounts</li>
+            <li class="section-label">Other Accounts · {getOtherAccounts().length}</li>
             {#each getOtherAccounts() as account (account.id)}
               <li>
                 <AccountCard {account} masked={getMaskEmails()} disabled={isUnsupported()} />

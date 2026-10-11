@@ -7,7 +7,8 @@
   import { maskEmail } from '../lib/maskEmail';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
-  import { getMode } from '../stores/app.svelte';
+  import { getMode, isCompactView } from '../stores/app.svelte';
+  import { isStale, shortTierName } from '../lib/tier';
 
   interface Props {
     account: AccountMeta;
@@ -26,6 +27,8 @@
   let username = $derived(account.label || account.email.split('@')[0]);
   let tierName = $derived(account.quota?.tierName || account.plan || 'Antigravity Quota');
   let age = $derived(formatCompactAge(account.quota?.updatedAt || account.lastUsedAt || account.addedAt));
+  // Accounts that are not signed in are not refreshed live, so old numbers may be wrong.
+  let stale = $derived(isStale(account.quota?.updatedAt));
 
   function handleSwitch() {
     if (disabled) return;
@@ -173,16 +176,22 @@
     </button>
     <span class="tier-pill" title="Tier: {tierName}">
       <Icon name="sparkle" size={10} class="pill-icon" />
-      <span>{tierName}</span>
+      <span>{shortTierName(tierName)}</span>
     </span>
-    <span class="time-pill" title="Last active: {age}">
-      <Icon name="clock" size={10} class="pill-icon" />
+    <span
+      class="time-pill"
+      class:stale
+      title={stale
+        ? `Quota checked ${age}. It may be out of date; switch to this account to refresh it.`
+        : `Quota checked ${age}`}
+    >
+      <Icon name={stale ? 'warning-clock' : 'clock'} size={10} class="pill-icon" />
       <span>{age}</span>
     </span>
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} />
+  <QuotaBoxes quota={account.quota} {tierName} compact={isCompactView()} />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
@@ -292,21 +301,22 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--vscode-button-secondaryBackground, rgba(255, 255, 255, 0.08));
+    border: 1px solid var(--vscode-button-border, rgba(255, 255, 255, 0.14));
     border-radius: 4px;
-    padding: 2px 8px;
+    padding: 2px 10px;
     font-size: 11px;
     font-weight: 600;
-    color: var(--vscode-foreground, #ffffff);
+    color: var(--vscode-button-secondaryForeground, var(--vscode-foreground, #ffffff));
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
-    line-height: 1.4;
+    line-height: 1.5;
   }
 
   .switch-btn:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.25);
+    background: var(--vscode-button-background, #0e639c);
+    border-color: var(--vscode-button-background, #0e639c);
+    color: var(--vscode-button-foreground, #ffffff);
   }
 
   .switch-btn:disabled {
@@ -328,7 +338,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 170px;
+    max-width: 150px;
   }
 
   .time-pill {
@@ -342,6 +352,11 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--vscode-descriptionForeground, #9aa0a6);
     white-space: nowrap;
+  }
+
+  .time-pill.stale {
+    color: var(--vscode-editorWarning-foreground, #cca700);
+    border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700), transparent 60%);
   }
 
   .rename-input {

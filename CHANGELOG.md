@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-11
+
+### Added
+- Quota progress bars (green / amber / red by remaining %) with a "Low" chip at 10% or less. The percentage is always shown, so colour is never the only signal.
+- Compact view (toggle in the panel header, remembered between sessions): other accounts show a one-line weekly summary instead of the full quota boxes.
+- A warning clock on accounts whose quota data is more than 24 hours old, with a tooltip explaining it may be out of date.
+- Section label shows how many other accounts there are.
+
+### Changed
+- **Starter tier accounts no longer show a 5-hour window** (the tier has a weekly quota only); the card says "Weekly quota only on this plan".
+- Tier pill uses a short name ("Starter", "Google AI Pro") so it is no longer cut off.
+- The Switch button highlights in the theme's button colour on hover; quota boxes stack in one column on very narrow sidebars.
+- Removed logo in front of Switchyard title and cleaned up redundant container header for a cleaner sidebar.
+
 ---
 
 ## [0.2.0] - 2026-10-08

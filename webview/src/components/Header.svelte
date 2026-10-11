@@ -1,6 +1,6 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
-  import { setView } from '../stores/app.svelte';
+  import { isCompactView, setCompactView, setView } from '../stores/app.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
 
@@ -31,7 +31,6 @@
 
 <header class="header">
   <div class="brand">
-    <Icon name="zap" size={15} class="brand-icon" />
     <span class="title">Switchyard</span>
   </div>
   <div class="actions">
@@ -42,6 +41,15 @@
       title="Refresh"
     >
       <Icon name="refresh" size={14} />
+    </button>
+    <button
+      class="icon-btn"
+      onclick={() => setCompactView(!isCompactView())}
+      aria-label={isCompactView() ? 'Switch to detailed view' : 'Switch to compact view'}
+      aria-pressed={isCompactView()}
+      title={isCompactView() ? 'Detailed view' : 'Compact view'}
+    >
+      <Icon name={isCompactView() ? 'detailed' : 'compact'} size={14} />
     </button>
     <button
       class="icon-btn"

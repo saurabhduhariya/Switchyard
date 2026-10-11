@@ -22,7 +22,10 @@
     | 'login'
     | 'arrow-left'
     | 'check'
-    | 'external';
+    | 'external'
+    | 'compact'
+    | 'detailed'
+    | 'warning-clock';
 
   interface Props {
     name: IconName;
@@ -263,6 +266,21 @@
       stroke-linejoin="round"
       fill="none"
     />
+  {:else if name === 'compact'}
+    <path
+      d="M3 4.5h10M3 8h10M3 11.5h10"
+      stroke="currentColor"
+      stroke-width="1.4"
+      stroke-linecap="round"
+      fill="none"
+    />
+  {:else if name === 'detailed'}
+    <rect x="2.5" y="2.5" width="11" height="4.5" rx="1" stroke="currentColor" stroke-width="1.25" fill="none" />
+    <rect x="2.5" y="9" width="11" height="4.5" rx="1" stroke="currentColor" stroke-width="1.25" fill="none" />
+  {:else if name === 'warning-clock'}
+    <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" fill="none" />
+    <path d="M8 4.5V8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+    <circle cx="8" cy="11" r="0.9" fill="currentColor" />
   {/if}
 </svg>
 

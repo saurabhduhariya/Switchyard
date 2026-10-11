@@ -3,7 +3,7 @@
   "displayName": "Switchyard – Account Switcher for Antigravity",
   "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
   "publisher": "saurabhduhariya",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -42,7 +42,7 @@
       "activitybar": [
         {
           "id": "agSwitchyard",
-          "title": "Accounts",
+          "title": "",
           "icon": "media/icon.svg"
         }
       ]
@@ -52,7 +52,7 @@
         {
           "type": "webview",
           "id": "agSwitchyard.panel",
-          "name": "Accounts"
+          "name": ""
         }
       ]
     },
