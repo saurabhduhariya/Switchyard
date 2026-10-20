@@ -191,7 +191,7 @@
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} {tierName} compact={isCompactView()} />
+  <QuotaBoxes quota={account.quota} {tierName} compact={isCompactView()} estimate={true} />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />

@@ -432,6 +432,103 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
     });
   });
+
+  describe('quota freshness', () => {
+    const quotaFor = (tier: string) =>
+      ({
+        tierName: tier,
+        updatedAt: Date.now(),
+        source: 'live',
+        gemini: { name: 'Gemini', weekly: { remainingPercent: 42, resetTime: new Date(Date.now() + 86400000).toISOString() } },
+        claudeGpt: { name: 'Claude + GPT' },
+      }) as any;
+
+    const twoAccounts = async () => {
+      const a = await store.upsertFromSnapshot(
+        { values: { 'antigravityUnifiedStateSync.oauthToken': 'QUFB' }, capturedAt: 1 },
+        'A'
+      );
+      const b = await store.upsertFromSnapshot(
+        { values: { 'antigravityUnifiedStateSync.oauthToken': 'QkJC' }, capturedAt: 2 },
+        'B'
+      );
+      await store.setActive(a.id);
+      return { a, b };
+    };
+
+    it('never saves the signed-in account\'s quota under a different account', async () => {
+      const { a, b } = await twoAccounts();
+      const collector = (panelProvider as any).quotaCollector;
+      collector.getQuotaSummary = vi.fn(async () => quotaFor('Google AI Pro Quota'));
+      const updateSpy = vi.spyOn(store, 'updateQuota');
+
+      await (panelProvider as any).handleRefreshQuota(b.id); // B is not the signed-in account
+      expect(collector.getQuotaSummary).not.toHaveBeenCalled();
+      expect(updateSpy).not.toHaveBeenCalled();
+      expect((await store.get(b.id))?.quota).toBeUndefined();
+
+      await (panelProvider as any).handleRefreshQuota(a.id); // A is
+      expect(updateSpy).toHaveBeenCalledWith(a.id, expect.anything());
+    });
+
+    it('token swap: captures the leaving account\'s quota just before switching', async () => {
+      const { a, b } = await twoAccounts();
+      const order: string[] = [];
+      const collector = (panelProvider as any).quotaCollector;
+      collector.getQuotaSummary = vi.fn(async () => {
+        order.push('quota');
+        return quotaFor('Google AI Pro Quota');
+      });
+      panelProvider.setSwitchEngine({
+        mode: 'tokenSwap' as const,
+        switchTo: vi.fn(async () => {
+          order.push('switch');
+          return { ok: true, mode: 'tokenSwap' as const };
+        }),
+      } as any);
+
+      await panelProvider.handleSwitch(b.id);
+      expect(order).toEqual(['quota', 'switch']);
+      expect((await store.get(a.id))?.quota?.tierName).toBe('Google AI Pro Quota'); // the account being left
+      expect((await store.get(b.id))?.quota).toBeUndefined();
+    });
+
+    it('profile mode does not read quota before opening another profile', async () => {
+      const { b } = await twoAccounts();
+      const collector = (panelProvider as any).quotaCollector;
+      collector.getQuotaSummary = vi.fn(async () => quotaFor('x'));
+      panelProvider.setSwitchEngine({
+        mode: 'profile' as const,
+        switchTo: vi.fn(async () => ({ ok: true, mode: 'profile' as const })),
+      } as any);
+
+      await panelProvider.handleSwitch(b.id);
+      expect(collector.getQuotaSummary).not.toHaveBeenCalled();
+    });
+
+    it('a slow quota read can never hold up the switch', async () => {
+      await twoAccounts();
+      const collector = (panelProvider as any).quotaCollector;
+      collector.getQuotaSummary = vi.fn(() => new Promise(() => undefined)); // never answers
+
+      const started = Date.now();
+      await (panelProvider as any).refreshQuotaBeforeLeaving(40);
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+
+    it('a failing quota read does not block the switch either', async () => {
+      const { b } = await twoAccounts();
+      const collector = (panelProvider as any).quotaCollector;
+      collector.getQuotaSummary = vi.fn(async () => {
+        throw new Error('language server not running');
+      });
+      const switchTo = vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const }));
+      panelProvider.setSwitchEngine({ mode: 'tokenSwap' as const, switchTo } as any);
+
+      await panelProvider.handleSwitch(b.id);
+      expect(switchTo).toHaveBeenCalledWith(b.id);
+    });
+  });
 });
 
 

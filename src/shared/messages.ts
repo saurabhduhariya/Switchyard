@@ -11,6 +11,8 @@ export interface QuotaBucket {
   remainingPercent?: number; // 0 - 100 (e.g. 64.60)
   resetTime?: string; // ISO date string
   disabled?: boolean;
+  /** UI-only: this value was estimated because its reset time passed (not read from Antigravity). */
+  estimated?: boolean;
 }
 
 export interface ModelQuotaGroup {

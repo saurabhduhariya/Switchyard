@@ -5,6 +5,9 @@ import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
 import { CaptureManager } from '../capture/CaptureManager';
 import { CAPTURE_DETECTED_TTL_MS } from '../constants';
+
+/** Longest we wait for a last quota read before switching accounts. */
+const QUOTA_BEFORE_SWITCH_TIMEOUT_MS = 2500;
 import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
@@ -472,8 +475,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    * Manually refreshes quota for a specific account or active account.
    */
   private async handleRefreshQuota(accountId?: string): Promise<void> {
-    const targetId = accountId || (await this.store.activeId());
+    const activeId = await this.store.activeId();
+    const targetId = accountId || activeId;
     if (!targetId) return;
+
+    // Antigravity only reports quota for the signed-in account. Saving that result under a
+    // different account would show the wrong numbers, so other accounts are never refreshed here.
+    if (targetId !== activeId) {
+      this.logger.warn(
+        `Ignoring quota refresh for ${targetId}: it is not the signed-in account (${activeId ?? 'none'})`
+      );
+      return;
+    }
+
     try {
       const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
       if (quota) {
@@ -482,6 +496,26 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
     } catch (err) {
       this.logger.error('Failed to manually refresh quota:', err);
+    }
+  }
+
+  /**
+   * Reads the signed-in account's quota one last time before leaving it, so the numbers kept
+   * for that account are as fresh as possible. Bounded so a slow read can never hold up a switch.
+   */
+  private async refreshQuotaBeforeLeaving(timeoutMs = QUOTA_BEFORE_SWITCH_TIMEOUT_MS): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.refreshActiveQuota(),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, timeoutMs);
+        }),
+      ]);
+    } catch (err) {
+      this.logger.debug('Pre-switch quota capture failed:', err);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -596,6 +630,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         type: 'busy',
         message: `Switching to ${account.email}…`,
       });
+      await this.refreshQuotaBeforeLeaving();
     }
 
     const result = await this.switchEngine.switchTo(id);

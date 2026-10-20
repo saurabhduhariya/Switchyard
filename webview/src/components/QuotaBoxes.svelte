@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AccountQuotaSummary, QuotaBucket } from '../../../src/shared/messages';
+  import { estimateQuotaSummary, hasEstimates } from '../../../src/shared/quotaEstimate';
   import { formatCountdown, formatPercentage } from '../lib/formatQuota';
   import { barWidth, hasFiveHourWindow, quotaTone } from '../lib/tier';
 
@@ -9,9 +10,14 @@
     tierName?: string;
     /** One-line summary instead of the full boxes (used for other accounts in compact view). */
     compact?: boolean;
+    /**
+     * Show buckets whose reset time has passed as an estimated 100% instead of the old number.
+     * Used for accounts that are not live (see src/shared/quotaEstimate.ts).
+     */
+    estimate?: boolean;
   }
 
-  let { quota, tierName, compact = false }: Props = $props();
+  let { quota: rawQuota, tierName, compact = false, estimate = false }: Props = $props();
 
   // Tick every 30s to update countdowns live
   let now = $state(Date.now());
@@ -21,6 +27,10 @@
     }, 30_000);
     return () => clearInterval(timer);
   });
+
+  // Re-evaluated on the 30s tick, so a bucket flips to "estimated" the moment its reset passes.
+  let quota = $derived(estimate ? estimateQuotaSummary(rawQuota, now) : rawQuota);
+  let anyEstimated = $derived(hasEstimates(quota));
 
   /** Numeric remaining percentage (0-100) or undefined when unknown/disabled. */
   function getBucketNumber(bucket?: QuotaBucket, fallbackNum?: number): number | undefined {
@@ -36,6 +46,7 @@
 
   function getBucketCountdown(bucket?: QuotaBucket, fallbackReset?: string): string | undefined {
     if (bucket?.disabled) return undefined;
+    if (bucket?.estimated) return 'Reset passed, likely full';
     const resetTime = bucket?.resetTime || fallbackReset;
     if (!resetTime) return undefined;
     // `now` is read so the countdown re-renders on the 30s tick
@@ -67,12 +78,18 @@
   );
 </script>
 
-{#snippet metric(group: string, label: string, pct: number | undefined, reset: string | undefined, sub: boolean)}
+{#snippet metric(group: string, label: string, pct: number | undefined, reset: string | undefined, sub: boolean, est: boolean)}
   {@const tone = quotaTone(pct)}
   <div class="quota-pair" class:sub-pair={sub}>
     <div class="metric-row">
       <span class="metric-label">{label}</span>
-      <span class="metric-val" class:dash={pct === undefined}>{formatPercentage(pct)}</span>
+      <span
+        class="metric-val"
+        class:dash={pct === undefined}
+        class:est
+        title={est ? 'Estimated: the reset time passed since this was last checked' : undefined}
+        >{est ? '~' : ''}{formatPercentage(pct)}</span
+      >
       {#if tone === 'low'}
         <span class="low-chip">Low</span>
       {/if}
@@ -95,10 +112,10 @@
 
 {#if compact}
   <div class="compact-grid">
-    {#each [{ name: 'Gemini', weekly: geminiWeekly, five: gemini5h }, { name: 'Claude + GPT', weekly: claudeWeekly, five: claude5h }] as g (g.name)}
+    {#each [{ name: 'Gemini', weekly: geminiWeekly, five: gemini5h, est: quota?.gemini?.weekly?.estimated === true }, { name: 'Claude + GPT', weekly: claudeWeekly, five: claude5h, est: quota?.claudeGpt?.weekly?.estimated === true }] as g (g.name)}
       <div class="compact-item" title="{g.name}: weekly {formatPercentage(g.weekly)}{showFiveHour ? `, 5h ${formatPercentage(g.five)}` : ''}">
         <span class="compact-name">{g.name}</span>
-        <span class="compact-val">{formatPercentage(g.weekly)}</span>
+        <span class="compact-val">{g.est ? '~' : ''}{formatPercentage(g.weekly)}</span>
         <div class="bar thin" aria-hidden="true">
           <div class="bar-fill tone-{quotaTone(g.weekly)}" style:width="{barWidth(g.weekly)}%"></div>
         </div>
@@ -110,23 +127,28 @@
     <!-- Gemini -->
     <div class="quota-box">
       <div class="box-title">Gemini</div>
-      {@render metric('Gemini', 'Weekly', geminiWeekly, geminiWeeklyReset, false)}
+      {@render metric('Gemini', 'Weekly', geminiWeekly, geminiWeeklyReset, false, quota?.gemini?.weekly?.estimated === true)}
       {#if showFiveHour}
-        {@render metric('Gemini', '5h', gemini5h, gemini5hReset, true)}
+        {@render metric('Gemini', '5h', gemini5h, gemini5hReset, true, quota?.gemini?.fiveHour?.estimated === true)}
       {/if}
     </div>
 
     <!-- Claude + GPT -->
     <div class="quota-box">
       <div class="box-title">Claude + GPT</div>
-      {@render metric('Claude and GPT', 'Weekly', claudeWeekly, claudeWeeklyReset, false)}
+      {@render metric('Claude and GPT', 'Weekly', claudeWeekly, claudeWeeklyReset, false, quota?.claudeGpt?.weekly?.estimated === true)}
       {#if showFiveHour}
-        {@render metric('Claude and GPT', '5h', claude5h, claude5hReset, true)}
+        {@render metric('Claude and GPT', '5h', claude5h, claude5hReset, true, quota?.claudeGpt?.fiveHour?.estimated === true)}
       {/if}
     </div>
   </div>
   {#if !showFiveHour}
     <div class="plan-note">Weekly quota only on this plan</div>
+  {/if}
+  {#if anyEstimated}
+    <div class="plan-note" role="note">
+      ~ Estimated: the reset passed since this account was last checked. Switch to it for exact numbers.
+    </div>
   {/if}
 {/if}
 
@@ -195,6 +217,10 @@
     font-weight: 700;
     color: var(--vscode-foreground, #ffffff);
     font-variant-numeric: tabular-nums;
+  }
+
+  .metric-val.est {
+    font-style: italic;
   }
 
   .metric-val.dash {

@@ -9,6 +9,7 @@
   import { postToHost } from '../lib/vscode';
   import { getMode } from '../stores/app.svelte';
   import { shortTierName } from '../lib/tier';
+  import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
   interface Props {
     account: AccountMeta;
@@ -145,7 +146,7 @@
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} {tierName} />
+  <QuotaBoxes quota={account.quota} {tierName} estimate={shouldEstimate(account.quota, true)} />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />

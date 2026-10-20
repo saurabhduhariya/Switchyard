@@ -6,7 +6,7 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
 
 - **Non-Disruptive Account Addition**: Add new Google accounts without closing your main IDE window using the side-window capture flow.
 - **One-Click Switching**: Switch between saved Google accounts without repeating the browser sign-in process.
-- **Model Usage & Quotas**: View live remaining quota percentages (weekly and 5-hour limits) and reset countdowns for Gemini, Claude, and GPT models.
+- **Model Usage & Quotas**: View live remaining quota percentages (weekly and 5-hour limits, or weekly only on the Starter tier) and reset countdowns for Gemini, Claude, and GPT models.
 - **Dual Switching Modes**:
   - **Token Swap (Default)**: Switches accounts in the current window via an atomic session swap and restart.
   - **Isolated Profiles**: Launches separate Antigravity windows side-by-side using isolated user data directories.
@@ -94,6 +94,7 @@ The following commands are available from the Command Palette (`Ctrl+Shift+P` / 
 
 ## Security & Privacy
 
+- **How quota freshness works**: Antigravity only reports quota for the account that is signed in, so other accounts show the numbers from the last time they were active (the clock on the card shows how old they are). Switchyard captures the signed-in account's quota one last time right before you switch away from it. If a saved account's reset time has passed since then, its bucket is shown as an estimated `~100%` (with a note), because it has refilled. Estimates never change stored data and cannot know about usage from other devices; switch to the account for exact numbers.
 - **Offline-First**: Switchyard makes zero external network or telemetry calls. Quota data is queried directly from Antigravity's local language server on loopback (`127.0.0.1`).
 - **OS Keychain Encryption**: Sensitive tokens are stored in VS Code's `SecretStorage` API (backed by Windows Credential Manager, macOS Keychain, or Linux Secret Service).
 - **Redacted Logging**: All tokens and authorization keys are redacted before anything is logged to output channels.

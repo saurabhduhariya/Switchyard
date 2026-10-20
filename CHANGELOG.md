@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Saved accounts whose quota reset time has passed are shown as an estimated `~100%` (marked, with an explanatory note) instead of the old, misleading number. Works offline and never changes stored data.
+- Quota of the signed-in account is captured one last time right before switching away from it (bounded to 2.5 s), so the numbers kept for that account are as fresh as possible.
+
+### Fixed
+- A manual quota refresh could save the signed-in account's quota under a different account. Only the signed-in account is refreshed now.
+
 ## [0.2.1] - 2026-10-11
 
 ### Added

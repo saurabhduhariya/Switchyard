@@ -16,7 +16,8 @@ function mockQuota(
   updatedAt: number,
   gemini: [number, number],
   claude: [number, number],
-  withFiveHour: boolean
+  withFiveHour: boolean,
+  weeklyResetOffsetMs: number = 5 * DAY
 ): AccountQuotaSummary {
   const reset = (ms: number) => new Date(NOW + ms).toISOString();
   const five = (pct: number) =>
@@ -27,7 +28,7 @@ function mockQuota(
     source: 'cache',
     gemini: {
       name: 'Gemini',
-      weekly: { remainingPercent: gemini[0], resetTime: reset(5 * DAY) },
+      weekly: { remainingPercent: gemini[0], resetTime: reset(weeklyResetOffsetMs) },
       fiveHour: five(gemini[1]),
     },
     claudeGpt: {
@@ -63,7 +64,7 @@ const MOCK_ACCOUNTS: AccountMeta[] = [
     addedAt: NOW - 10 * DAY,
     lastUsedAt: NOW - 5 * DAY,
     // Starter tier: weekly quota only, no 5-hour window
-    quota: mockQuota('Antigravity Starter Quota', NOW - 4 * DAY, [100, 0], [100, 0], false),
+    quota: mockQuota('Antigravity Starter Quota', NOW - 4 * DAY, [12, 0], [100, 0], false, -1 * DAY), // weekly reset already passed -> shown as an estimate
   },
 ];
 
