@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   barWidth,
   hasFiveHourWindow,
+  isPlanTierCompatible,
+  isProTier,
   isStale,
   isStarterTier,
+  isUltraTier,
   quotaTone,
   shortTierName,
 } from '../../webview/src/lib/tier';
@@ -60,5 +63,60 @@ describe('tier helpers', () => {
     expect(isStale(now - 60_000, now)).toBe(false);
     expect(isStale(now - 25 * 3600_000, now)).toBe(true);
     expect(isStale(undefined, now)).toBe(false);
+  });
+
+  it('detects Ultra and Pro tiers accurately', () => {
+    expect(isUltraTier('Google AI Ultra')).toBe(true);
+    expect(isUltraTier('Google AI Ultra Quota')).toBe(true);
+    expect(isUltraTier('g1-ultra-tier')).toBe(true);
+    expect(isUltraTier('Google AI Pro')).toBe(false);
+    expect(isUltraTier('Antigravity Starter')).toBe(false);
+
+    expect(isProTier('Google AI Pro')).toBe(true);
+    expect(isProTier('Google AI Pro Quota')).toBe(true);
+    expect(isProTier('AI Pro')).toBe(true);
+    expect(isProTier('g1-pro-tier')).toBe(true);
+    expect(isProTier('Google AI Ultra')).toBe(false);
+    expect(isProTier('Antigravity Starter')).toBe(false);
+  });
+
+  it('validates plan and quota compatibility to prevent cross-account contamination', () => {
+    const proQuota = {
+      tierName: 'Google AI Pro Quota',
+      gemini: { fiveHour: { remainingPercent: 90 } },
+    } as any;
+
+    const ultraQuota = {
+      tierName: 'Google AI Ultra Quota',
+      gemini: { fiveHour: { remainingPercent: 95 } },
+    } as any;
+
+    const starterQuota = {
+      tierName: 'Antigravity Starter Quota',
+      gemini: { weekly: { remainingPercent: 50 } },
+    } as any;
+
+    const genericPaidQuota = {
+      tierName: 'Antigravity Quota',
+      gemini: { fiveHour: { remainingPercent: 80 } },
+    } as any;
+
+    // Ultra plan tests
+    expect(isPlanTierCompatible('Google AI Ultra', ultraQuota)).toBe(true);
+    expect(isPlanTierCompatible('Google AI Ultra', genericPaidQuota)).toBe(true);
+    expect(isPlanTierCompatible('Google AI Ultra', proQuota)).toBe(false);
+    expect(isPlanTierCompatible('Google AI Ultra', starterQuota)).toBe(false);
+
+    // Pro plan tests
+    expect(isPlanTierCompatible('Google AI Pro', proQuota)).toBe(true);
+    expect(isPlanTierCompatible('Google AI Pro', genericPaidQuota)).toBe(true);
+    expect(isPlanTierCompatible('Google AI Pro', ultraQuota)).toBe(false);
+    expect(isPlanTierCompatible('Google AI Pro', starterQuota)).toBe(false);
+
+    // Starter plan tests
+    expect(isPlanTierCompatible('Antigravity Starter', starterQuota)).toBe(true);
+    expect(isPlanTierCompatible('Antigravity Starter', proQuota)).toBe(false);
+    expect(isPlanTierCompatible('Antigravity Starter', ultraQuota)).toBe(false);
+    expect(isPlanTierCompatible('Antigravity Starter', genericPaidQuota)).toBe(false);
   });
 });

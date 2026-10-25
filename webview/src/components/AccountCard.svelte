@@ -8,7 +8,7 @@
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode, isCompactView } from '../stores/app.svelte';
-  import { isStale, shortTierName } from '../lib/tier';
+  import { isStale, isStarterTier, shortTierName } from '../lib/tier';
 
   interface Props {
     account: AccountMeta;
@@ -25,7 +25,7 @@
 
   let displayEmail = $derived(masked ? maskEmail(account.email) : account.email);
   let username = $derived(account.label || account.email.split('@')[0]);
-  let tierName = $derived(account.quota?.tierName || account.plan || 'Antigravity Quota');
+  let tierName = $derived(account.plan || account.quota?.tierName || 'Antigravity Quota');
   let age = $derived(formatCompactAge(account.quota?.updatedAt || account.lastUsedAt || account.addedAt));
   // Accounts that are not signed in are not refreshed live, so old numbers may be wrong.
   let stale = $derived(isStale(account.quota?.updatedAt));

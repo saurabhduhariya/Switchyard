@@ -1,5 +1,10 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readKeys } from './StateDb';
+import { isPlanTierCompatible, isStarterTier } from '../shared/quotaRules';
+import type { AccountStore } from '../accounts/AccountStore';
+import type { Logger } from '../util/logger';
+import type { AccountMeta, AccountQuotaSummary } from '../accounts/types';
 
 export interface BackupInfo {
   id: string; // ISO timestamp string safe for filesystems, e.g. "2026-10-01T16-42-00-123Z"
@@ -166,3 +171,85 @@ export async function pruneBackups(backupRootDir: string, keep: number): Promise
 
   return deleted;
 }
+
+/**
+ * Detects any accounts whose quota was accidentally contaminated or overwritten during an account switch
+ * (e.g. a Pro account having a Starter quota, or a Starter account having a Pro quota).
+ * Restores their authentic quota from the latest available backup in backupRootDir.
+ */
+export async function recoverCorruptedQuotas(
+  store: AccountStore,
+  backupRootDir: string,
+  logger?: Logger
+): Promise<boolean> {
+  const accounts = await store.list();
+  const corrupted = accounts.filter(
+    (a) => a.plan && a.quota && !isPlanTierCompatible(a.plan, a.quota)
+  );
+
+  if (corrupted.length === 0) {
+    return false;
+  }
+
+  const backups = await listBackups(backupRootDir);
+  let anyRestored = false;
+
+  for (const acc of corrupted) {
+    let restored = false;
+    for (const b of backups) {
+      const backupDbPath = path.join(b.path, 'state.vscdb');
+      if (!fs.existsSync(backupDbPath)) continue;
+      try {
+        const keys = await readKeys(backupDbPath, ['saurabhduhariya.ag-switchyard']);
+        const raw = keys['saurabhduhariya.ag-switchyard'];
+        if (!raw) continue;
+        const parsed = JSON.parse(raw);
+        const backupAccounts: AccountMeta[] = parsed['switchyard.accounts'] || [];
+        const match = backupAccounts.find((ba) => ba.id === acc.id);
+        if (match?.quota && isPlanTierCompatible(acc.plan, match.quota)) {
+          logger?.info(`Restoring authentic quota for ${acc.email} (${acc.plan}) from backup ${b.id}`);
+          await store.updateQuota(acc.id, match.quota);
+          restored = true;
+          anyRestored = true;
+          break;
+        }
+      } catch (err) {
+        logger?.debug(`Failed to inspect backup ${b.id} for quota recovery:`, err);
+      }
+    }
+
+    if (!restored && acc.quota) {
+      if (isStarterTier(acc.plan)) {
+        const cleanQuota: AccountQuotaSummary = {
+          tierName: 'Antigravity Starter Quota',
+          gemini: {
+            name: 'Gemini',
+            weekly: acc.quota.gemini?.weekly,
+            weeklyRemaining: acc.quota.gemini?.weeklyRemaining,
+            weeklyResetTime: acc.quota.gemini?.weeklyResetTime,
+          },
+          claudeGpt: {
+            name: 'Claude + GPT',
+            weekly: acc.quota.claudeGpt?.weekly,
+            weeklyRemaining: acc.quota.claudeGpt?.weeklyRemaining,
+            weeklyResetTime: acc.quota.claudeGpt?.weeklyResetTime,
+          },
+          updatedAt: acc.quota.updatedAt,
+          source: acc.quota.source,
+        };
+        await store.updateQuota(acc.id, cleanQuota);
+        anyRestored = true;
+      } else {
+        await store.updateQuota(acc.id, {
+          ...acc.quota,
+          tierName: `${acc.plan} Quota`,
+        });
+        anyRestored = true;
+      }
+    }
+  }
+
+  return anyRestored;
+}
+
+export const recoverCorruptedProQuotas = recoverCorruptedQuotas;

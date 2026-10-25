@@ -1,6 +1,7 @@
 import { ACCOUNTS_STATE_KEY, ACTIVE_ACCOUNT_STATE_KEY, SECRET_PREFIX } from '../constants';
 import { Mutex } from '../util/mutex';
 import { parseSnapshot } from './identity';
+import { isPlanTierCompatible, isStarterTier } from '../shared/quotaRules';
 import { AccountMeta, AccountQuotaSummary, createAccountId, Snapshot } from './types';
 
 export interface SecretStorageLike {
@@ -190,7 +191,23 @@ export class AccountStore {
    * Updates an account's quota summary.
    */
   async updateQuota(id: string, quota: AccountQuotaSummary): Promise<void> {
-    return this.updateMeta(id, { quota });
+    return this.mutex.runExclusive(async () => {
+      const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
+      const idx = accounts.findIndex((a) => a.id === id);
+      const existing = accounts[idx];
+      if (idx !== -1 && existing) {
+        // Guard against degraded DB fallback overwriting a valid live quota with 5h buckets
+        if (quota.source === 'vscdb' && existing.quota?.source === 'live' && existing.quota.gemini?.fiveHour) {
+          return;
+        }
+        // Guard against cross-account contamination across plans (Starter, Pro, Ultra, etc.)
+        if (existing.plan && !isPlanTierCompatible(existing.plan, quota)) {
+          return;
+        }
+        accounts[idx] = { ...existing, quota };
+        await this.state.update(ACCOUNTS_STATE_KEY, accounts);
+      }
+    });
   }
 
   /**

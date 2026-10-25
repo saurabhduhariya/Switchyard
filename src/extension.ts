@@ -8,7 +8,7 @@ import { CaptureManager } from './capture/CaptureManager';
 import { QuotaResetNotifier } from './quota/QuotaResetNotifier';
 import { isCompanionMode, setupCompanionMode, createCompanionStatusBar } from './capture/companion';
 import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
-import { listBackups, restoreBackup } from './db/backup';
+import { listBackups, recoverCorruptedQuotas, restoreBackup } from './db/backup';
 import { readKeys } from './db/StateDb';
 import { findStateDb, getBackupsDir, getGlobalStorageDir } from './platform/paths';
 import { PanelProvider } from './ui/PanelProvider';
@@ -87,8 +87,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 2e. Sweep stale capture sessions on startup
   void captureManager.sweepStaleSessions().then(() => captureManager.resume());
 
-  // 2f. Reconcile any pending switch from a previous IDE quit/restart
-  void reconcilePendingSwitch(context.globalState, store, logger, dbPath);
+  // 2f. Reconcile any pending switch from a previous IDE quit/restart before initializing views
+  await reconcilePendingSwitch(context.globalState, store, logger, dbPath);
+
+  // 2g. Auto-heal any corrupted Pro/Ultra quotas from previous switch race conditions
+  if (dbPath) {
+    const backupDir = getBackupsDir(getGlobalStorageDir(dbPath));
+    void recoverCorruptedQuotas(store, backupDir, logger).then((restored) => {
+      if (restored) {
+        void panelProvider.push();
+      }
+    });
+  }
 
   // 3. Register Webview Provider & Status Bar
   context.subscriptions.push(

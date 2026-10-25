@@ -444,9 +444,13 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         });
       }
 
-      // Refresh active account quota
+      // Push state immediately so UI renders instantly without waiting for quota network call
+      await this.push();
+
+      // Refresh active account quota (skip if a switch is pending reconciliation)
+      const pendingSwitch = this.ctx.globalState?.get('switchyard.pendingSwitch');
       const activeAccountId = await this.store.activeId();
-      if (activeAccountId) {
+      if (activeAccountId && !pendingSwitch) {
         try {
           const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
           if (quota) {

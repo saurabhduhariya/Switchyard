@@ -4,7 +4,13 @@
 
 import { LOW_QUOTA_PERCENT } from '../../../src/shared/quotaRules';
 
-export { hasFiveHourWindow, isStarterTier } from '../../../src/shared/quotaRules';
+export {
+  hasFiveHourWindow,
+  isPlanTierCompatible,
+  isProTier,
+  isStarterTier,
+  isUltraTier,
+} from '../../../src/shared/quotaRules';
 
 /**
  * Short label for the tier pill so it never gets cut off:

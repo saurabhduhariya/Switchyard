@@ -8,7 +8,7 @@
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode } from '../stores/app.svelte';
-  import { shortTierName } from '../lib/tier';
+  import { isStarterTier, shortTierName } from '../lib/tier';
   import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
   interface Props {
@@ -25,7 +25,7 @@
 
   let displayEmail = $derived(masked ? maskEmail(account.email) : account.email);
   let username = $derived(account.label || account.email.split('@')[0]);
-  let tierName = $derived(account.quota?.tierName || account.plan || 'Antigravity Quota');
+  let tierName = $derived(account.plan || account.quota?.tierName || 'Antigravity Quota');
   let age = $derived(account.quota ? formatCompactAge(account.quota.updatedAt, true) : 'Live');
 
   function startRename() {

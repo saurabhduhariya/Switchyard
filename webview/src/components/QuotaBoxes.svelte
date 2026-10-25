@@ -55,7 +55,7 @@
   }
 
   // The Starter tier has a weekly quota only: there is no rolling 5-hour window.
-  let showFiveHour = $derived(hasFiveHourWindow(quota?.tierName || tierName));
+  let showFiveHour = $derived(hasFiveHourWindow(tierName));
 
   let geminiWeekly = $derived(getBucketNumber(quota?.gemini?.weekly, quota?.gemini?.weeklyRemaining));
   let geminiWeeklyReset = $derived(
