@@ -6,6 +6,7 @@
  */
 
 import type { AccountMeta, AccountQuotaSummary, ToWebview } from '../../../src/shared/messages';
+import { suggestBestAccount } from '../../../src/shared/quotaSuggest';
 
 const NOW = Date.now();
 const HOUR = 3_600_000;
@@ -47,7 +48,8 @@ const MOCK_ACCOUNTS: AccountMeta[] = [
     plan: 'Pro',
     addedAt: NOW - 30 * DAY,
     lastUsedAt: NOW - 2 * HOUR,
-    quota: mockQuota('Google AI Pro Quota', NOW - 5 * 60_000, [99.95, 100], [100, 100], true),
+    // Gemini weekly is low here so the dev preview shows the "running low" hint
+    quota: mockQuota('Google AI Pro Quota', NOW - 5 * 60_000, [6, 100], [100, 100], true),
   },
   {
     id: 'acc-2',
@@ -103,7 +105,9 @@ let currentActiveId = SCENARIOS[currentScenario].activeId;
 
 function sendState() {
   const s = SCENARIOS[currentScenario];
-  post({ type: 'state', accounts: s.accounts, activeId: currentActiveId });
+  // Same logic the extension uses, so the dev preview shows the "running low" hint too
+  const suggestion = suggestBestAccount(s.accounts, currentActiveId);
+  post({ type: 'state', accounts: s.accounts, activeId: currentActiveId, suggestion });
 }
 
 export function initMockHost(): void {

@@ -23,7 +23,7 @@ function parseTime(iso?: string): number | undefined {
 }
 
 /** Combines a bucket with the older flat fields so both shapes are handled the same way. */
-function toBucket(
+export function toBucket(
   bucket: QuotaBucket | undefined,
   fallbackPercent?: number,
   fallbackReset?: string

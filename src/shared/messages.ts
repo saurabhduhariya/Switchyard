@@ -33,6 +33,20 @@ export interface AccountQuotaSummary {
   source: 'live' | 'cache' | 'vscdb';
 }
 
+/** A "switch to a better account" hint shown above the active card. */
+export interface SwitchSuggestion {
+  /** Stable id for this exact situation; used to remember a dismissal. */
+  key: string;
+  /** Account to switch to. */
+  accountId: string;
+  /** What is low on the active account, e.g. "Gemini weekly 8%". */
+  lowText: string;
+  /** What the suggested account has, e.g. "Gemini weekly ~100%". */
+  betterText: string;
+  /** true when the suggested account's numbers are estimates (its reset time passed). */
+  estimated: boolean;
+}
+
 export type AccountMeta = {
   id: string; // stable id (hash of email)
   email: string;
@@ -92,6 +106,7 @@ export type ToWebview =
       backupRetention?: number;
       addAccountGuide?: AddAccountGuideState;
       captureSession?: CaptureSessionState;
+      suggestion?: SwitchSuggestion;
       unsupported?: {
         reason: string;
         version?: string;
@@ -128,6 +143,7 @@ export type ToHost =
   | { type: 'cancelCapture' }
   | { type: 'finishCapture' }
   | { type: 'dismissCapture' }
+  | { type: 'dismissSuggestion'; key: string }
   | { type: 'useLegacyAdd' }
   | { type: 'reopenCaptureWindow' };
 

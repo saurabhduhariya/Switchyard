@@ -164,6 +164,16 @@
           "default": "",
           "description": "Custom path to the Antigravity IDE executable binary. Leave empty for automatic detection."
         },
+        "switchyard.notifyOnQuotaReset": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a notification when a quota that was used up on a saved account has reset, so you know it is worth switching back. Uses only the quota Switchyard already stores; no network calls."
+        },
+        "switchyard.suggestBestAccount": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When the signed-in account is running low (10% or less) on a model quota, show a hint above it suggesting the saved account with the most left, with a one-click switch."
+        },
         "switchyard.captureWindowArgs": {
           "type": "array",
           "items": { "type": "string" },

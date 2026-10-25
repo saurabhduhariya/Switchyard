@@ -3,7 +3,13 @@
  * Receives state from the extension host via postMessage.
  */
 
-import type { AccountMeta, AddAccountGuideState, CaptureSessionState, ToWebview } from '../../../src/shared/messages';
+import type {
+  AccountMeta,
+  AddAccountGuideState,
+  CaptureSessionState,
+  SwitchSuggestion,
+  ToWebview,
+} from '../../../src/shared/messages';
 import { getVsCodeApi } from '../lib/vscode';
 
 // ── Reactive State (Svelte 5 runes) ──
@@ -24,6 +30,7 @@ let loading = $state(true);
 let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
 let captureSession = $state<CaptureSessionState | undefined>(undefined);
+let suggestion = $state<SwitchSuggestion | undefined>(undefined);
 
 // Compact view is a per-user display preference, kept in the webview's own state.
 function loadCompactView(): boolean {
@@ -137,6 +144,10 @@ export function isLoading(): boolean {
   return loading;
 }
 
+export function getSuggestion(): SwitchSuggestion | undefined {
+  return suggestion;
+}
+
 export function getCaptureSession(): CaptureSessionState | undefined {
   return captureSession;
 }
@@ -155,6 +166,7 @@ export function handleMessage(data: ToWebview): void {
       addAccountGuide = data.addAccountGuide;
       unsupported = data.unsupported;
       captureSession = data.captureSession;
+      suggestion = data.suggestion;
       busy = false;
       busyMessage = '';
       loading = false;

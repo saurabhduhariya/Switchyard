@@ -529,6 +529,97 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       expect(switchTo).toHaveBeenCalledWith(b.id);
     });
   });
+
+  describe('best-account suggestion', () => {
+    const useConfig = (values: Record<string, unknown>) => {
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () => ({ get: (key: string, def: unknown) => (key in values ? values[key] : def) }) as any
+      );
+    };
+    afterEach(() => {
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () => ({ get: vi.fn((_key: string, def: unknown) => def) }) as any
+      );
+    });
+
+    const q = (gWeekly: number) =>
+      ({
+        tierName: 'Google AI Pro Quota',
+        updatedAt: Date.now(),
+        source: 'live',
+        gemini: { name: 'Gemini', weekly: { remainingPercent: gWeekly, resetTime: new Date(Date.now() + 3 * 86400000).toISOString() } },
+        claudeGpt: { name: 'Claude + GPT', weekly: { remainingPercent: 80, resetTime: new Date(Date.now() + 3 * 86400000).toISOString() } },
+      }) as any;
+
+    const setup = async () => {
+      const a = await store.upsertFromSnapshot({ values: { 'antigravityUnifiedStateSync.oauthToken': 'QUFB' }, capturedAt: 1 }, 'A');
+      const b = await store.upsertFromSnapshot({ values: { 'antigravityUnifiedStateSync.oauthToken': 'QkJC' }, capturedAt: 2 }, 'B');
+      await store.setActive(a.id);
+      await store.updateQuota(a.id, q(6)); // active account is running low
+      await store.updateQuota(b.id, q(90));
+      return { a, b };
+    };
+    const lastState = () => [...postedMessages].reverse().find((m) => m.type === 'state') as any;
+
+    it('pushes a suggestion naming the better account when the active one is low', async () => {
+      const { b } = await setup();
+      await panelProvider.push();
+      const suggestion = lastState().suggestion;
+      expect(suggestion.accountId).toBe(b.id);
+      expect(suggestion.lowText).toBe('Gemini weekly 6%');
+      expect(suggestion.betterText).toBe('Gemini weekly 90%');
+    });
+
+    it('pushes nothing when the active account is fine', async () => {
+      const { a } = await setup();
+      await store.updateQuota(a.id, q(70));
+      await panelProvider.push();
+      expect(lastState().suggestion).toBeUndefined();
+    });
+
+    it('"Not now" hides it for this situation and it stays hidden after a restart', async () => {
+      await setup();
+      await panelProvider.push();
+      const key = lastState().suggestion.key;
+
+      await panelProvider.handleDismissSuggestion(key);
+      expect(lastState().suggestion).toBeUndefined();
+
+      const again = new PanelProvider(fakeContext, store, new AuthDetector(dbPath), logger, statusBar);
+      again.resolveWebviewView(fakeWebviewView);
+      await again.push();
+      expect(lastState().suggestion).toBeUndefined();
+    });
+
+    it('comes back for a different situation (the best account changes)', async () => {
+      await setup();
+      await panelProvider.push();
+      await panelProvider.handleDismissSuggestion(lastState().suggestion.key);
+      expect(lastState().suggestion).toBeUndefined();
+
+      const c = await store.upsertFromSnapshot({ values: { 'antigravityUnifiedStateSync.oauthToken': 'Q0ND' }, capturedAt: 3 }, 'C');
+      await store.updateQuota(c.id, q(100));
+      await panelProvider.push();
+      expect(lastState().suggestion.accountId).toBe(c.id);
+    });
+
+    it('can be switched off with switchyard.suggestBestAccount', async () => {
+      await setup();
+      useConfig({ suggestBestAccount: false });
+      await panelProvider.push();
+      expect(lastState().suggestion).toBeUndefined();
+    });
+
+    it('the message handler accepts dismissSuggestion', async () => {
+      await setup();
+      await panelProvider.push();
+      const key = lastState().suggestion.key;
+      const handler = vi.mocked(fakeWebviewView.webview.onDidReceiveMessage).mock.calls[0]![0] as (m: any) => Promise<void>;
+      await handler({ type: 'dismissSuggestion', key });
+      expect(lastState().suggestion).toBeUndefined();
+    });
+  });
 });
+
 
 

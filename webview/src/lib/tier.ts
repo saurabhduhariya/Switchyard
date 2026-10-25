@@ -2,19 +2,9 @@
  * Helpers about an account's Antigravity tier and how to present its quota.
  */
 
-/**
- * The Starter (free) tier has a weekly quota only; there is no rolling 5-hour window.
- * Matches the names the extension produces ("Antigravity Starter Quota") and the raw ids.
- */
-export function isStarterTier(tierName?: string): boolean {
-  if (!tierName) return false;
-  return /\b(starter|free)\b|starter-tier|free-tier/i.test(tierName);
-}
+import { LOW_QUOTA_PERCENT } from '../../../src/shared/quotaRules';
 
-/** Whether the rolling 5-hour window exists for this tier. */
-export function hasFiveHourWindow(tierName?: string): boolean {
-  return !isStarterTier(tierName);
-}
+export { hasFiveHourWindow, isStarterTier } from '../../../src/shared/quotaRules';
 
 /**
  * Short label for the tier pill so it never gets cut off:
@@ -37,7 +27,7 @@ export function quotaTone(remainingPercent?: number): QuotaTone {
   if (remainingPercent === undefined || remainingPercent === null || isNaN(remainingPercent)) {
     return 'unknown';
   }
-  if (remainingPercent <= 10) return 'low';
+  if (remainingPercent <= LOW_QUOTA_PERCENT) return 'low';
   if (remainingPercent <= 30) return 'warn';
   return 'good';
 }

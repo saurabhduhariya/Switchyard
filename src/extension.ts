@@ -5,6 +5,7 @@ import { AccountStore } from './accounts/AccountStore';
 import { AuthDetector } from './accounts/AuthDetector';
 import { parseSnapshot } from './accounts/identity';
 import { CaptureManager } from './capture/CaptureManager';
+import { QuotaResetNotifier } from './quota/QuotaResetNotifier';
 import { isCompanionMode, setupCompanionMode, createCompanionStatusBar } from './capture/companion';
 import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
 import { listBackups, restoreBackup } from './db/backup';
@@ -148,6 +149,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push({
     dispose: () => clearInterval(pollTimer),
   });
+
+  // 5d. Quota reset notifications (local only: uses the quota already stored per account)
+  const quotaNotifier = new QuotaResetNotifier({
+    listAccounts: () => store.list(),
+    getActiveId: () => store.activeId(),
+    memento: context.globalState,
+    logger,
+    readSettings: () => ({
+      enabled: vscode.workspace.getConfiguration('switchyard').get<boolean>('notifyOnQuotaReset', true),
+    }),
+    onSwitch: (id) => panelProvider.handleSwitch(id),
+    onOpenPanel: async () => {
+      await vscode.commands.executeCommand('workbench.view.extension.agSwitchyard');
+    },
+    onTurnOff: async () => {
+      await vscode.workspace
+        .getConfiguration('switchyard')
+        .update('notifyOnQuotaReset', false, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage(
+        'Switchyard: quota reset notifications are off. Turn them back on with the setting switchyard.notifyOnQuotaReset.'
+      );
+    },
+  });
+  quotaNotifier.start();
+  context.subscriptions.push({ dispose: () => quotaNotifier.dispose() });
 
   // 6. Settings Change Listener (e.g. switchyard.maskEmails, switchyard.mode)
   context.subscriptions.push(

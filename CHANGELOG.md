@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Quota reset notifications**: a one-time notification when an exhausted quota (10% or less) on a saved account has reset, with a button to switch to it (or open the panel when several accounts reset). Resets older than 24 hours are recorded silently. Setting `switchyard.notifyOnQuotaReset` (on by default); the notification also has a Turn Off button.
+- **Best-account hint**: when the signed-in account is low on a model, a banner above it suggests the saved account with the most left in that bucket (at least 25%), with Switch and Not now. Dismissals are remembered per situation. Setting `switchyard.suggestBestAccount` (on by default).
+- Shared quota rules (`src/shared/quotaRules.ts`) so the panel, notifications and hints agree on what "low" means.
+
+### Added
 - Saved accounts whose quota reset time has passed are shown as an estimated `~100%` (marked, with an explanatory note) instead of the old, misleading number. Works offline and never changes stored data.
 - Quota of the signed-in account is captured one last time right before switching away from it (bounded to 2.5 s), so the numbers kept for that account are as fresh as possible.
 

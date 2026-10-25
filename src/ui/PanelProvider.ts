@@ -5,10 +5,14 @@ import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
 import { CaptureManager } from '../capture/CaptureManager';
 import { CAPTURE_DETECTED_TTL_MS } from '../constants';
+import { suggestBestAccount } from '../shared/quotaSuggest';
+
+export const DISMISSED_SUGGESTIONS_KEY = 'switchyard.dismissedSuggestions';
+const DISMISSED_SUGGESTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Longest we wait for a last quota read before switching accounts. */
 const QUOTA_BEFORE_SWITCH_TIMEOUT_MS = 2500;
-import type { AccountMeta, AddAccountGuideState, ToHost, ToWebview } from '../shared/messages';
+import type { AccountMeta, AddAccountGuideState, SwitchSuggestion, ToHost, ToWebview } from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
@@ -174,6 +178,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
             await this.handleUseLegacyAdd();
             break;
 
+          case 'dismissSuggestion':
+            await this.handleDismissSuggestion(msg.key);
+            break;
+
           case 'dismissCapture':
             await this.captureManager?.dismiss();
             await this.push();
@@ -211,6 +219,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     // Get capture session state
     const captureSession = this.captureManager?.getCurrentSession();
 
+    // "Switch to a better account" hint when the signed-in account is running low
+    const suggestion = config.get<boolean>('suggestBestAccount', true)
+      ? this.computeSuggestion(rawAccounts, activeId)
+      : undefined;
+
     // Check addingAccount guide state
     let addAccountGuide: AddAccountGuideState | undefined;
     const addingState = this.ctx.globalState?.get<{
@@ -247,6 +260,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       confirmBeforeSwitch,
       backupRetention,
       addAccountGuide,
+      suggestion,
       captureSession: captureSession ? {
         state: captureSession.state,
         detectedEmail: captureSession.detectedEmail,
@@ -805,6 +819,30 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     } else {
       await this.handleAddNewAccountLegacy();
     }
+  }
+
+  /** The hint to show, unless the user already said "Not now" for this exact situation. */
+  private computeSuggestion(
+    accounts: AccountMeta[],
+    activeId: string | undefined
+  ): SwitchSuggestion | undefined {
+    const suggestion = suggestBestAccount(accounts, activeId);
+    if (!suggestion) return undefined;
+    const dismissed = this.ctx.globalState?.get<Record<string, number>>(DISMISSED_SUGGESTIONS_KEY, {}) ?? {};
+    return dismissed[suggestion.key] === undefined ? suggestion : undefined;
+  }
+
+  /** Remembers "Not now" for this exact situation; a new reset or a different best account shows it again. */
+  public async handleDismissSuggestion(key: string): Promise<void> {
+    const now = Date.now();
+    const stored = this.ctx.globalState?.get<Record<string, number>>(DISMISSED_SUGGESTIONS_KEY, {}) ?? {};
+    const kept: Record<string, number> = {};
+    for (const [k, at] of Object.entries(stored)) {
+      if (now - at < DISMISSED_SUGGESTION_TTL_MS) kept[k] = at;
+    }
+    kept[key] = now;
+    await this.ctx.globalState?.update(DISMISSED_SUGGESTIONS_KEY, kept);
+    await this.push();
   }
 
   /**

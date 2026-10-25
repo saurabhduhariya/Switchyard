@@ -11,6 +11,7 @@
   import UnsupportedBanner from './components/UnsupportedBanner.svelte';
   import SettingsView from './components/SettingsView.svelte';
   import CaptureCard from './components/CaptureCard.svelte';
+  import SuggestionBanner from './components/SuggestionBanner.svelte';
   import {
     getAccounts,
     getActiveAccount,
@@ -30,6 +31,7 @@
     setView,
     handleMessage,
     getCaptureSession,
+    getSuggestion,
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
 
@@ -88,6 +90,16 @@
       {:else}
 
         <ul class="account-list" aria-label="Accounts">
+          {#if getSuggestion() && getAccounts().find((a) => a.id === getSuggestion()!.accountId)}
+            <li>
+              <SuggestionBanner
+                suggestion={getSuggestion()!}
+                target={getAccounts().find((a) => a.id === getSuggestion()!.accountId)!}
+                disabled={isBusy()}
+              />
+            </li>
+          {/if}
+
           {#if getActiveAccount()}
             <li>
               <ActiveCard account={getActiveAccount()!} masked={getMaskEmails()} />
