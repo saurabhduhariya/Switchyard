@@ -42,7 +42,7 @@
       "activitybar": [
         {
           "id": "agSwitchyard",
-          "title": "",
+          "title": "Accounts",
           "icon": "media/icon.svg"
         }
       ]
