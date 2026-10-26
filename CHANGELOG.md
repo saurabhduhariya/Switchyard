@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-26
+
+### Fixed
+- **Windows compatibility**:
+  - Language server process discovery via PowerShell `Get-CimInstance` and port resolution via `netstat -ano -p tcp`.
+  - SQLite file-lock retries (`EBUSY`, `EPERM`, `EACCES`) for `state.vscdb` on Windows.
+  - Process path matching with normalized path separators and case-insensitivity.
+  - Child processes run with `windowsHide: true` to prevent console window popups.
+- **Side-window sign-in**:
+  - Automatically requests window close upon account detection.
+  - Quieter launch flags applied by default.
+- **Responsiveness**:
+  - Account state is pushed immediately to the webview while quota queries refresh asynchronously in the background.
+  - Suggestion algorithm prioritizes accounts that rescue the highest number of exhausted buckets.
+
 ## [0.2.2] - 2026-10-26
 
 ### Added
