@@ -19,3 +19,5 @@ IMPLEMENTATION_PLAN.md
 .github/**
 *.txt
 token.txt
+plan/**
+*.vsix

@@ -12,11 +12,20 @@ const DISMISSED_SUGGESTION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Longest we wait for a last quota read before switching accounts. */
 const QUOTA_BEFORE_SWITCH_TIMEOUT_MS = 2500;
-import type { AccountMeta, AddAccountGuideState, SwitchSuggestion, ToHost, ToWebview } from '../shared/messages';
+import type {
+  AccountMeta,
+  AccountQuotaSummary,
+  AddAccountGuideState,
+  QuotaErrorState,
+  SwitchSuggestion,
+  ToHost,
+  ToWebview,
+} from '../shared/messages';
 import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
-import { QuotaCollector } from '../quota/QuotaCollector';
+import { describeQuotaError, QuotaCollector } from '../quota/QuotaCollector';
+import { QuotaHistoryStore } from '../quota/QuotaHistoryStore';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'agSwitchyard.panel';
@@ -28,6 +37,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private _detecting = false;
   private dismissedSignOutBanner = false;
   private readonly quotaCollector: QuotaCollector;
+  private readonly history: QuotaHistoryStore;
+  /** Set once reading the signed-in account's quota keeps failing (or the user asked for a retry). */
+  private quotaError?: QuotaErrorState;
+  private quotaFailures = 0;
+  private quotaAccountId?: string;
   private quotaTimer?: NodeJS.Timeout;
   private captureManager?: CaptureManager;
 
@@ -40,6 +54,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     private switchEngine?: SwitchEngine
   ) {
     this.quotaCollector = new QuotaCollector(this.logger);
+    this.history = new QuotaHistoryStore(this.ctx.globalState);
   }
 
   public setSwitchEngine(switchEngine: SwitchEngine): void {
@@ -219,6 +234,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     // Get capture session state
     const captureSession = this.captureManager?.getCurrentSession();
 
+    // Recent usage for the sparklines; forget accounts that no longer exist
+    const accountIds = rawAccounts.map((a) => a.id);
+    await this.history.prune(accountIds);
+    const trends = this.history.trends(accountIds);
+
+    // The error only applies while the account it was recorded for is still the signed-in one
+    const quotaError =
+      this.quotaError && this.quotaError.accountId === activeId ? this.quotaError : undefined;
+
     // "Switch to a better account" hint when the signed-in account is running low
     const suggestion = config.get<boolean>('suggestBestAccount', true)
       ? this.computeSuggestion(rawAccounts, activeId)
@@ -261,6 +285,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       backupRetention,
       addAccountGuide,
       suggestion,
+      trends: Object.keys(trends).length > 0 ? trends : undefined,
+      quotaError,
       captureSession: captureSession ? {
         state: captureSession.state,
         detectedEmail: captureSession.detectedEmail,
@@ -451,14 +477,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       const pendingSwitch = this.ctx.globalState?.get('switchyard.pendingSwitch');
       const activeAccountId = await this.store.activeId();
       if (activeAccountId && !pendingSwitch) {
-        try {
-          const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
-          if (quota) {
-            await this.store.updateQuota(activeAccountId, quota);
-          }
-        } catch (err) {
-          this.logger.debug('Failed to update quota summary:', err);
-        }
+        await this.readQuota(activeAccountId, false);
       }
 
       // Always push updated state to the webview
@@ -472,20 +491,67 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private quotaErrorSignature(): string {
+    return this.quotaError ? `${this.quotaError.accountId}:${this.quotaError.kind}` : '';
+  }
+
+  /** Stores a fresh reading and, when it was accepted, adds it to the account's quota history. */
+  private async saveQuota(accountId: string, quota: AccountQuotaSummary): Promise<void> {
+    await this.store.updateQuota(accountId, quota);
+    // Only live reads are history: the database fallback can hold old numbers. The store may also
+    // have refused the reading (wrong plan), so check that it is the one that was kept.
+    if (quota.source !== 'live') return;
+    const saved = await this.store.get(accountId);
+    if (saved?.quota?.updatedAt === quota.updatedAt) {
+      await this.history.record(accountId, quota);
+    }
+  }
+
+  /**
+   * Reads the signed-in account's quota and keeps the error state up to date.
+   * A single failure right after the IDE starts is normal (the language server is still booting), so
+   * it is only shown after a second failure, or straight away when the user pressed Retry.
+   */
+  private async readQuota(accountId: string, userRequested: boolean): Promise<boolean> {
+    if (this.quotaAccountId !== accountId) {
+      this.quotaAccountId = accountId;
+      this.quotaFailures = 0;
+      this.quotaError = undefined;
+    }
+
+    let error = describeQuotaError('no-data');
+    try {
+      const result = await this.quotaCollector.getQuotaResult(this.detector?.databasePath);
+      if (result.quota) {
+        await this.saveQuota(accountId, result.quota);
+        this.quotaFailures = 0;
+        this.quotaError = undefined;
+        return true;
+      }
+      if (result.error) error = result.error;
+    } catch (err) {
+      this.logger.debug('Quota read failed:', err);
+      error = describeQuotaError('request-failed');
+    }
+
+    this.quotaFailures++;
+    if (userRequested || this.quotaFailures >= 2) {
+      this.quotaError = { ...error, accountId, at: Date.now() };
+    }
+    return false;
+  }
+
   /**
    * Refreshes the currently active account's quota in the background.
    */
   public async refreshActiveQuota(): Promise<void> {
     const activeId = await this.store.activeId();
     if (!activeId) return;
-    try {
-      const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
-      if (quota) {
-        await this.store.updateQuota(activeId, quota);
-        await this.push();
-      }
-    } catch (err) {
-      this.logger.debug('Periodic quota refresh failed:', err);
+    const before = this.quotaErrorSignature();
+    const ok = await this.readQuota(activeId, false);
+    // Push on new numbers, or when the error state appeared, changed or cleared (not on every failed poll).
+    if (ok || this.quotaErrorSignature() !== before) {
+      await this.push();
     }
   }
 
@@ -506,15 +572,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    try {
-      const quota = await this.quotaCollector.getQuotaSummary(this.detector?.databasePath);
-      if (quota) {
-        await this.store.updateQuota(targetId, quota);
-        await this.push();
-      }
-    } catch (err) {
-      this.logger.error('Failed to manually refresh quota:', err);
-    }
+    // The user asked: show a failure straight away instead of waiting for a second one.
+    await this.readQuota(targetId, true);
+    await this.push();
   }
 
   /**

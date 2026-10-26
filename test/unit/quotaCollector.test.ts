@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { QuotaCollector } from '../../src/quota/QuotaCollector';
+import { describeQuotaError, QuotaCollector } from '../../src/quota/QuotaCollector';
 import { AccountStore } from '../../src/accounts/AccountStore';
 
 describe('QuotaCollector', () => {
@@ -162,5 +162,80 @@ describe('AccountStore.updateQuota', () => {
     expect(parsed.claudeGpt.weekly?.disabled).toBe(false);
     expect(parsed.claudeGpt.fiveHour?.disabled).toBe(true);
     expect(parsed.claudeGpt.rolling5hRemaining).toBeUndefined();
+  });
+});
+
+describe('QuotaCollector.getQuotaResult (why a read failed)', () => {
+  const fakeQuota: any = { tierName: 'Google AI Pro Quota', updatedAt: 1, source: 'live', gemini: { name: 'Gemini' }, claudeGpt: { name: 'Claude + GPT' } };
+
+  function collectorWith(opts: { endpoint?: unknown; request?: () => Promise<unknown>; db?: () => Promise<unknown> }) {
+    const c: any = new QuotaCollector();
+    c.getOrDiscoverEndpoint = async () => opts.endpoint;
+    c.requestLiveQuota = opts.request ?? (async () => undefined);
+    c.loadFromDb = opts.db ?? (async () => undefined);
+    return c as QuotaCollector;
+  }
+
+  it('returns the numbers when the language server answers', async () => {
+    const c = collectorWith({ endpoint: { port: 1, token: 't' }, request: async () => fakeQuota });
+    expect(await c.getQuotaResult()).toEqual({ quota: fakeQuota });
+  });
+
+  it('says the language server is not running when it cannot be found', async () => {
+    const c = collectorWith({ endpoint: undefined });
+    const r = await c.getQuotaResult('/x/state.vscdb');
+    expect(r.quota).toBeUndefined();
+    expect(r.error?.kind).toBe('no-language-server');
+  });
+
+  it('says the request failed when the language server is there but errors out', async () => {
+    const c = collectorWith({
+      endpoint: { port: 1, token: 'super-secret-csrf' },
+      request: async () => {
+        throw new Error('ECONNRESET super-secret-csrf');
+      },
+    });
+    const r = await c.getQuotaResult();
+    expect(r.error?.kind).toBe('request-failed');
+    expect(JSON.stringify(r)).not.toContain('super-secret-csrf'); // raw error text is never returned
+  });
+
+  it('says there is no data when the language server answers with nothing', async () => {
+    const c = collectorWith({ endpoint: { port: 1, token: 't' }, request: async () => undefined });
+    expect((await c.getQuotaResult()).error?.kind).toBe('no-data');
+  });
+
+  it('falls back to the database, and then there is no error', async () => {
+    const c = collectorWith({ endpoint: undefined, db: async () => ({ ...fakeQuota, source: 'vscdb' }) });
+    const r = await c.getQuotaResult('/x/state.vscdb');
+    expect(r.quota?.source).toBe('vscdb');
+    expect(r.error).toBeUndefined();
+  });
+
+  it('keeps the live failure reason when the database fallback fails too', async () => {
+    const c = collectorWith({
+      endpoint: { port: 1, token: 't' },
+      request: async () => {
+        throw new Error('boom');
+      },
+      db: async () => {
+        throw new Error('db broken');
+      },
+    });
+    expect((await c.getQuotaResult('/x/state.vscdb')).error?.kind).toBe('request-failed');
+  });
+
+  it('getQuotaSummary still works and just returns the numbers', async () => {
+    const c = collectorWith({ endpoint: { port: 1, token: 't' }, request: async () => fakeQuota });
+    expect(await c.getQuotaSummary()).toEqual(fakeQuota);
+    expect(await collectorWith({ endpoint: undefined }).getQuotaSummary()).toBeUndefined();
+  });
+
+  it('every failure has a plain-language message', () => {
+    for (const kind of ['no-language-server', 'request-failed', 'no-data'] as const) {
+      const e = describeQuotaError(kind);
+      expect(e.kind).toBe(kind);
+      expect(e.message.length).toBeGreaterThan(20);
+    }
   });
 });

@@ -1,8 +1,15 @@
 <script lang="ts">
-  import type { AccountQuotaSummary, QuotaBucket } from '../../../src/shared/messages';
+  import type {
+    AccountQuotaSummary,
+    QuotaBucket,
+    QuotaTrend,
+    QuotaTrendSeries,
+  } from '../../../src/shared/messages';
   import { estimateQuotaSummary, hasEstimates } from '../../../src/shared/quotaEstimate';
   import { formatCountdown, formatPercentage } from '../lib/formatQuota';
-  import { barWidth, hasFiveHourWindow, quotaTone } from '../lib/tier';
+  import { barWidth, quotaTone, windowsForTier } from '../lib/tier';
+  import { describeTrend, formatTrendText } from '../lib/trend';
+  import Sparkline from './Sparkline.svelte';
 
   interface Props {
     quota?: AccountQuotaSummary;
@@ -15,9 +22,20 @@
      * Used for accounts that are not live (see src/shared/quotaEstimate.ts).
      */
     estimate?: boolean;
+    /** Recent weekly usage, drawn as a small line under the Weekly row. */
+    trend?: QuotaTrend;
+    /** Shown instead of the boxes when there are no quota numbers at all. */
+    emptyText?: string;
   }
 
-  let { quota: rawQuota, tierName, compact = false, estimate = false }: Props = $props();
+  let {
+    quota: rawQuota,
+    tierName,
+    compact = false,
+    estimate = false,
+    trend,
+    emptyText = 'No quota data yet.',
+  }: Props = $props();
 
   // Tick every 30s to update countdowns live
   let now = $state(Date.now());
@@ -54,8 +72,11 @@
     return formatCountdown(resetTime);
   }
 
-  // The Starter tier has a weekly quota only: there is no rolling 5-hour window.
-  let showFiveHour = $derived(hasFiveHourWindow(tierName));
+  // Which windows exist depends on the tier (see TIERS in src/shared/quotaRules.ts); for example
+  // the Starter tier has a weekly quota only and no rolling 5-hour window.
+  let windows = $derived(windowsForTier(tierName || quota?.tierName));
+  let showFiveHour = $derived(windows.fiveHour);
+  let showWeekly = $derived(windows.weekly);
 
   let geminiWeekly = $derived(getBucketNumber(quota?.gemini?.weekly, quota?.gemini?.weeklyRemaining));
   let geminiWeeklyReset = $derived(
@@ -77,6 +98,15 @@
     getBucketCountdown(quota?.claudeGpt?.fiveHour, quota?.claudeGpt?.rolling5hResetTime)
   );
 </script>
+
+{#snippet trendRow(series: QuotaTrendSeries | undefined, group: string)}
+  {#if series}
+    <div class="trend-row" title={describeTrend(series, group)}>
+      <Sparkline points={series.points} label={describeTrend(series, group)} />
+      <span class="trend-text">{formatTrendText(series)}</span>
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet metric(group: string, label: string, pct: number | undefined, reset: string | undefined, sub: boolean, est: boolean)}
   {@const tone = quotaTone(pct)}
@@ -110,7 +140,9 @@
   </div>
 {/snippet}
 
-{#if compact}
+{#if !rawQuota}
+  <div class="empty-note" role="note">{emptyText}</div>
+{:else if compact}
   <div class="compact-grid">
     {#each [{ name: 'Gemini', weekly: geminiWeekly, five: gemini5h, est: quota?.gemini?.weekly?.estimated === true }, { name: 'Claude + GPT', weekly: claudeWeekly, five: claude5h, est: quota?.claudeGpt?.weekly?.estimated === true }] as g (g.name)}
       <div class="compact-item" title="{g.name}: weekly {formatPercentage(g.weekly)}{showFiveHour ? `, 5h ${formatPercentage(g.five)}` : ''}">
@@ -127,23 +159,31 @@
     <!-- Gemini -->
     <div class="quota-box">
       <div class="box-title">Gemini</div>
-      {@render metric('Gemini', 'Weekly', geminiWeekly, geminiWeeklyReset, false, quota?.gemini?.weekly?.estimated === true)}
+      {#if showWeekly}
+        {@render metric('Gemini', 'Weekly', geminiWeekly, geminiWeeklyReset, false, quota?.gemini?.weekly?.estimated === true)}
+        {@render trendRow(trend?.gemini, 'Gemini')}
+      {/if}
       {#if showFiveHour}
-        {@render metric('Gemini', '5h', gemini5h, gemini5hReset, true, quota?.gemini?.fiveHour?.estimated === true)}
+        {@render metric('Gemini', '5h', gemini5h, gemini5hReset, showWeekly, quota?.gemini?.fiveHour?.estimated === true)}
       {/if}
     </div>
 
     <!-- Claude + GPT -->
     <div class="quota-box">
       <div class="box-title">Claude + GPT</div>
-      {@render metric('Claude and GPT', 'Weekly', claudeWeekly, claudeWeeklyReset, false, quota?.claudeGpt?.weekly?.estimated === true)}
+      {#if showWeekly}
+        {@render metric('Claude and GPT', 'Weekly', claudeWeekly, claudeWeeklyReset, false, quota?.claudeGpt?.weekly?.estimated === true)}
+        {@render trendRow(trend?.claudeGpt, 'Claude and GPT')}
+      {/if}
       {#if showFiveHour}
-        {@render metric('Claude and GPT', '5h', claude5h, claude5hReset, true, quota?.claudeGpt?.fiveHour?.estimated === true)}
+        {@render metric('Claude and GPT', '5h', claude5h, claude5hReset, showWeekly, quota?.claudeGpt?.fiveHour?.estimated === true)}
       {/if}
     </div>
   </div>
-  {#if !showFiveHour}
+  {#if showWeekly && !showFiveHour}
     <div class="plan-note">Weekly quota only on this plan</div>
+  {:else if showFiveHour && !showWeekly}
+    <div class="plan-note">5-hour quota only on this plan</div>
   {/if}
   {#if anyEstimated}
     <div class="plan-note" role="note">
@@ -271,6 +311,30 @@
 
   .tone-unknown {
     background: transparent;
+  }
+
+  .empty-note {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border: 1px dashed var(--vscode-widget-border, rgba(255, 255, 255, 0.14));
+    border-radius: 6px;
+    font-size: 11.5px;
+    color: var(--vscode-descriptionForeground, #8c8c8c);
+  }
+
+  .trend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .trend-text {
+    font-size: 10.5px;
+    color: var(--vscode-descriptionForeground, #8c8c8c);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .plan-note {

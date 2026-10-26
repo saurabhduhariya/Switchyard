@@ -1,7 +1,7 @@
 import { ACCOUNTS_STATE_KEY, ACTIVE_ACCOUNT_STATE_KEY, SECRET_PREFIX } from '../constants';
 import { Mutex } from '../util/mutex';
 import { parseSnapshot } from './identity';
-import { isPlanTierCompatible, isStarterTier } from '../shared/quotaRules';
+import { isPlanTierCompatible } from '../shared/quotaRules';
 import { AccountMeta, AccountQuotaSummary, createAccountId, Snapshot } from './types';
 
 export interface SecretStorageLike {

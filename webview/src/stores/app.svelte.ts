@@ -7,6 +7,8 @@ import type {
   AccountMeta,
   AddAccountGuideState,
   CaptureSessionState,
+  QuotaErrorState,
+  QuotaTrend,
   SwitchSuggestion,
   ToWebview,
 } from '../../../src/shared/messages';
@@ -31,6 +33,8 @@ let addAccountGuide = $state<AddAccountGuideState | undefined>(undefined);
 let unsupported = $state<{ reason: string; version?: string } | undefined>(undefined);
 let captureSession = $state<CaptureSessionState | undefined>(undefined);
 let suggestion = $state<SwitchSuggestion | undefined>(undefined);
+let trends = $state<Record<string, QuotaTrend>>({});
+let quotaError = $state<QuotaErrorState | undefined>(undefined);
 
 // Compact view is a per-user display preference, kept in the webview's own state.
 function loadCompactView(): boolean {
@@ -144,6 +148,14 @@ export function isLoading(): boolean {
   return loading;
 }
 
+export function getTrend(accountId: string): QuotaTrend | undefined {
+  return trends[accountId];
+}
+
+export function getQuotaError(): QuotaErrorState | undefined {
+  return quotaError;
+}
+
 export function getSuggestion(): SwitchSuggestion | undefined {
   return suggestion;
 }
@@ -167,6 +179,8 @@ export function handleMessage(data: ToWebview): void {
       unsupported = data.unsupported;
       captureSession = data.captureSession;
       suggestion = data.suggestion;
+      trends = data.trends ?? {};
+      quotaError = data.quotaError;
       busy = false;
       busyMessage = '';
       loading = false;

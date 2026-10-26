@@ -1,6 +1,7 @@
 import * as child_process from 'node:child_process';
 import * as net from 'node:net';
 import { AccountQuotaSummary, QuotaBucket } from '../accounts/types';
+import type { QuotaErrorKind, QuotaReadError } from '../shared/messages';
 import { readKeys } from '../db/StateDb';
 import { Logger } from '../util/logger';
 
@@ -53,6 +54,24 @@ interface GetUserStatusResponse {
   };
 }
 
+/** What a quota read produced: numbers, or the reason there are none. */
+export interface QuotaReadResult {
+  quota?: AccountQuotaSummary;
+  error?: QuotaReadError;
+}
+
+const QUOTA_ERROR_MESSAGES: Record<QuotaErrorKind, string> = {
+  'no-language-server':
+    "Antigravity's language server is not running yet. It starts shortly after the IDE opens.",
+  'request-failed': 'The language server did not answer. It may be busy or restarting.',
+  'no-data': 'No quota data is available for this account yet.',
+};
+
+/** Plain-language text for a failure. Raw error text is only ever logged, never shown. */
+export function describeQuotaError(kind: QuotaErrorKind): QuotaReadError {
+  return { kind, message: QUOTA_ERROR_MESSAGES[kind] };
+}
+
 /**
  * Collects model usage and quota summaries.
  * Primary: Queries the local Antigravity Language Server via loopback net.Socket IPC
@@ -69,47 +88,68 @@ export class QuotaCollector {
 
   /**
    * Retrieves the current account's model quota summary.
+   * Use getQuotaResult when the reason for a failure matters.
    */
   public async getQuotaSummary(dbPath?: string): Promise<AccountQuotaSummary | undefined> {
+    return (await this.getQuotaResult(dbPath)).quota;
+  }
+
+  /**
+   * Like getQuotaSummary, but when nothing could be read it says why, so the panel can show a
+   * useful message instead of empty dashes.
+   */
+  public async getQuotaResult(dbPath?: string): Promise<QuotaReadResult> {
+    let error: QuotaReadError | undefined;
+
     try {
       const live = await this.queryLiveQuota();
-      if (live) {
-        return live;
+      if (live.quota) {
+        return { quota: live.quota };
       }
+      error = live.error;
     } catch (err) {
       this.logger?.debug('Live quota query failed, trying database fallback:', err);
+      error = describeQuotaError('request-failed');
     }
 
     if (dbPath) {
       try {
         const fromDb = await this.loadFromDb(dbPath);
-        if (fromDb) return fromDb;
+        if (fromDb) return { quota: fromDb };
       } catch (err) {
         this.logger?.debug('Database quota fallback failed:', err);
       }
     }
 
-    return undefined;
+    return { error: error ?? describeQuotaError('no-data') };
   }
 
   /**
    * Queries user quota directly from local language server via loopback net.Socket.
    */
-  private async queryLiveQuota(): Promise<AccountQuotaSummary | undefined> {
+  private async queryLiveQuota(): Promise<QuotaReadResult> {
     const endpoint = await this.getOrDiscoverEndpoint();
-    if (!endpoint) return undefined;
+    if (!endpoint) return { error: describeQuotaError('no-language-server') };
 
     try {
-      return await this.requestLiveQuota(endpoint);
+      return this.liveResult(await this.requestLiveQuota(endpoint));
     } catch (err) {
+      this.logger?.debug('Live quota request failed, retrying discovery once:', err);
       // Clear cache and retry discovery once
       this.cachedEndpoint = undefined;
       const retryEndpoint = await this.getOrDiscoverEndpoint();
-      if (retryEndpoint) {
-        return await this.requestLiveQuota(retryEndpoint);
+      if (!retryEndpoint) return { error: describeQuotaError('no-language-server') };
+      try {
+        return this.liveResult(await this.requestLiveQuota(retryEndpoint));
+      } catch (retryErr) {
+        this.logger?.debug('Live quota retry failed:', retryErr);
+        return { error: describeQuotaError('request-failed') };
       }
-      throw err;
     }
+  }
+
+  private liveResult(quota: AccountQuotaSummary | undefined): QuotaReadResult {
+    return quota ? { quota } : { error: describeQuotaError('no-data') };
   }
 
   private async requestLiveQuota(endpoint: LSServerEndpoint): Promise<AccountQuotaSummary | undefined> {

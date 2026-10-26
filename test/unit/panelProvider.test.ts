@@ -459,11 +459,11 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     it('never saves the signed-in account\'s quota under a different account', async () => {
       const { a, b } = await twoAccounts();
       const collector = (panelProvider as any).quotaCollector;
-      collector.getQuotaSummary = vi.fn(async () => quotaFor('Google AI Pro Quota'));
+      collector.getQuotaResult = vi.fn(async () => ({ quota: quotaFor('Google AI Pro Quota') }));
       const updateSpy = vi.spyOn(store, 'updateQuota');
 
       await (panelProvider as any).handleRefreshQuota(b.id); // B is not the signed-in account
-      expect(collector.getQuotaSummary).not.toHaveBeenCalled();
+      expect(collector.getQuotaResult).not.toHaveBeenCalled();
       expect(updateSpy).not.toHaveBeenCalled();
       expect((await store.get(b.id))?.quota).toBeUndefined();
 
@@ -475,9 +475,9 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       const { a, b } = await twoAccounts();
       const order: string[] = [];
       const collector = (panelProvider as any).quotaCollector;
-      collector.getQuotaSummary = vi.fn(async () => {
+      collector.getQuotaResult = vi.fn(async () => {
         order.push('quota');
-        return quotaFor('Google AI Pro Quota');
+        return { quota: quotaFor('Google AI Pro Quota') };
       });
       panelProvider.setSwitchEngine({
         mode: 'tokenSwap' as const,
@@ -496,20 +496,20 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     it('profile mode does not read quota before opening another profile', async () => {
       const { b } = await twoAccounts();
       const collector = (panelProvider as any).quotaCollector;
-      collector.getQuotaSummary = vi.fn(async () => quotaFor('x'));
+      collector.getQuotaResult = vi.fn(async () => ({ quota: quotaFor('x') }));
       panelProvider.setSwitchEngine({
         mode: 'profile' as const,
         switchTo: vi.fn(async () => ({ ok: true, mode: 'profile' as const })),
       } as any);
 
       await panelProvider.handleSwitch(b.id);
-      expect(collector.getQuotaSummary).not.toHaveBeenCalled();
+      expect(collector.getQuotaResult).not.toHaveBeenCalled();
     });
 
     it('a slow quota read can never hold up the switch', async () => {
       await twoAccounts();
       const collector = (panelProvider as any).quotaCollector;
-      collector.getQuotaSummary = vi.fn(() => new Promise(() => undefined)); // never answers
+      collector.getQuotaResult = vi.fn(() => new Promise(() => undefined)); // never answers
 
       const started = Date.now();
       await (panelProvider as any).refreshQuotaBeforeLeaving(40);
@@ -519,7 +519,7 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     it('a failing quota read does not block the switch either', async () => {
       const { b } = await twoAccounts();
       const collector = (panelProvider as any).quotaCollector;
-      collector.getQuotaSummary = vi.fn(async () => {
+      collector.getQuotaResult = vi.fn(async () => {
         throw new Error('language server not running');
       });
       const switchTo = vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const }));
@@ -617,6 +617,131 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       const handler = vi.mocked(fakeWebviewView.webview.onDidReceiveMessage).mock.calls[0]![0] as (m: any) => Promise<void>;
       await handler({ type: 'dismissSuggestion', key });
       expect(lastState().suggestion).toBeUndefined();
+    });
+  });
+
+  describe('quota errors and history', () => {
+    const live = (g: number, updatedAt = Date.now()) =>
+      ({
+        tierName: 'Google AI Pro Quota',
+        updatedAt,
+        source: 'live',
+        gemini: { name: 'Gemini', weekly: { remainingPercent: g, resetTime: new Date(Date.now() + 3 * 86400000).toISOString() } },
+        claudeGpt: { name: 'Claude + GPT', weekly: { remainingPercent: 80, resetTime: new Date(Date.now() + 3 * 86400000).toISOString() } },
+      }) as any;
+
+    const setup = async () => {
+      const a = await store.upsertFromSnapshot({ values: { 'antigravityUnifiedStateSync.oauthToken': 'QUFB' }, capturedAt: 1 }, 'A');
+      const b = await store.upsertFromSnapshot({ values: { 'antigravityUnifiedStateSync.oauthToken': 'QkJC' }, capturedAt: 2 }, 'B');
+      await store.setActive(a.id);
+      return { a, b };
+    };
+    const lastState = () => [...postedMessages].reverse().find((m) => m.type === 'state') as any;
+    const collector = () => (panelProvider as any).quotaCollector;
+    const failWith = (kind: string) => {
+      collector().getQuotaResult = vi.fn(async () => ({ error: { kind, message: `plain text for ${kind}` } }));
+    };
+
+    it('a first failed read is not shown (the language server is probably still starting)', async () => {
+      const { a } = await setup();
+      failWith('no-language-server');
+      await panelProvider.refreshActiveQuota();
+      await panelProvider.push();
+      expect(lastState().quotaError).toBeUndefined();
+      void a;
+    });
+
+    it('the second failed read in a row shows the error with a plain explanation', async () => {
+      const { a } = await setup();
+      failWith('no-language-server');
+      await panelProvider.refreshActiveQuota();
+      await panelProvider.refreshActiveQuota();
+      expect(lastState().quotaError).toMatchObject({
+        accountId: a.id,
+        kind: 'no-language-server',
+        message: 'plain text for no-language-server',
+      });
+    });
+
+    it('pressing Retry shows a failure straight away', async () => {
+      const { a } = await setup();
+      failWith('request-failed');
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      expect(lastState().quotaError?.kind).toBe('request-failed');
+    });
+
+    it('a successful read clears the error', async () => {
+      const { a } = await setup();
+      failWith('request-failed');
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      expect(lastState().quotaError).toBeDefined();
+
+      collector().getQuotaResult = vi.fn(async () => ({ quota: live(50) }));
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      expect(lastState().quotaError).toBeUndefined();
+    });
+
+    it('an error belongs to one account: switching to another account hides it', async () => {
+      const { a, b } = await setup();
+      failWith('request-failed');
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      expect(lastState().quotaError).toBeDefined();
+
+      await store.setActive(b.id);
+      await panelProvider.push();
+      expect(lastState().quotaError).toBeUndefined();
+    });
+
+    it('a reader that throws counts as a failed read, never crashes the panel', async () => {
+      const { a } = await setup();
+      collector().getQuotaResult = vi.fn(async () => {
+        throw new Error('socket exploded with secret-token-123');
+      });
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      const err = lastState().quotaError;
+      expect(err.kind).toBe('request-failed');
+      expect(JSON.stringify(err)).not.toContain('secret-token-123'); // raw error text is never shown
+    });
+
+    it('a live read is added to the account history', async () => {
+      const { a } = await setup();
+      collector().getQuotaResult = vi.fn(async () => ({ quota: live(70) }));
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      const history = (panelProvider as any).history.get(a.id);
+      expect(history).toHaveLength(1);
+      expect(history[0]).toMatchObject({ g: 70, c: 80 });
+    });
+
+    it('a database-fallback read is not added to the history (it may be old)', async () => {
+      const { a } = await setup();
+      collector().getQuotaResult = vi.fn(async () => ({ quota: { ...live(70), source: 'vscdb' } }));
+      await (panelProvider as any).handleRefreshQuota(a.id);
+      expect((panelProvider as any).history.get(a.id)).toHaveLength(0);
+    });
+
+    it('pushes a trend once there is enough history, and drops it when the account is removed', async () => {
+      const { a, b } = await setup();
+      const now = Date.now();
+      const history = (panelProvider as any).history;
+      await history.record(a.id, live(90), now - 10 * 3600_000);
+      await history.record(a.id, live(80), now - 1 * 3600_000);
+      await history.record(b.id, live(10), now - 2 * 3600_000);
+
+      await panelProvider.push();
+      const trends = lastState().trends;
+      expect(trends[a.id].gemini.usedPercent).toBe(10);
+      expect(trends[a.id].gemini.points.length).toBe(24);
+      expect(trends[b.id]).toBeUndefined(); // one reading is not a trend
+
+      await store.remove(b.id);
+      await panelProvider.push();
+      expect(history.get(b.id)).toEqual([]);
+    });
+
+    it('sends no trends field when nobody has any history', async () => {
+      await setup();
+      await panelProvider.push();
+      expect(lastState().trends).toBeUndefined();
     });
   });
 });

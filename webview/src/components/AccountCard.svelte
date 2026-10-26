@@ -7,7 +7,7 @@
   import { maskEmail } from '../lib/maskEmail';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
-  import { getMode, isCompactView } from '../stores/app.svelte';
+  import { getMode, getTrend, isCompactView } from '../stores/app.svelte';
   import { isStale, isStarterTier, shortTierName } from '../lib/tier';
 
   interface Props {
@@ -191,7 +191,14 @@
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} {tierName} compact={isCompactView()} estimate={true} />
+  <QuotaBoxes
+    quota={account.quota}
+    {tierName}
+    compact={isCompactView()}
+    estimate={true}
+    trend={getTrend(account.id)}
+    emptyText="No quota yet. Switch to this account to load it."
+  />
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />

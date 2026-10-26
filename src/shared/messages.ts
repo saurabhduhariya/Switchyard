@@ -33,6 +33,37 @@ export interface AccountQuotaSummary {
   source: 'live' | 'cache' | 'vscdb';
 }
 
+/** Why quota could not be read. */
+export type QuotaErrorKind = 'no-language-server' | 'request-failed' | 'no-data';
+
+export interface QuotaReadError {
+  kind: QuotaErrorKind;
+  /** Plain-language explanation for the user (never contains tokens or raw error text). */
+  message: string;
+}
+
+/** A quota read error that applies to one account, as shown in the panel. */
+export interface QuotaErrorState extends QuotaReadError {
+  accountId: string;
+  /** epoch ms of the most recent failed attempt */
+  at: number;
+}
+
+/** A tiny recent-usage summary for one model group's weekly quota. */
+export interface QuotaTrendSeries {
+  /** Remaining % over time, oldest first, evenly spaced (at most 24 points). */
+  points: number[];
+  /** How much of the weekly quota was used during the last 24 hours, in percentage points. */
+  usedPercent?: number;
+  /** How many hours that "used" figure actually covers (less than 24 when history is short). */
+  spanHours?: number;
+}
+
+export interface QuotaTrend {
+  gemini?: QuotaTrendSeries;
+  claudeGpt?: QuotaTrendSeries;
+}
+
 /** A "switch to a better account" hint shown above the active card. */
 export interface SwitchSuggestion {
   /** Stable id for this exact situation; used to remember a dismissal. */
@@ -107,6 +138,10 @@ export type ToWebview =
       addAccountGuide?: AddAccountGuideState;
       captureSession?: CaptureSessionState;
       suggestion?: SwitchSuggestion;
+      /** Recent usage per account id, for the sparklines. */
+      trends?: Record<string, QuotaTrend>;
+      /** Set when the signed-in account's quota could not be read. */
+      quotaError?: QuotaErrorState;
       unsupported?: {
         reason: string;
         version?: string;

@@ -6,6 +6,7 @@
  */
 
 import type { AccountMeta, AccountQuotaSummary, ToWebview } from '../../../src/shared/messages';
+import { buildTrend, type QuotaSample } from '../../../src/shared/quotaHistory';
 import { suggestBestAccount } from '../../../src/shared/quotaSuggest';
 
 const NOW = Date.now();
@@ -96,6 +97,25 @@ const SCENARIOS: Record<ScenarioKey, { accounts: AccountMeta[]; activeId?: strin
   error: { accounts: MOCK_ACCOUNTS, activeId: 'acc-1' },
 };
 
+/** Fake recent history so the dev preview shows sparklines and "Used X% in 24h". */
+function mockHistory(id: string): QuotaSample[] | undefined {
+  const ramp = (hours: number, g: [number, number], c: [number, number]): QuotaSample[] => {
+    const out: QuotaSample[] = [];
+    for (let h = hours; h >= 0; h -= 3) {
+      const f = (hours - h) / hours;
+      out.push({
+        t: NOW - h * HOUR,
+        g: Math.round((g[0] + (g[1] - g[0]) * f) * 10) / 10,
+        c: Math.round((c[0] + (c[1] - c[0]) * f) * 10) / 10,
+      });
+    }
+    return out;
+  };
+  if (id === 'acc-1') return ramp(96, [40, 6], [100, 100]); // using Gemini heavily, Claude untouched
+  if (id === 'acc-2') return ramp(72, [25, 8.4], [60, 27.5]);
+  return undefined;
+}
+
 function post(data: ToWebview) {
   window.postMessage(data, '*');
 }
@@ -107,7 +127,29 @@ function sendState() {
   const s = SCENARIOS[currentScenario];
   // Same logic the extension uses, so the dev preview shows the "running low" hint too
   const suggestion = suggestBestAccount(s.accounts, currentActiveId);
-  post({ type: 'state', accounts: s.accounts, activeId: currentActiveId, suggestion });
+  const trends: Record<string, NonNullable<ReturnType<typeof buildTrend>>> = {};
+  for (const a of s.accounts) {
+    const t = buildTrend(mockHistory(a.id), NOW);
+    if (t) trends[a.id] = t;
+  }
+  // The "error" scenario also shows the quota-could-not-be-read state on the signed-in account
+  const quotaError =
+    currentScenario === 'error' && currentActiveId
+      ? {
+          accountId: currentActiveId,
+          kind: 'no-language-server' as const,
+          message: "Antigravity's language server is not running yet. It starts shortly after the IDE opens.",
+          at: NOW,
+        }
+      : undefined;
+  post({
+    type: 'state',
+    accounts: s.accounts,
+    activeId: currentActiveId,
+    suggestion,
+    trends: Object.keys(trends).length > 0 ? trends : undefined,
+    quotaError,
+  });
 }
 
 export function initMockHost(): void {

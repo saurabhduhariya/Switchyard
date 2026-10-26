@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Quota history and trend**: a small sparkline of each account's weekly quota over the last 7 days, with "Used X% in 24h" (or the shorter period it really covers). History is capped (about 200 readings, 7 days), only stores readings that changed, only uses live reads, and is removed with the account.
+- **Quota error states**: when the signed-in account's quota cannot be read, the card explains why in plain words with a Retry button; a single early failure after startup is not shown. Accounts without any quota yet show "No quota yet. Switch to this account to load it." instead of rows of dashes.
+- **Tier table** (`TIERS` in `src/shared/quotaRules.ts`): which windows a tier has (weekly, 5-hour) is data, not scattered name checks. A tier with no weekly window is also handled in the panel.
+
+### Changed
+- `QuotaCollector.getQuotaResult()` reports why a read failed (`no-language-server`, `request-failed`, `no-data`); `getQuotaSummary()` still returns just the numbers. Raw error text is only ever logged, never shown.
+
+### Fixed
+- A trend is only drawn from at least two readings (a single reading used to look like a flat "no usage" line).
+
+### Added
 - **Quota reset notifications**: a one-time notification when an exhausted quota (10% or less) on a saved account has reset, with a button to switch to it (or open the panel when several accounts reset). Resets older than 24 hours are recorded silently. Setting `switchyard.notifyOnQuotaReset` (on by default); the notification also has a Turn Off button.
 - **Best-account hint**: when the signed-in account is low on a model, a banner above it suggests the saved account with the most left in that bucket (at least 25%), with Switch and Not now. Dismissals are remembered per situation. Setting `switchyard.suggestBestAccount` (on by default).
 - Shared quota rules (`src/shared/quotaRules.ts`) so the panel, notifications and hints agree on what "low" means.

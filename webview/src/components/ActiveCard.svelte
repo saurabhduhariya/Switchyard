@@ -2,12 +2,13 @@
   import type { AccountMeta } from '../../../src/shared/messages';
   import Avatar from './Avatar.svelte';
   import QuotaBoxes from './QuotaBoxes.svelte';
+  import QuotaErrorNotice from './QuotaErrorNotice.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
   import { maskEmail } from '../lib/maskEmail';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
-  import { getMode } from '../stores/app.svelte';
+  import { getMode, getQuotaError, getTrend } from '../stores/app.svelte';
   import { isStarterTier, shortTierName } from '../lib/tier';
   import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
@@ -146,7 +147,18 @@
   </div>
 
   <!-- Quota Cards -->
-  <QuotaBoxes quota={account.quota} {tierName} estimate={shouldEstimate(account.quota, true)} />
+  {#if getQuotaError() && getQuotaError()!.accountId === account.id}
+    <QuotaErrorNotice error={getQuotaError()!} hasQuota={!!account.quota} onretry={handleRefresh} />
+  {/if}
+  {#if account.quota || !getQuotaError()}
+    <QuotaBoxes
+      quota={account.quota}
+      {tierName}
+      estimate={shouldEstimate(account.quota, true)}
+      trend={getTrend(account.id)}
+      emptyText="Loading quota…"
+    />
+  {/if}
 
   {#if menuOpen}
     <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />

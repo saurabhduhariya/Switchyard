@@ -10,6 +10,9 @@ export {
   isProTier,
   isStarterTier,
   isUltraTier,
+  TIERS,
+  tierSpec,
+  windowsForTier,
 } from '../../../src/shared/quotaRules';
 
 /**
