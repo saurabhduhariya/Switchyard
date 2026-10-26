@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-26
+
 ### Added
 - **Quota history and trend**: a small sparkline of each account's weekly quota over the last 7 days, with "Used X% in 24h" (or the shorter period it really covers). History is capped (about 200 readings, 7 days), only stores readings that changed, only uses live reads, and is removed with the account.
 - **Quota error states**: when the signed-in account's quota cannot be read, the card explains why in plain words with a Retry button; a single early failure after startup is not shown. Accounts without any quota yet show "No quota yet. Switch to this account to load it." instead of rows of dashes.
