@@ -178,7 +178,13 @@
           "items": {
             "type": "string"
           },
-          "default": [],
+          "default": [
+            "--skip-welcome",
+            "--skip-release-notes",
+            "--skip-add-to-recently-opened",
+            "--disable-telemetry",
+            "--disable-workspace-trust"
+          ],
           "scope": "machine",
           "markdownDescription": "Extra flags for the sign-in side window to make it quieter. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Anything else is ignored. Clear this setting if the side window misbehaves."
         },

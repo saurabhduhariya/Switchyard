@@ -11,8 +11,8 @@ import { Logger } from '../util/logger';
 export function isCompanionMode(globalStorageUri: vscode.Uri): boolean {
   const globalStoragePath = globalStorageUri.fsPath;
 
-  // Check if the path contains 'switchyard-capture'
-  if (!globalStoragePath.includes('switchyard-capture')) {
+  // Check if the path contains 'switchyard-capture' (case-insensitive for Windows)
+  if (!globalStoragePath.toLowerCase().includes('switchyard-capture')) {
     return false;
   }
 
@@ -90,14 +90,15 @@ export function setupCompanionMode(
         clearInterval(pollTimer);
         pollTimer = undefined;
       }
+      void Promise.resolve(vscode.commands.executeCommand('workbench.action.closeWindow')).catch(() => undefined);
       void Promise.resolve(vscode.commands.executeCommand('workbench.action.quit')).catch((err) => {
         logger.warn(`workbench.action.quit failed: ${err}`);
       });
-      // Fallback if quit is ignored: close just this window
+      // Fallback if quit is ignored: close window again
       setTimeout(() => {
-        logger.warn('Capture window still open after quit; trying workbench.action.closeWindow');
+        logger.warn('Capture window still open after close request; retrying closeWindow');
         void Promise.resolve(vscode.commands.executeCommand('workbench.action.closeWindow')).catch(() => undefined);
-      }, 2000);
+      }, 1500);
     }
   };
 

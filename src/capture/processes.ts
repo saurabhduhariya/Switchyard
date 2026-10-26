@@ -18,14 +18,17 @@ export function findCaptureMainPids(dir: string): Promise<number[]> {
     };
 
     if (process.platform === 'win32') {
-      const escaped = dir.replace(/'/g, "''");
+      const escaped = dir.replace(/\\/g, '/').replace(/'/g, "''").toLowerCase();
       const script =
         // The flag is built from two pieces so this script's own command line never
         // contains the literal "--user-data-dir" and cannot match itself.
         `$flag = '--user-data' + '-dir'; ` +
-        `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ` +
-        `$_.CommandLine.Contains($flag) -and $_.CommandLine.Contains('${escaped}') -and ` +
-        `-not $_.CommandLine.Contains('--type=') } | ForEach-Object { $_.ProcessId }`;
+        `$target = '${escaped}'; ` +
+        `Get-CimInstance Win32_Process | Where-Object { ` +
+        `  if (-not $_.CommandLine) { return $false } ` +
+        `  $cmd = $_.CommandLine.Replace('\\', '/').ToLower(); ` +
+        `  $cmd.Contains($flag) -and $cmd.Contains($target) -and -not $cmd.Contains('--type=') ` +
+        `} | ForEach-Object { $_.ProcessId }`;
       execFile(
         'powershell',
         ['-NoProfile', '-NonInteractive', '-Command', script],
@@ -57,7 +60,7 @@ export function findCaptureMainPids(dir: string): Promise<number[]> {
 export function requestGracefulClose(pid: number): void {
   try {
     if (process.platform === 'win32') {
-      execFile('taskkill', ['/PID', String(pid)], { windowsHide: true }, () => undefined);
+      execFile('taskkill', ['/PID', String(pid), '/T'], { windowsHide: true }, () => undefined);
     } else {
       process.kill(pid, 'SIGTERM');
     }

@@ -157,6 +157,18 @@ describe('suggestBestAccount', () => {
     expect(after.accountId).toBe('c');
     expect(after.key).not.toBe(before.key);
   });
+
+  it('suggests an account that rescues at least one low bucket when multiple are low', () => {
+    const accounts = [
+      acct('a', quota({ tier: 'Antigravity Starter Quota', g: [0], c: [4.57] })),
+      acct('b', quota({ tier: 'Google AI Pro Quota', g: [79.92, 77.84], c: [0, 0] })),
+    ];
+    const s = suggestBestAccount(accounts, 'a', NOW)!;
+    expect(s).toBeDefined();
+    expect(s.accountId).toBe('b');
+    expect(s.lowText).toBe('Gemini weekly 0%');
+    expect(s.betterText).toBe('Gemini weekly 79.92%');
+  });
 });
 
 describe('readBuckets', () => {

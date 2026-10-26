@@ -19,7 +19,7 @@ import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
 import { Logger } from '../util/logger';
-import { sanitizeCaptureLaunchArgs } from './launchArgs';
+import { DEFAULT_CAPTURE_FLAGS, sanitizeCaptureLaunchArgs } from './launchArgs';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
 import { findCaptureMainPids, forceKill, requestGracefulClose } from './processes';
 
@@ -179,12 +179,16 @@ export class CaptureManager {
 
   private readLaunchArgsFromSettings(): string[] {
     const config = vscode.workspace.getConfiguration('switchyard');
+    const userFlags = config.get('captureWindowArgs');
     const { args, rejected } = sanitizeCaptureLaunchArgs(
-      config.get('captureWindowArgs'),
+      userFlags,
       config.get('captureWindowDisabledExtensions')
     );
     if (rejected.length > 0) {
       this.logger.warn(`Ignoring unsupported side-window launch settings: ${rejected.join(', ')}`);
+    }
+    if (!Array.isArray(userFlags) || userFlags.length === 0) {
+      return [...DEFAULT_CAPTURE_FLAGS, ...args];
     }
     return args;
   }
@@ -490,6 +494,9 @@ export class CaptureManager {
         clearTimeout(this.timeoutTimer);
         this.timeoutTimer = undefined;
       }
+
+      // Automatically close the side window once detection succeeds
+      void this.closeWindowAndWaitForFlush(current);
     });
 
     this.watcher.start();
@@ -618,6 +625,14 @@ export class CaptureManager {
         pids.forEach(requestGracefulClose);
       }
       await sleep(this.processPollMs);
+    }
+    if (!closed) {
+      const remainingPids = await this.processFinder(session.dir);
+      if (remainingPids.length > 0) {
+        this.logger.warn(`Capture window did not close within timeout; force killing pids ${remainingPids.join(',')}`);
+        remainingPids.forEach(forceKill);
+        closed = true;
+      }
     }
     this.logger.info(`Capture window closed=${closed} after ${Date.now() - started}ms`);
 

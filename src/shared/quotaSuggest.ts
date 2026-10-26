@@ -37,7 +37,7 @@ export function suggestBestAccount(
     ? estimateQuotaSummary(active.quota, now)
     : active.quota;
 
-  const lowBuckets = readBuckets(activeQuota).filter(
+  const lowBuckets = readBuckets(activeQuota, active.plan).filter(
     (b) => b.percent !== undefined && b.percent <= LOW_QUOTA_PERCENT
   );
   if (lowBuckets.length === 0) return undefined;
@@ -45,29 +45,38 @@ export function suggestBestAccount(
   interface Candidate {
     account: AccountMeta;
     verified: BucketReading[];
+    lowMatched: BucketReading[];
     score: number;
   }
   const candidates: Candidate[] = [];
 
   for (const account of accounts) {
     if (account.id === activeId || !account.quota) continue;
-    const readings = readBuckets(estimateQuotaSummary(account.quota, now));
+    const readings = readBuckets(estimateQuotaSummary(account.quota, now), account.plan);
 
     const verified: BucketReading[] = [];
+    const lowMatched: BucketReading[] = [];
     for (const low of lowBuckets) {
       const match = readings.find((r) => r.group === low.group && r.window === low.window);
-      if (match && match.percent !== undefined) verified.push(match);
+      if (
+        match &&
+        match.percent !== undefined &&
+        match.percent >= HEALTHY_QUOTA_PERCENT &&
+        match.percent > (low.percent ?? 0)
+      ) {
+        verified.push(match);
+        lowMatched.push(low);
+      }
     }
     if (verified.length === 0) continue;
-    if (verified.some((r) => (r.percent as number) < HEALTHY_QUOTA_PERCENT)) continue;
 
     const worst = Math.min(...verified.map((r) => r.percent as number));
     const weekly = readings.filter((r) => r.window === 'weekly' && r.percent !== undefined);
     const weeklyAvg = weekly.length
       ? weekly.reduce((sum, r) => sum + (r.percent as number), 0) / weekly.length
       : 0;
-    // The bucket that is running out matters most; the rest of the account breaks ties.
-    candidates.push({ account, verified, score: worst + weeklyAvg * 0.1 });
+    // Prefer accounts that rescue more low buckets, then highest worst bucket, then weekly average
+    candidates.push({ account, verified, lowMatched, score: verified.length * 1000 + worst + weeklyAvg * 0.1 });
   }
 
   if (candidates.length === 0) return undefined;
@@ -76,11 +85,11 @@ export function suggestBestAccount(
   const best = candidates[0];
   if (!best) return undefined;
 
-  const signature = lowBuckets.map((b) => `${b.group}.${b.window}@${b.resetTime ?? ''}`).join(',');
+  const signature = best.lowMatched.map((b) => `${b.group}.${b.window}@${b.resetTime ?? ''}`).join(',');
   return {
     key: `${activeId}|${signature}|${best.account.id}`,
     accountId: best.account.id,
-    lowText: joinTexts(lowBuckets.map((b) => `${b.label} ${formatPercent(b.percent as number, false)}`)),
+    lowText: joinTexts(best.lowMatched.map((b) => `${b.label} ${formatPercent(b.percent as number, false)}`)),
     betterText: joinTexts(
       best.verified.map((b) => `${b.label} ${formatPercent(b.percent as number, b.estimated === true)}`)
     ),

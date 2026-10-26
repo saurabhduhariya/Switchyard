@@ -21,34 +21,29 @@ function tryCheckpointWal(tempDbPath: string): void {
     child_process.execFileSync('sqlite3', [tempDbPath, 'PRAGMA wal_checkpoint(TRUNCATE);'], {
       timeout: 3000,
       stdio: 'ignore',
+      windowsHide: true,
     });
     return;
   } catch {
     // sqlite3 CLI not available or failed
   }
 
-  // 2. Try python3 with standard library sqlite3
-  try {
-    const pyScript = `import sqlite3; con = sqlite3.connect(r'''${tempDbPath}'''); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()`;
-    child_process.execFileSync('python3', ['-c', pyScript], {
-      timeout: 3000,
-      stdio: 'ignore',
-    });
-    return;
-  } catch {
-    // python3 not available or failed
-  }
+  // On Windows, 'python' is standard while 'python3' is often the Microsoft Store dummy shim.
+  // On Unix/Linux, 'python3' is standard.
+  const pyCmds = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  const pyScript = `import sqlite3; con = sqlite3.connect(r'''${tempDbPath}'''); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()`;
 
-  // 3. Try python (e.g. Windows)
-  try {
-    const pyScript = `import sqlite3; con = sqlite3.connect(r'''${tempDbPath}'''); con.execute('PRAGMA wal_checkpoint(TRUNCATE);'); con.close()`;
-    child_process.execFileSync('python', ['-c', pyScript], {
-      timeout: 3000,
-      stdio: 'ignore',
-    });
-    return;
-  } catch {
-    // Fallback: proceed without checkpoint
+  for (const cmd of pyCmds) {
+    try {
+      child_process.execFileSync(cmd, ['-c', pyScript], {
+        timeout: 3000,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      return;
+    } catch {
+      // try next candidate
+    }
   }
 }
 
@@ -94,7 +89,20 @@ export async function readKeys(dbPath: string, keys: string[]): Promise<Record<s
   const tempDb = path.join(tempDir, 'state.vscdb');
 
   try {
-    fs.copyFileSync(dbPath, tempDb);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        fs.copyFileSync(dbPath, tempDb);
+        break;
+      } catch (err: unknown) {
+        const isLock =
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          ['EPERM', 'EBUSY', 'EACCES'].includes((err as { code: string }).code);
+        if (attempt >= 4 || !isLock) throw err;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
 
     const walFile = `${dbPath}-wal`;
     const shmFile = `${dbPath}-shm`;
@@ -253,7 +261,7 @@ export async function deleteKeys(dbPath: string, keys: string[]): Promise<void> 
  * and inode held by any running IDE processes.
  * When targetPath does not exist, writes to a temp file and atomically renames.
  */
-async function atomicWriteFile(targetPath: string, data: Buffer, retries = 3, delayMs = 100): Promise<void> {
+async function atomicWriteFile(targetPath: string, data: Buffer, retries = 5, delayMs = 150): Promise<void> {
   const dir = path.dirname(targetPath);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -276,7 +284,7 @@ async function atomicWriteFile(targetPath: string, data: Buffer, retries = 3, de
           typeof err === 'object' &&
           err !== null &&
           'code' in err &&
-          ((err as { code: string }).code === 'EPERM' || (err as { code: string }).code === 'EBUSY');
+          ['EPERM', 'EBUSY', 'EACCES'].includes((err as { code: string }).code);
 
         if (attempt >= retries || !isLockError) {
           throw err;
@@ -310,7 +318,7 @@ async function atomicWriteFile(targetPath: string, data: Buffer, retries = 3, de
         typeof err === 'object' &&
         err !== null &&
         'code' in err &&
-        ((err as { code: string }).code === 'EPERM' || (err as { code: string }).code === 'EBUSY');
+        ['EPERM', 'EBUSY', 'EACCES'].includes((err as { code: string }).code);
 
       if (attempt >= retries || !isLockError) {
         try {

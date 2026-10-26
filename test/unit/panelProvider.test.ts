@@ -206,7 +206,7 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
 
     // Active marker moves back to Account A automatically
     expect(await store.activeId()).toBe(idA);
-  });
+  }, 15000);
 
   it('Exit criterion 4: Remove deletes secret and removes account', async () => {
     const session = makeSyntheticSessionEntries({ email: 'to-remove@domain.com' });

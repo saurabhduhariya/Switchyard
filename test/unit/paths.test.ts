@@ -14,14 +14,14 @@ describe('platform/paths', () => {
     const home = '/home/testuser';
     const dirs = getUserDataDirs('linux', { XDG_CONFIG_HOME: '/custom/config' }, home);
     expect(dirs).toEqual([
-      '/custom/config/Antigravity IDE',
-      '/custom/config/Antigravity',
+      path.join('/custom/config', 'Antigravity IDE'),
+      path.join('/custom/config', 'Antigravity'),
     ]);
 
     const defaultDirs = getUserDataDirs('linux', {}, home);
     expect(defaultDirs).toEqual([
-      '/home/testuser/.config/Antigravity IDE',
-      '/home/testuser/.config/Antigravity',
+      path.join('/home/testuser/.config', 'Antigravity IDE'),
+      path.join('/home/testuser/.config', 'Antigravity'),
     ]);
   });
 
@@ -98,10 +98,10 @@ describe('platform/paths', () => {
       '/home/user/.config/Antigravity/User/globalStorage'
     );
     expect(getProfilesDir('/home/user/.config/Antigravity/User/globalStorage')).toBe(
-      '/home/user/.config/Antigravity/User/globalStorage/profiles'
+      path.join('/home/user/.config/Antigravity/User/globalStorage', 'profiles')
     );
     expect(getBackupsDir('/home/user/.config/Antigravity/User/globalStorage')).toBe(
-      '/home/user/.config/Antigravity/User/globalStorage/backups'
+      path.join('/home/user/.config/Antigravity/User/globalStorage', 'backups')
     );
   });
 });

@@ -296,8 +296,56 @@ export class QuotaCollector {
 
   private async discoverEndpoint(): Promise<LSServerEndpoint | undefined> {
     try {
-      const isWin = process.platform === 'win32';
-      const psCmd = isWin ? 'tasklist /v' : 'ps aux';
+      if (process.platform === 'win32') {
+        const psScript = `
+          $procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*language_server*' } | Select-Object ProcessId, CommandLine
+          @($procs) | ConvertTo-Json -Compress
+        `;
+        const psOut = child_process.execFileSync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', psScript],
+          { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
+        );
+
+        const parsed = JSON.parse(psOut.trim() || '[]');
+        const items = Array.isArray(parsed) ? parsed : [parsed];
+
+        for (const item of items) {
+          const cmd = item?.CommandLine;
+          const pid = item?.ProcessId ? String(item.ProcessId) : undefined;
+          if (!cmd || !pid) continue;
+
+          const tokenMatch = cmd.match(/--csrf_token\s+([a-f0-9-]+)/i);
+          if (!tokenMatch) continue;
+
+          const token = tokenMatch[1];
+          const ports = this.getListeningPortsForPid(pid);
+          for (const port of ports) {
+            try {
+              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
+              if (res && res.userStatus) {
+                return { port, token };
+              }
+            } catch {
+              try {
+                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+                  port,
+                  token,
+                  'RetrieveUserQuotaSummary'
+                );
+                if (qRes && qRes.response) {
+                  return { port, token };
+                }
+              } catch {
+                // Port wasn't the HTTP service, continue trying
+              }
+            }
+          }
+        }
+        return undefined;
+      }
+
+      const psCmd = 'ps aux';
       const psOut = child_process.execSync(psCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
 
       const lines = psOut.split('\n');
@@ -361,6 +409,28 @@ export class QuotaCollector {
         for (const match of lsofOut.matchAll(/127\.0\.0\.1:(\d+)/g)) {
           const p = match[1];
           if (p) ports.push(parseInt(p, 10));
+        }
+      } else if (process.platform === 'win32') {
+        const netstatOut = child_process.execSync('netstat -ano -p tcp', {
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 3000,
+        });
+        const lines = netstatOut.split('\n');
+        for (const line of lines) {
+          if (!line.includes('LISTENING')) continue;
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5 && parts[parts.length - 1] === String(pid)) {
+            const localAddr = parts[1];
+            const portMatch = localAddr?.match(/:(\d+)$/);
+            if (portMatch) {
+              const portNum = parseInt(portMatch[1], 10);
+              if (!isNaN(portNum) && !ports.includes(portNum)) {
+                ports.push(portNum);
+              }
+            }
+          }
         }
       }
     } catch {}

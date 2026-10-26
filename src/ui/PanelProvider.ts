@@ -35,6 +35,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private lastDetectedHash?: string;
   private lastSnapshotUpdateMap = new Map<string, number>();
   private _detecting = false;
+  private _reDetectRequested = false;
+  private _currentDetectionPromise?: Promise<void>;
   private dismissedSignOutBanner = false;
   private readonly quotaCollector: QuotaCollector;
   private readonly history: QuotaHistoryStore;
@@ -86,6 +88,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       try {
         switch (msg.type) {
           case 'ready':
+            await this.push();
             await this.detectAndRefresh();
             break;
 
@@ -209,8 +212,8 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Immediately detect and push state (detectAndRefresh now always calls push)
-    void this.detectAndRefresh();
+    // Immediately push existing state so UI renders instantly without waiting
+    void this.push();
   }
 
   /**
@@ -322,11 +325,26 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    * ALWAYS pushes updated state to the webview at the end.
    */
   public async detectAndRefresh(force = false): Promise<void> {
-    if (this._detecting) {
+    if (this._detecting && this._currentDetectionPromise) {
+      this._reDetectRequested = true;
+      await this._currentDetectionPromise;
       return;
     }
     this._detecting = true;
+    this._currentDetectionPromise = this._runDetectAndRefresh(force);
+    try {
+      await this._currentDetectionPromise;
+    } finally {
+      this._currentDetectionPromise = undefined;
+      this._detecting = false;
+      if (this._reDetectRequested) {
+        this._reDetectRequested = false;
+        await this.detectAndRefresh(force);
+      }
+    }
+  }
 
+  private async _runDetectAndRefresh(force: boolean): Promise<void> {
     try {
       if (!this.detector) {
         await this.push();
@@ -473,11 +491,11 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       // Push state immediately so UI renders instantly without waiting for quota network call
       await this.push();
 
-      // Refresh active account quota (skip if a switch is pending reconciliation)
+      // Refresh active account quota asynchronously in background so detection returns and pushes instantly
       const pendingSwitch = this.ctx.globalState?.get('switchyard.pendingSwitch');
       const activeAccountId = await this.store.activeId();
       if (activeAccountId && !pendingSwitch) {
-        await this.readQuota(activeAccountId, false);
+        void this.readQuota(activeAccountId, false).then(() => this.push());
       }
 
       // Always push updated state to the webview
@@ -486,8 +504,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       this.logger.error('Error in detectAndRefresh:', err);
       // Still push state even on error so the webview isn't stuck in loading
       await this.push();
-    } finally {
-      this._detecting = false;
     }
   }
 
