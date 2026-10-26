@@ -424,7 +424,7 @@ export class QuotaCollector {
           if (parts.length >= 5 && parts[parts.length - 1] === String(pid)) {
             const localAddr = parts[1];
             const portMatch = localAddr?.match(/:(\d+)$/);
-            if (portMatch) {
+            if (portMatch && portMatch[1]) {
               const portNum = parseInt(portMatch[1], 10);
               if (!isNaN(portNum) && !ports.includes(portNum)) {
                 ports.push(portNum);
