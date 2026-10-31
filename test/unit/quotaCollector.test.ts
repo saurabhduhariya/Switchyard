@@ -163,6 +163,139 @@ describe('AccountStore.updateQuota', () => {
     expect(parsed.claudeGpt.fiveHour?.disabled).toBe(true);
     expect(parsed.claudeGpt.rolling5hRemaining).toBeUndefined();
   });
+
+  it('matches 3p and third-party groups for Claude/GPT', () => {
+    const collector = new QuotaCollector();
+    const rawDto = {
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          buckets: [
+            {
+              bucketId: 'gemini-weekly',
+              remainingFraction: 0.8,
+            },
+          ],
+        },
+        {
+          displayName: 'Third-party (3P) Models',
+          buckets: [
+            {
+              bucketId: '3p-weekly',
+              remainingFraction: 0.5,
+            },
+          ],
+        },
+      ],
+    };
+
+    const parsed = (collector as any).parseQuotaSummaryResponse(rawDto, undefined, 'live');
+    expect(parsed.tierName).toBe('Antigravity Quota');
+    expect(parsed.gemini.weekly?.remainingPercent).toBe(80);
+    expect(parsed.claudeGpt.weekly?.remainingPercent).toBe(50);
+  });
+
+  it('extracts tier name from planStatus or userTier id if userTier name is missing', async () => {
+    const collector = new QuotaCollector();
+    // Test helper to simulate requestLiveQuota response mapping
+    (collector as any).sendConnectRpc = async (_port: number, _token: string, method: string) => {
+      if (method === 'GetUserStatus') {
+        return {
+          userStatus: {
+            userTier: { id: 'g1-pro-tier' },
+            planStatus: { planInfo: { planName: 'Pro' } },
+          },
+        };
+      }
+      if (method === 'RetrieveUserQuotaSummary') {
+        return {
+          response: {
+            groups: [
+              {
+                displayName: 'Gemini',
+                buckets: [{ bucketId: 'weekly', remainingFraction: 0.9 }],
+              },
+            ],
+          },
+        };
+      }
+      return undefined;
+    };
+
+    const quota = await (collector as any).requestLiveQuota({ port: 1234, token: 'test-token' });
+    expect(quota).toBeDefined();
+    expect(quota?.tierName).toBe('g1-pro-tier Quota');
+  });
+
+  it('decodes state.vscdb protobuf userStatus when sentinel key is followed by newline bytes', async () => {
+    const collector = new QuotaCollector();
+    // Construct dummy protobuf data with userStatusSentinelKey followed by 0x0A (\n) and valid base64
+    // Inner base64 encodes protobuf with field 33 (cascadeModelConfigData) and field 36 (userTier)
+    // Field 36: wiretype 2, fieldNum 36 -> tag = (36 << 3) | 2 = 290 -> varint: 0xa2, 0x02
+    // Inside field 36: field 2 (name) = "Google AI Pro"
+    const nameBuf = Buffer.from('Google AI Pro', 'utf8');
+    const f2Tag = (2 << 3) | 2; // 0x12
+    const f36Sub = Buffer.concat([Buffer.from([f2Tag, nameBuf.length]), nameBuf]);
+    const f36Tag = Buffer.from([0xa2, 0x02]); // 290
+    
+    // Field 33: wiretype 2, fieldNum 33 -> tag = (33 << 3) | 2 = 266 -> varint: 0x8a, 0x02
+    // Inside field 33: field 1 (ClientModelConfig):
+    // Inside field 1: field 1 (label) = "gemini-1.5-pro", field 15 (quotaInfo) -> wiretype 5 (float) = 0.75
+    const labelBuf = Buffer.from('gemini-1.5-pro', 'utf8');
+    const f1Tag = (1 << 3) | 2; // 0x0a
+    const floatBuf = Buffer.alloc(4);
+    floatBuf.writeFloatLE(0.75, 0);
+    const qiTag = (15 << 3) | 2; // field 15, wiretype 2
+    const floatFieldTag = (1 << 3) | 5; // field 1 of quotaInfo, wiretype 5
+    const qiSub = Buffer.concat([Buffer.from([floatFieldTag]), floatBuf]);
+    const cfgSub = Buffer.concat([
+      Buffer.from([f1Tag, labelBuf.length]),
+      labelBuf,
+      Buffer.from([qiTag, qiSub.length]),
+      qiSub,
+    ]);
+    const f33Tag = Buffer.from([0x8a, 0x02]); // 266
+    const innerBuf = Buffer.concat([
+      f33Tag,
+      Buffer.from([cfgSub.length + 2]), // length
+      Buffer.from([0x0a, cfgSub.length]),
+      cfgSub,
+      f36Tag,
+      Buffer.from([f36Sub.length]),
+      f36Sub,
+    ]);
+
+    const innerB64 = innerBuf.toString('base64');
+    // Prefix with userStatusSentinelKey and include newline byte 0x0A in the spacer
+    const prefix = Buffer.concat([
+      Buffer.from('userStatusSentinelKey', 'utf8'),
+      Buffer.from([0x12, 0xf3, 0x40, 0x0a, 0xf0, 0x40]), // contains \n (0x0A)
+      Buffer.from(innerB64, 'utf8'),
+    ]);
+
+    const outerB64 = prefix.toString('base64');
+
+    // Create temporary database to test loadFromDb
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const { writeSyntheticDb } = await import('../fixtures/makeDb');
+    const tmp = path.join(os.tmpdir(), `test-db-quota-${Date.now()}.vscdb`);
+    try {
+      await writeSyntheticDb(tmp, {
+        'antigravityUnifiedStateSync.userStatus': outerB64,
+      });
+
+      const res = await (collector as any).loadFromDb(tmp);
+      expect(res).toBeDefined();
+      expect(res?.gemini?.weekly?.remainingPercent).toBe(75);
+      expect(res?.tierName).toBe('Google AI Pro');
+    } finally {
+      try {
+        fs.unlinkSync(tmp);
+      } catch {}
+    }
+  });
 });
 
 describe('QuotaCollector.getQuotaResult (why a read failed)', () => {

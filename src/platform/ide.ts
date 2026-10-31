@@ -66,6 +66,8 @@ export function findExecutable(customPath?: string): string {
 
   if (platform === 'linux') {
     candidates.push(
+      '/opt/antigravity-ide/antigravity-ide',
+      '/opt/antigravity/antigravity',
       '/usr/bin/antigravity-ide',
       '/usr/local/bin/antigravity-ide',
       '/opt/antigravity-ide/bin/antigravity-ide',

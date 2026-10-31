@@ -111,9 +111,12 @@ export function isPlanTierCompatible(plan: string | undefined, quota: AccountQuo
   if (!plan) return true;
   const tierName = quota.tierName;
 
-  // 1. Starter accounts must never receive a 5-hour window or paid tier name
+  // 1. Starter accounts must never receive an active 5-hour window or paid tier name
   if (isStarterTier(plan)) {
-    if (quota.gemini?.fiveHour || quota.claudeGpt?.fiveHour) return false;
+    const hasActive5h =
+      (quota.gemini?.fiveHour && !quota.gemini.fiveHour.disabled) ||
+      (quota.claudeGpt?.fiveHour && !quota.claudeGpt.fiveHour.disabled);
+    if (hasActive5h) return false;
     if (tierName && !isStarterTier(tierName)) return false;
     return true;
   }

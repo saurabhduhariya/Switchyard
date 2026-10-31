@@ -636,22 +636,26 @@ export class CaptureManager {
     }
     this.logger.info(`Capture window closed=${closed} after ${Date.now() - started}ms`);
 
-    // 2. Wait for the SQLite WAL to be checkpointed.
-    const walPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb-wal');
-    const deadline = Date.now() + CAPTURE_FLUSH_WAIT_MS;
-    while (Date.now() < deadline) {
-      let walSize = 0;
-      try {
-        walSize = fs.statSync(walPath).size;
-      } catch {
-        walSize = 0;
+    // 2. Wait for the SQLite WAL to be checkpointed if the window is still alive.
+    // If the process has already closed, StateDb.readKeys automatically checkpoints
+    // the WAL file into a temporary copy, so we do not need to block for 6 seconds.
+    if (!closed) {
+      const walPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb-wal');
+      const deadline = Date.now() + CAPTURE_FLUSH_WAIT_MS;
+      while (Date.now() < deadline) {
+        let walSize = 0;
+        try {
+          walSize = fs.statSync(walPath).size;
+        } catch {
+          walSize = 0;
+        }
+        if (walSize === 0) {
+          break;
+        }
+        await sleep(250);
       }
-      if (walSize === 0) {
-        break;
-      }
-      await sleep(250);
     }
-    await sleep(300); // let the OS release file handles
+    await sleep(200); // let the OS release file handles
     return closed;
   }
 
@@ -691,7 +695,8 @@ export class CaptureManager {
         KEYS.legacyInit,
       ];
 
-      const hasToken = (v: Record<string, string>) => Boolean(v[KEYS.oauth] || v[KEYS.legacyInit]);
+      const hasToken = (v: Record<string, string>) =>
+        Boolean(v[KEYS.oauth] || v[KEYS.legacyInit] || v[KEYS.userStatus]);
 
       const fromDb: Record<string, string> = fs.existsSync(dbPath)
         ? await readKeys(dbPath, targetKeys)

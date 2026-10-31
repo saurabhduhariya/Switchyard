@@ -161,7 +161,17 @@ export class QuotaCollector {
         endpoint.token,
         'GetUserStatus'
       );
-      tierName = statusRes?.userStatus?.userTier?.name;
+      const userTier = statusRes?.userStatus?.userTier;
+      if (userTier?.name) {
+        tierName = userTier.name;
+      } else if (userTier?.id) {
+        tierName = userTier.id;
+      } else {
+        const planName = (statusRes?.userStatus as { planStatus?: { planInfo?: { planName?: string } } })?.planStatus?.planInfo?.planName;
+        if (planName) {
+          tierName = planName;
+        }
+      }
     } catch (err) {
       this.logger?.debug('GetUserStatus tier query error:', err);
     }
@@ -298,7 +308,7 @@ export class QuotaCollector {
     try {
       if (process.platform === 'win32') {
         const psScript = `
-          $procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*language_server*' } | Select-Object ProcessId, CommandLine
+          $procs = Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*language_server*' -or $_.Name -like '*agy*' -or ($_.CommandLine -and $_.CommandLine -like '*--csrf_token*') } | Select-Object ProcessId, CommandLine
           @($procs) | ConvertTo-Json -Compress
         `;
         const psOut = child_process.execFileSync(
@@ -315,11 +325,19 @@ export class QuotaCollector {
           const pid = item?.ProcessId ? String(item.ProcessId) : undefined;
           if (!cmd || !pid) continue;
 
-          const tokenMatch = cmd.match(/--csrf_token\s+([a-f0-9-]+)/i);
+          const tokenMatch = cmd.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
           if (!tokenMatch) continue;
 
           const token = tokenMatch[1];
           const ports = this.getListeningPortsForPid(pid);
+          const portMatch = cmd.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          if (portMatch) {
+            const p = parseInt(portMatch[1], 10);
+            if (!isNaN(p) && !ports.includes(p)) {
+              ports.unshift(p);
+            }
+          }
+
           for (const port of ports) {
             try {
               const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
@@ -349,10 +367,12 @@ export class QuotaCollector {
       const psOut = child_process.execSync(psCmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
 
       const lines = psOut.split('\n');
-      const lsLines = lines.filter((l) => l.includes('language_server') && l.includes('--csrf_token'));
+      const lsLines = lines.filter(
+        (l) => (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) && l.includes('--csrf_token')
+      );
 
       for (const line of lsLines) {
-        const tokenMatch = line.match(/--csrf_token\s+([a-f0-9-]+)/);
+        const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
         const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
         if (!tokenMatch || !pidMatch) continue;
 
@@ -360,9 +380,43 @@ export class QuotaCollector {
         const pid = pidMatch[1];
 
         if (token && pid) {
-          // Find listening ports for this pid
+          // Check if port is specified directly on the command line
+          const candidatePorts: number[] = [];
+          const portMatch = line.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          if (portMatch) {
+            const p = parseInt(portMatch[1], 10);
+            if (!isNaN(p)) {
+              candidatePorts.push(p);
+            }
+          }
+
+          // Test candidate port directly first if present
+          for (const port of candidatePorts) {
+            try {
+              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
+              if (res && res.userStatus) {
+                return { port, token };
+              }
+            } catch {
+              try {
+                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+                  port,
+                  token,
+                  'RetrieveUserQuotaSummary'
+                );
+                if (qRes && qRes.response) {
+                  return { port, token };
+                }
+              } catch {
+                // Try next
+              }
+            }
+          }
+
+          // Fall back to scanning listening ports for this pid
           const ports = this.getListeningPortsForPid(pid);
           for (const port of ports) {
+            if (candidatePorts.includes(port)) continue;
             try {
               const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
               if (res && res.userStatus) {
@@ -466,7 +520,11 @@ export class QuotaCollector {
     const groups = quotaData.groups || [];
     const geminiGroup = groups.find((g) => g.displayName?.toLowerCase().includes('gemini'));
     const claudeGroup = groups.find(
-      (g) => g.displayName?.toLowerCase().includes('claude') || g.displayName?.toLowerCase().includes('gpt')
+      (g) =>
+        g.displayName?.toLowerCase().includes('claude') ||
+        g.displayName?.toLowerCase().includes('gpt') ||
+        g.displayName?.toLowerCase().includes('3p') ||
+        g.displayName?.toLowerCase().includes('third-party')
     );
 
     const geminiWeeklyDto = geminiGroup?.buckets?.find(
@@ -605,7 +663,7 @@ export class QuotaCollector {
     try {
       const raw = Buffer.from(val, 'base64');
       // Look for inner base64 string after userStatusSentinelKey
-      const match = raw.toString('binary').match(/userStatusSentinelKey.{1,10}?([A-Za-z0-9+/=]{100,})/);
+      const match = raw.toString('latin1').match(/userStatusSentinelKey[\s\S]{1,20}?([A-Za-z0-9+/=]{40,})/);
       const innerStr = match?.[1];
       if (!innerStr) return undefined;
 

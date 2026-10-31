@@ -44,6 +44,26 @@ describe('accounts/AuthDetector', () => {
     }
   });
 
+  it('detects active authentication when userStatus is present even without oauthToken', async () => {
+    const syntheticSession = makeSyntheticSessionEntries({
+      email: 'user-status-only@company.com',
+      plan: 'AI Pro',
+    });
+    // Remove oauth token, keeping userStatus
+    delete syntheticSession[KEYS.oauth];
+
+    await writeSyntheticDb(dbPath, syntheticSession);
+
+    const detector = new AuthDetector(dbPath);
+    const result = await detector.detectActive();
+
+    expect('unsupported' in result).toBe(false);
+    if (!('unsupported' in result) && !('partial' in result)) {
+      expect(result.identity.email).toBe('user-status-only@company.com');
+      expect(result.snapshot.values[KEYS.userStatus]).toBe(syntheticSession[KEYS.userStatus]);
+    }
+  });
+
   it('returns unsupported when auth tokens are missing from database', async () => {
     await writeSyntheticDb(dbPath, {
       'unrelated.setting': 'true',

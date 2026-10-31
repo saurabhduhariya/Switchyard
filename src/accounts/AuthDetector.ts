@@ -60,9 +60,9 @@ export class AuthDetector {
 
     const values = await readKeys(this.dbPath, targetKeys);
 
-    const hasAuthToken = Boolean(values[KEYS.oauth] || values[KEYS.legacyInit]);
+    const hasAuthToken = Boolean(values[KEYS.oauth] || values[KEYS.legacyInit] || values[KEYS.userStatus]);
     if (hasAuthToken) {
-      // Full detection: auth tokens are in state.vscdb
+      // Full detection: auth tokens or user status are in state.vscdb
       const identity = parseSnapshot(values);
       return {
         identity,

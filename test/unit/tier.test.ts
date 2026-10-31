@@ -118,5 +118,15 @@ describe('tier helpers', () => {
     expect(isPlanTierCompatible('Antigravity Starter', proQuota)).toBe(false);
     expect(isPlanTierCompatible('Antigravity Starter', ultraQuota)).toBe(false);
     expect(isPlanTierCompatible('Antigravity Starter', genericPaidQuota)).toBe(false);
+
+    // Starter plan with disabled 5h bucket is compatible
+    const starterWithDisabled5h = {
+      tierName: 'Antigravity Starter Quota',
+      gemini: {
+        weekly: { remainingPercent: 50 },
+        fiveHour: { disabled: true },
+      },
+    } as any;
+    expect(isPlanTierCompatible('Antigravity Starter', starterWithDisabled5h)).toBe(true);
   });
 });

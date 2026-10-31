@@ -409,7 +409,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           KEYS.legacyInit,
         ];
         const values = await readKeys(chosenPath, targetKeys);
-        const hasAuth = Boolean(values[KEYS.oauth] || values[KEYS.legacyInit]);
+        const hasAuth = Boolean(values[KEYS.oauth] || values[KEYS.legacyInit] || values[KEYS.userStatus]);
         if (!hasAuth) {
           vscode.window.showWarningMessage('Switchyard: No auth credentials found in the selected file.');
           return;

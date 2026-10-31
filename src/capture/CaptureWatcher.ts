@@ -2,7 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { AuthDetector, DetectedAuth, DetectionResult } from '../accounts/AuthDetector';
 import { AccountIdentity, Snapshot } from '../accounts/types';
-import { CAPTURE_POLL_INTERVAL_MS } from '../constants';
+import { CAPTURE_POLL_INTERVAL_MS, KEYS } from '../constants';
 import { Logger } from '../util/logger';
 
 /**
@@ -31,6 +31,7 @@ export class CaptureWatcher {
   private onDetectionCallback?: (identity: AccountIdentity, snapshot?: Snapshot) => void;
   private lastDetection?: AccountIdentity;
   private consecutiveMatchCount = 0;
+  private noEmailCount = 0;
 
   constructor(dbPath: string, logger: Logger) {
     this.dbPath = dbPath;
@@ -223,6 +224,21 @@ export class CaptureWatcher {
 
     const { email, fingerprint } = result.identity;
 
+    // If OAuth token is present but userStatus has not arrived yet to populate the email,
+    // wait up to 4 poll cycles (~6s) for userStatus to be written before confirming detection.
+    const hasOauthWithoutStatus =
+      !email &&
+      Boolean(result.snapshot?.values?.[KEYS.oauth]) &&
+      !result.snapshot?.values?.[KEYS.userStatus];
+
+    if (hasOauthWithoutStatus && this.noEmailCount < 4) {
+      this.noEmailCount++;
+      this.logger.debug(
+        `OAuth token detected but userStatus/email not yet populated (attempt ${this.noEmailCount}/4), waiting...`
+      );
+      return;
+    }
+
     // Check if this matches the last detection
     if (this.lastDetection) {
       const emailMatches = email === this.lastDetection.email;
@@ -263,6 +279,7 @@ export class CaptureWatcher {
    * Resets debounce state.
    */
   private resetDebounce(): void {
+    this.noEmailCount = 0;
     if (this.lastDetection || this.consecutiveMatchCount > 0) {
       this.lastDetection = undefined;
       this.consecutiveMatchCount = 0;
