@@ -107,14 +107,45 @@ export function sendAgyConnectRpc<T>(
   });
 }
 
-async function probeEndpoint(port: number, token: string): Promise<boolean> {
-  for (const method of ['AuthGetStatus', 'GetUserStatus', 'RetrieveUserQuotaSummary']) {
-    try {
-      await sendAgyConnectRpc(port, token, method, {}, 1000);
+export async function probeQuotaEndpoint(port: number, token: string): Promise<boolean> {
+  try {
+    const qRes = await sendAgyConnectRpc<Record<string, any>>(
+      port,
+      token,
+      'RetrieveUserQuotaSummary',
+      {},
+      1000
+    );
+    if (qRes.response?.groups && Array.isArray(qRes.response.groups) && qRes.response.groups.length > 0) {
       return true;
-    } catch {
-      // Try the next method.
     }
+  } catch {
+    // try GetUserStatus next
+  }
+
+  try {
+    const uRes = await sendAgyConnectRpc<Record<string, any>>(port, token, 'GetUserStatus', {}, 1000);
+    if (uRes.userStatus && Object.keys(uRes.userStatus).length > 0) {
+      return true;
+    }
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
+async function probeEndpoint(port: number, token: string): Promise<boolean> {
+  if (await probeQuotaEndpoint(port, token)) {
+    return true;
+  }
+  try {
+    const aRes = await sendAgyConnectRpc<Record<string, any>>(port, token, 'AuthGetStatus', {}, 1000);
+    if (aRes && Object.keys(aRes).length > 0) {
+      return true;
+    }
+  } catch {
+    // ignore
   }
   return false;
 }
@@ -130,7 +161,7 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
   }
 
   const candidatePids = new Set<string>();
-  const candidateTokens = new Set<string>(['']);
+  const candidateTokens = new Set<string>();
 
   // 1. Inspect ~/.gemini/antigravity/daemon/hub_<port>.json (newest first)
   for (const dir of getAgyDaemonDirs()) {
@@ -175,9 +206,19 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
           // Ignore malformed JSON files.
         }
 
+        const tokensToTry = token ? [token, ...candidateTokens, ''] : [...candidateTokens, ''];
         for (const port of portsToTry) {
-          if (await probeEndpoint(port, token)) {
-            return { port, token, pid, hubFile: entry.full };
+          for (const tok of tokensToTry) {
+            if (await probeQuotaEndpoint(port, tok)) {
+              return { port, token: tok, pid, hubFile: entry.full };
+            }
+          }
+        }
+        for (const port of portsToTry) {
+          for (const tok of tokensToTry) {
+            if (await probeEndpoint(port, tok)) {
+              return { port, token: tok, pid, hubFile: entry.full };
+            }
           }
         }
       }
@@ -209,6 +250,8 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
         }
       }
 
+      const processEntries: Array<{ pid: string; ports: number[] }> = [];
+
       for (const line of lines) {
         const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
         if (!pidMatch?.[1]) continue;
@@ -235,10 +278,28 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
           }
         }
 
-        for (const port of ports) {
-          for (const tok of candidateTokens) {
+        processEntries.push({ pid, ports });
+      }
+
+      const allTokensToTry = [...candidateTokens, ''];
+
+      // Pass 1: prefer endpoints that serve live quota/userStatus
+      for (const entry of processEntries) {
+        for (const port of entry.ports) {
+          for (const tok of allTokensToTry) {
+            if (await probeQuotaEndpoint(port, tok)) {
+              return { port, token: tok, pid: Number(entry.pid) };
+            }
+          }
+        }
+      }
+
+      // Pass 2: accept AuthGetStatus endpoints
+      for (const entry of processEntries) {
+        for (const port of entry.ports) {
+          for (const tok of allTokensToTry) {
             if (await probeEndpoint(port, tok)) {
-              return { port, token: tok, pid: Number(pid) };
+              return { port, token: tok, pid: Number(entry.pid) };
             }
           }
         }
@@ -251,7 +312,12 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
           for (const m of ssOut.matchAll(regex)) {
             if (!m[1]) continue;
             const port = parseInt(m[1], 10);
-            for (const tok of candidateTokens) {
+            for (const tok of allTokensToTry) {
+              if (await probeQuotaEndpoint(port, tok)) {
+                return { port, token: tok, pid: Number(pid) };
+              }
+            }
+            for (const tok of allTokensToTry) {
               if (await probeEndpoint(port, tok)) {
                 return { port, token: tok, pid: Number(pid) };
               }
@@ -472,3 +538,37 @@ export function killAgyHubDaemon(): void {
     // pkill exits 1 when no process matched; ignore.
   }
 }
+
+/**
+ * Spawns `~/.gemini/bin/agy --hub --app_data_dir=antigravity` in the background if not running,
+ * so that after restoring Window 1's keychain token the hub daemon is immediately ready for quota queries.
+ */
+export function ensureAgyHubDaemonRunning(): void {
+  if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
+    return;
+  }
+
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
+    '/opt/antigravity-ide/resources/app/extensions/agy/bin/agy',
+    '/opt/antigravity/resources/app/extensions/agy/bin/agy',
+  ];
+
+  for (const bin of candidates) {
+    if (fs.existsSync(bin)) {
+      try {
+        const child = child_process.spawn(bin, ['--hub', '--app_data_dir=antigravity'], {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+        child.unref();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+  }
+}
+

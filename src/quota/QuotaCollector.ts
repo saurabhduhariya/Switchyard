@@ -87,6 +87,10 @@ export class QuotaCollector {
 
   constructor(private readonly logger?: Logger) {}
 
+  public clearCache(): void {
+    this.cachedEndpoint = undefined;
+  }
+
   /**
    * Retrieves the current account's model quota summary.
    * Use getQuotaResult when the reason for a failure matters.
@@ -296,7 +300,16 @@ export class QuotaCollector {
       return this.cachedEndpoint;
     }
 
-    // 1. Primary (v2.6.0+): Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
+    // 1. Try finding the active window's language_server / agy process with --csrf_token first
+    // (this process serves RetrieveUserQuotaSummary and GetUserStatus model configs directly).
+    const lsEndpoint = await this.discoverEndpoint();
+    if (lsEndpoint) {
+      this.cachedEndpoint = lsEndpoint;
+      this.logger?.debug(`Discovered Language Server on port ${lsEndpoint.port}`);
+      return this.cachedEndpoint;
+    }
+
+    // 2. Fallback: Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
     const hubEndpoint = await discoverAgyHubEndpoint();
     if (hubEndpoint) {
       this.cachedEndpoint = { port: hubEndpoint.port, token: hubEndpoint.token };
@@ -304,13 +317,7 @@ export class QuotaCollector {
       return this.cachedEndpoint;
     }
 
-    // 2. Fallback (v2.5.5): Try finding running language_server process
-    const endpoint = await this.discoverEndpoint();
-    if (endpoint) {
-      this.cachedEndpoint = endpoint;
-      this.logger?.debug(`Discovered Language Server on port ${endpoint.port}`);
-    }
-    return endpoint;
+    return undefined;
   }
 
   private async discoverEndpoint(): Promise<LSServerEndpoint | undefined> {
@@ -391,7 +398,7 @@ export class QuotaCollector {
         if (token && pid) {
           // Check if port is specified directly on the command line
           const candidatePorts: number[] = [];
-          const portMatch = line.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          const portMatch = line.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
           if (portMatch) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p)) {
@@ -459,7 +466,7 @@ export class QuotaCollector {
     try {
       if (process.platform === 'linux') {
         const ssOut = child_process.execSync('ss -tlpn', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-        const regex = new RegExp(`127\\.0\\.0\\.1:(\\d+).*?pid=${pid}\\b`, 'g');
+        const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
         for (const match of ssOut.matchAll(regex)) {
           const p = match[1];
           if (p) ports.push(parseInt(p, 10));

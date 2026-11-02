@@ -191,10 +191,10 @@ export function getMainProcessPid(): number {
         if (!match) break;
         const parentPid = Number(match[1]);
         const args = match[2] || '';
-        if (!args.includes(' type=') && (args.includes('antigravity') || args.includes('electron'))) {
+        if (!args.includes('--type=') && (args.includes('antigravity') || args.includes('electron'))) {
           return current;
         }
-        if (!parentPid || parentPid === 1 || parentPid === current) break;
+        if (!parentPid || parentPid <= 1 || parentPid === current) break;
         current = parentPid;
       }
       return current;

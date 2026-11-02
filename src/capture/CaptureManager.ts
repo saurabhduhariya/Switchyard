@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
+import { AccountQuotaSummary } from '../accounts/types';
 import { fingerprint } from '../accounts/identity';
 import {
   CAPTURE_CLOSE_REQUEST_FILE,
@@ -17,11 +18,12 @@ import {
   CAPTURE_STALE_SWEEP_MS,
   KEYS,
 } from '../constants';
-import { logoutAgyDaemon, killAgyHubDaemon } from '../platform/agyDaemon';
+import { logoutAgyDaemon, killAgyHubDaemon, ensureAgyHubDaemonRunning } from '../platform/agyDaemon';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
 import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../platform/keychain';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
+import { QuotaCollector } from '../quota/QuotaCollector';
 import { Logger } from '../util/logger';
 import { DEFAULT_CAPTURE_FLAGS, sanitizeCaptureLaunchArgs } from './launchArgs';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
@@ -131,6 +133,7 @@ export class CaptureManager {
   private timeoutTimer?: NodeJS.Timeout;
   private onStateChangeCallback?: (session: CaptureSessionData) => void;
   private lastDetectedSnapshots = new Map<string, Record<string, string>>();
+  private lastDetectedQuotas = new Map<string, AccountQuotaSummary>();
 
   constructor(options: CaptureManagerOptions) {
     this.store = options.store;
@@ -489,6 +492,7 @@ export class CaptureManager {
       this.logger.info('Restoring stashed primary keychain token for Window 1...');
       writeKeychainToken(session.stashedKeychainToken);
       killAgyHubDaemon();
+      ensureAgyHubDaemonRunning();
     } catch (err) {
       this.logger.warn('Failed to restore stashed keychain token:', err);
     }
@@ -535,6 +539,16 @@ export class CaptureManager {
       // Cache the detected snapshot from OS Keychain + agy --hub BEFORE closing Window 2
       if (detectedSnapshot?.values) {
         this.lastDetectedSnapshots.set(current.sessionId, detectedSnapshot.values);
+      }
+
+      // Grab the new account's live quota while Window 2's language server / agy daemon is still running!
+      try {
+        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath);
+        if (capturedQuota) {
+          this.lastDetectedQuotas.set(current.sessionId, capturedQuota);
+        }
+      } catch {
+        // best effort
       }
 
       current.state = 'finishing';
@@ -754,7 +768,7 @@ export class CaptureManager {
       ];
 
       const hasToken = (v: Record<string, string>) =>
-        Boolean(v[KEYS.keychainToken] || v[KEYS.oauth] || v[KEYS.legacyInit] || v[KEYS.userStatus]);
+        Boolean(v[KEYS.keychainToken] || v[KEYS.oauth] || v[KEYS.legacyInit]);
 
       const fromDb: Record<string, string> = fs.existsSync(dbPath)
         ? await readKeys(dbPath, targetKeys)
@@ -854,6 +868,12 @@ export class CaptureManager {
         savedId = meta.id;
         savedEmail = meta.email;
         this.logger.info(`Saved new account: ${identity.email || identity.fingerprint}`);
+      }
+
+      const capturedQuota = this.lastDetectedQuotas.get(session.sessionId);
+      if (capturedQuota) {
+        await this.store.updateQuota(savedId, capturedQuota);
+        this.lastDetectedQuotas.delete(session.sessionId);
       }
 
       // Profile mode: keep the window's data as the account's profile; otherwise delete it
