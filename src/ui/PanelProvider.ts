@@ -346,6 +346,16 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
   private async _runDetectAndRefresh(force: boolean): Promise<void> {
     try {
+      // Do not clobber Window 1's active account while a side-window capture is temporarily using the OS Keychain
+      const captureSession = this.captureManager?.getCurrentSession();
+      if (
+        captureSession &&
+        ['launching', 'waitingForSignIn', 'finishing', 'saving'].includes(captureSession.state)
+      ) {
+        await this.push();
+        return;
+      }
+
       if (!this.detector) {
         await this.push();
         return;

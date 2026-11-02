@@ -184,6 +184,7 @@ export class TokenSwapEngine implements SwitchEngine {
       targetEmail: account.email,
       targetFingerprint,
       values: targetSnapshot.values,
+      keychainToken: targetSnapshot.values[KEYS.keychainToken],
       backupDir,
       relaunch: {
         exe,
@@ -330,6 +331,7 @@ export class TokenSwapEngine implements SwitchEngine {
       targetEmail: '',
       targetFingerprint: '',
       values: {},
+      clearKeychain: true,
       deleteKeys: [
         KEYS.oauth,
         KEYS.legacyInit,

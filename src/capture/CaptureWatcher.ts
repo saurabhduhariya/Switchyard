@@ -32,10 +32,12 @@ export class CaptureWatcher {
   private lastDetection?: AccountIdentity;
   private consecutiveMatchCount = 0;
   private noEmailCount = 0;
+  private preCaptureFingerprint?: string;
 
-  constructor(dbPath: string, logger: Logger) {
+  constructor(dbPath: string, logger: Logger, preCaptureFingerprint?: string) {
     this.dbPath = dbPath;
     this.logger = logger;
+    this.preCaptureFingerprint = preCaptureFingerprint;
   }
 
   /**
@@ -143,10 +145,7 @@ export class CaptureWatcher {
    * Used for the manual "I've signed in" path after the window has closed.
    */
   async readOnce(): Promise<DetectionResult | undefined> {
-    if (!fs.existsSync(this.dbPath)) {
-      return undefined;
-    }
-    return new AuthDetector(this.dbPath).detectActive();
+    return new AuthDetector(fs.existsSync(this.dbPath) ? this.dbPath : undefined).detectActive();
   }
 
   /**
@@ -162,13 +161,31 @@ export class CaptureWatcher {
     try {
       this.attachFsWatcher();
 
-      if (!fs.existsSync(this.dbPath)) {
+      const dbExists = fs.existsSync(this.dbPath);
+      let result: DetectionResult | undefined;
+      try {
+        result = await new AuthDetector(dbExists ? this.dbPath : undefined).detectActive();
+      } catch (err) {
+        if (dbExists) {
+          this.setStatus('error', String(err));
+          this.resetDebounce();
+          return;
+        }
+      }
+
+      if (!dbExists) {
         this.setStatus('noDb', 'state.vscdb not created yet');
         this.resetDebounce();
+        if (result && !('unsupported' in result) && !('partial' in result)) {
+          this.setStatus('full', 'auth tokens found');
+          await this.handleDetection(result);
+        }
         return;
       }
 
-      const result: DetectionResult = await new AuthDetector(this.dbPath).detectActive();
+      if (!result) {
+        return;
+      }
 
       if ('partial' in result) {
         this.setStatus(
@@ -224,17 +241,25 @@ export class CaptureWatcher {
 
     const { email, fingerprint } = result.identity;
 
-    // If OAuth token is present but userStatus has not arrived yet to populate the email,
-    // wait up to 4 poll cycles (~6s) for userStatus to be written before confirming detection.
-    const hasOauthWithoutStatus =
-      !email &&
-      Boolean(result.snapshot?.values?.[KEYS.oauth]) &&
-      !result.snapshot?.values?.[KEYS.userStatus];
+    // Ignore if this detected token still matches the pre-capture active account
+    if (this.preCaptureFingerprint && fingerprint === this.preCaptureFingerprint) {
+      this.logger.debug('Detected token still matches pre-capture fingerprint; waiting for new sign-in...');
+      return;
+    }
 
-    if (hasOauthWithoutStatus && this.noEmailCount < 4) {
+    // If OAuth token or Keychain token is present but email has not arrived yet,
+    // wait up to 6 poll cycles (~9s) for agy --hub to resolve email before confirming detection.
+    const hasTokenWithoutEmail =
+      !email &&
+      Boolean(
+        result.snapshot?.values?.[KEYS.keychainToken] ||
+        result.snapshot?.values?.[KEYS.oauth]
+      );
+
+    if (hasTokenWithoutEmail && this.noEmailCount < 6) {
       this.noEmailCount++;
       this.logger.debug(
-        `OAuth token detected but userStatus/email not yet populated (attempt ${this.noEmailCount}/4), waiting...`
+        `Keychain/OAuth token detected, waiting for agy --hub email resolution (${this.noEmailCount}/6)...`
       );
       return;
     }

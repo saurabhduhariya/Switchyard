@@ -6,6 +6,7 @@ import { SwitchResultFile } from './job';
 import { parseSnapshot } from '../accounts/identity';
 import { readKeys } from '../db/StateDb';
 import { KEYS } from '../constants';
+import { readKeychainToken } from '../platform/keychain';
 
 export interface PendingSwitchState {
   targetId: string;
@@ -54,14 +55,23 @@ export async function reconcilePendingSwitch(
   }
 
   if (resultFileContent?.ok) {
-    // Verify that the live state.vscdb fingerprint matches the target account
     const targetAccount = await store.get(pending.targetId);
-    if (targetAccount && dbPath) {
+    if (targetAccount) {
       try {
-        const liveSnapshot = await readKeys(dbPath, [KEYS.oauth, KEYS.userStatus]);
-        const liveIdentity = parseSnapshot(liveSnapshot);
-
-        if (liveIdentity.fingerprint !== targetAccount.fingerprint) {
+        const liveKeychain = readKeychainToken();
+        const liveValues: Record<string, string> = {};
+        if (liveKeychain) {
+          liveValues[KEYS.keychainToken] = liveKeychain;
+        } else if (dbPath) {
+          const dbSnap = await readKeys(dbPath, [KEYS.oauth, KEYS.userStatus]);
+          Object.assign(liveValues, dbSnap);
+        }
+        const liveIdentity = parseSnapshot(liveValues);
+        const fpMatches = liveIdentity.fingerprint === targetAccount.fingerprint;
+        const emailMatches =
+          Boolean(liveIdentity.email) &&
+          liveIdentity.email!.toLowerCase().trim() === targetAccount.email.toLowerCase().trim();
+        if (!fpMatches && !emailMatches) {
           logger.warn(
             `Fingerprint mismatch after switch! Expected ${targetAccount.fingerprint}, got ${liveIdentity.fingerprint}`
           );
@@ -71,17 +81,14 @@ export async function reconcilePendingSwitch(
             'Dismiss'
           );
           if (choice === 'Retry Switch') {
-            // Trigger switch command again
-            void vscode.commands.executeCommand('switchyard.switchToAccount', pending.targetId);
+            void vscode.commands.executeCommand('switchyard.switchAccount', pending.targetId);
           }
           return;
         }
       } catch (err) {
         logger.warn('Failed to verify fingerprint after switch:', err);
-        // Continue anyway - the helper process reported success
       }
     }
-
     await store.setActive(pending.targetId);
     logger.info(`Successfully reconciled switch to account: ${pending.targetEmail}`);
     void vscode.window.showInformationMessage(

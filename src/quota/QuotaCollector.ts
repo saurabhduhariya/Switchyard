@@ -3,6 +3,7 @@ import * as net from 'node:net';
 import { AccountQuotaSummary, QuotaBucket } from '../accounts/types';
 import type { QuotaErrorKind, QuotaReadError } from '../shared/messages';
 import { readKeys } from '../db/StateDb';
+import { discoverAgyHubEndpoint } from '../platform/agyDaemon';
 import { Logger } from '../util/logger';
 
 interface LSServerEndpoint {
@@ -295,7 +296,15 @@ export class QuotaCollector {
       return this.cachedEndpoint;
     }
 
-    // Try finding running language_server process
+    // 1. Primary (v2.6.0+): Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
+    const hubEndpoint = await discoverAgyHubEndpoint();
+    if (hubEndpoint) {
+      this.cachedEndpoint = { port: hubEndpoint.port, token: hubEndpoint.token };
+      this.logger?.debug(`Discovered agy --hub daemon on port ${hubEndpoint.port}`);
+      return this.cachedEndpoint;
+    }
+
+    // 2. Fallback (v2.5.5): Try finding running language_server process
     const endpoint = await this.discoverEndpoint();
     if (endpoint) {
       this.cachedEndpoint = endpoint;
