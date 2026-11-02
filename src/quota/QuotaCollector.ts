@@ -336,7 +336,7 @@ export class QuotaCollector {
         const parsed = JSON.parse(psOut.trim() || '[]');
         const items = Array.isArray(parsed) ? parsed : [parsed];
 
-        for (const item of items) {
+        for (const item of [...items].reverse()) {
           const cmd = item?.CommandLine;
           const pid = item?.ProcessId ? String(item.ProcessId) : undefined;
           if (!cmd || !pid) continue;
@@ -387,7 +387,7 @@ export class QuotaCollector {
         (l) => (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) && l.includes('--csrf_token')
       );
 
-      for (const line of lsLines) {
+      for (const line of [...lsLines].reverse()) {
         const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
         const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
         if (!tokenMatch || !pidMatch) continue;
