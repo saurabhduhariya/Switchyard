@@ -133,8 +133,34 @@ export function jwtPayload(token: string): Record<string, unknown> | undefined {
 
 /**
  * Computes a SHA-256 fingerprint (first 12 chars hex) of a token or session value.
+ * If the value is a go-keyring-base64 JSON token, hashes the stable refresh_token
+ * so access_token / expiry rotations on IDE restart never cause fingerprint mismatches!
  */
 export function fingerprint(value: string): string {
+  if (value && typeof value === 'string') {
+    const trimmed = value.trim();
+    const rawJson = trimmed.startsWith('go-keyring-base64:')
+      ? b64decode(trimmed.slice('go-keyring-base64:'.length).trim()).toString('utf8')
+      : trimmed;
+    try {
+      const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+      const tokenObj =
+        typeof parsed.token === 'object' && parsed.token !== null
+          ? (parsed.token as Record<string, unknown>)
+          : parsed;
+      const refresh =
+        typeof tokenObj.refresh_token === 'string'
+          ? tokenObj.refresh_token
+          : typeof tokenObj.refreshToken === 'string'
+            ? tokenObj.refreshToken
+            : undefined;
+      if (refresh) {
+        return crypto.createHash('sha256').update(refresh).digest('hex').slice(0, 12);
+      }
+    } catch {
+      // Not JSON; hash the raw string below.
+    }
+  }
   return crypto.createHash('sha256').update(value || '').digest('hex').slice(0, 12);
 }
 
@@ -436,7 +462,22 @@ export function parseSnapshot(
     email = extractEmailFromBuffer(oauthBuf);
   }
 
-  // 5. Compute fingerprint from primary auth credential
+  // 5. Scan any other values in the snapshot for an email address.
+  if (!email && typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
+    for (const val of Object.values(valuesOrOauth)) {
+      if (typeof val === 'string' && val.length > 3) {
+        const found =
+          extractEmailFromBuffer(Buffer.from(val, 'utf8')) ||
+          extractEmailFromBuffer(b64decode(val));
+        if (found) {
+          email = found;
+          break;
+        }
+      }
+    }
+  }
+
+  // 6. Compute fingerprint from primary auth credential
   const fp = fingerprint(keychainToken || oauth || userStatus || agyUserStatusJson || '');
 
   return {

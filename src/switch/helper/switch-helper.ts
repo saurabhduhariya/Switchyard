@@ -26,6 +26,7 @@ export async function waitForExit(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 200;
+  const settleDelayMs = options.settleDelayMs ?? 500;
 
   const start = Date.now();
   while (isProcessAlive(pid)) {
@@ -37,8 +38,9 @@ export async function waitForExit(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  // Process is dead - no additional settle delay needed
-  // SQLite will return EBUSY if files are still locked
+  if (settleDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+  }
 }
 
 /**
@@ -90,6 +92,9 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
           'Failed to write OAuth token to OS Keychain (service: gemini, username: antigravity).'
         );
       }
+
+      // Kill agy hub again after writing the new keychain token so it cannot overwrite or cache old state.
+      killAgyHubDaemon();
       const readBack = readKeychainToken() || '';
       const computedFp = fingerprint(readBack);
       if (job.targetFingerprint && computedFp !== job.targetFingerprint) {

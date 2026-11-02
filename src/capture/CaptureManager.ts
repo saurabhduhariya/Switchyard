@@ -737,7 +737,7 @@ export class CaptureManager {
       // Request window 2 to close cooperatively and wait for its DB to flush
       await this.closeWindowAndWaitForFlush(session);
 
-      // Final read of capture DB (picks up latest tokens after flush)
+      // Final read of capture DB (picks up any userStatus/profileUrl flushed when Window 2 closed).
       const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
       const { readKeys } = await import('../db/StateDb');
       const { KEYS } = await import('../constants');
@@ -761,30 +761,74 @@ export class CaptureManager {
         : {};
       const cached = this.lastDetectedSnapshots.get(session.sessionId) ?? {};
 
-      // Never save a snapshot without a login token: it would create an "unknown" account
-      // that cannot be switched to. Prefer the final read (latest rotated token), else the
-      // snapshot taken when the sign-in was detected.
-      let snapshot: Record<string, string>;
-      if (hasToken(fromDb)) {
-        snapshot = fromDb;
-      } else if (hasToken(cached)) {
-        this.logger.warn('Final read had no token; using snapshot from detection time');
-        snapshot = cached;
-      } else {
+      // Merge `fromDb` (which may have userStatus/profileUrl flushed on close) with `cached`
+      // (which holds KEYS.keychainToken and KEYS.agyUserStatus captured before restoring Account 1).
+      const merged: Record<string, string> = {
+        ...fromDb,
+        ...cached,
+      };
+
+      // If fromDb has userStatus/profileUrl that cached lacked, keep them.
+      if (fromDb[KEYS.userStatus] && !merged[KEYS.userStatus]) {
+        merged[KEYS.userStatus] = fromDb[KEYS.userStatus];
+      }
+      if (fromDb[KEYS.profileUrl] && !merged[KEYS.profileUrl]) {
+        merged[KEYS.profileUrl] = fromDb[KEYS.profileUrl];
+      }
+
+      if (!hasToken(merged)) {
         throw new Error(
           'The sign-in window did not provide a login token, so nothing was saved. ' +
             'Add the account again and wait for the side window to close on its own.'
         );
       }
 
+      const snapshot = merged;
       const identity = parseSnapshot(snapshot);
+
+      // If agy only stored oauth2 tokens in the keychain without an email, check if the user
+      // typed an email in the label box, or prompt them for the account email so we never save "unknown-...@switchyard.local".
+      if (!identity.email) {
+        if (label && label.includes('@')) {
+          identity.email = label.trim();
+        } else if (!process.env.VITEST) {
+          const enteredEmail = await vscode.window.showInputBox({
+            title: 'Confirm Google Account Email',
+            prompt: 'Sign-in token captured! Enter the Google email address for this account:',
+            placeHolder: 'e.g. your.second.account@gmail.com',
+            ignoreFocusOut: true,
+          });
+          if (enteredEmail && enteredEmail.trim().includes('@')) {
+            identity.email = enteredEmail.trim();
+          }
+        }
+
+        // Persist the resolved email inside agyUserStatus so parseSnapshot always resolves it.
+        if (identity.email) {
+          let statusObj: Record<string, unknown> = {};
+          try {
+            if (snapshot[KEYS.agyUserStatus]) {
+              statusObj = JSON.parse(snapshot[KEYS.agyUserStatus]);
+            }
+          } catch {
+            // Ignore malformed status JSON.
+          }
+          statusObj.email = identity.email;
+          snapshot[KEYS.agyUserStatus] = JSON.stringify(statusObj);
+        }
+      }
+
       this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
-      // Check if the account is already saved
+      // Check if the account is already saved (by email OR by fingerprint).
       const existingAccounts = await this.store.list();
-      const duplicate = identity.email
-        ? existingAccounts.find((acc) => acc.email === identity.email)
-        : undefined;
+      const duplicate =
+        (identity.email
+          ? existingAccounts.find((acc) => acc.email.toLowerCase() === identity.email!.toLowerCase())
+          : undefined) ||
+        (identity.fingerprint
+          ? existingAccounts.find((acc) => acc.fingerprint === identity.fingerprint)
+          : undefined);
 
       let savedId: string;
       let savedEmail: string | undefined = identity.email;

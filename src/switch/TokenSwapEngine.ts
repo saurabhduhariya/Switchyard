@@ -99,11 +99,11 @@ export class TokenSwapEngine implements SwitchEngine {
     }
 
     // 2. Re-capture active session before switching (rotation safety)
-    if (this.detector) {
+    if (this.detector && activeId) {
       try {
         const activeResult = await this.detector.detectActive();
         if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
-          await this.store.upsertFromSnapshot(activeResult.snapshot);
+          await this.store.saveSnapshot(activeId, activeResult.snapshot);
           this.logger.debug('Re-captured active session before token swap');
         }
       } catch (err) {
@@ -264,15 +264,17 @@ export class TokenSwapEngine implements SwitchEngine {
     // 1. Capture current active session if available
     let previousId = options?.previousId;
     let previousEmail = options?.previousEmail;
+    const currentActiveId = previousId || (await this.store.activeId());
 
-    if (this.detector) {
+    if (this.detector && currentActiveId) {
       try {
         const activeResult = await this.detector.detectActive();
         if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
-          const meta = await this.store.upsertFromSnapshot(activeResult.snapshot);
-          previousId = previousId || meta.id;
-          previousEmail = previousEmail || meta.email;
-          this.logger.debug(`Captured current active session before sign-out: ${meta.email}`);
+          await this.store.saveSnapshot(currentActiveId, activeResult.snapshot);
+          previousId = currentActiveId;
+          const currentMeta = await this.store.get(currentActiveId);
+          previousEmail = previousEmail || currentMeta?.email;
+          this.logger.debug(`Captured current active session before sign-out: ${currentActiveId}`);
         }
       } catch (err) {
         this.logger.warn('Failed to capture active session before sign-out', err);

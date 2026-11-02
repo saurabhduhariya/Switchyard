@@ -283,8 +283,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
 
 
-    // switchyard.switchAccount: Quick Pick selector
-    vscode.commands.registerCommand('switchyard.switchAccount', async () => {
+    // switchyard.switchAccount: Quick Pick selector (or direct switch if targetAccountId is passed)
+    vscode.commands.registerCommand('switchyard.switchAccount', async (targetAccountId?: string) => {
+      if (typeof targetAccountId === 'string' && targetAccountId) {
+        await panelProvider.handleSwitch(targetAccountId);
+        return;
+      }
       const accounts = await store.list();
       const activeId = await store.activeId();
 

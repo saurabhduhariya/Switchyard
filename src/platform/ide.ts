@@ -1,3 +1,4 @@
+import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -176,11 +177,30 @@ export function isProcessAlive(pid: number): boolean {
  * 2. Fallback to process.pid if ppid is unavailable (shouldn't happen in Electron)
  */
 export function getMainProcessPid(): number {
-  // In VS Code/Antigravity architecture:
-  // - Main Process (Electron) spawns Renderer Process (Chromium)
-  // - Renderer Process spawns Extension Host (Node.js) <- we are here
-  // - process.ppid should point to the Renderer or Main Process
-  // 
-  // For maximum safety, we target the parent PID which is closer to the Main Process
-  return process.ppid || process.pid;
+  const startPid = process.ppid || process.pid;
+  try {
+    if (process.platform === 'linux' || process.platform === 'darwin') {
+      let current = startPid;
+      for (let depth = 0; depth < 5; depth++) {
+        const out = child_process.execFileSync('ps', ['-o', 'ppid=,args=', '-p', String(current)], {
+          encoding: 'utf8',
+          timeout: 1500,
+        }).trim();
+        if (!out) break;
+        const match = out.match(/^(\d+)\s+(.*)$/);
+        if (!match) break;
+        const parentPid = Number(match[1]);
+        const args = match[2] || '';
+        if (!args.includes(' type=') && (args.includes('antigravity') || args.includes('electron'))) {
+          return current;
+        }
+        if (!parentPid || parentPid === 1 || parentPid === current) break;
+        current = parentPid;
+      }
+      return current;
+    }
+  } catch {
+    // Fall back to the starting PID.
+  }
+  return startPid;
 }
