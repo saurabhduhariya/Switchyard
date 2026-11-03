@@ -229,7 +229,91 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
 
   // 2. Scan running processes for `agy` or `language_server`.
   try {
-    if (process.platform !== 'win32') {
+    if (process.platform === 'win32') {
+      const psScript = `
+        $procs = Get-CimInstance Win32_Process | Where-Object {
+          $_.Name -like '*language_server*' -or $_.Name -like '*agy*'
+        } | Select-Object ProcessId, CommandLine
+        @($procs) | ConvertTo-Json -Compress
+      `;
+
+      const psOut = child_process.execFileSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', psScript],
+        { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
+      );
+
+      let netstatOut = '';
+      try {
+        netstatOut = child_process.execSync('netstat -ano -p tcp', {
+          encoding: 'utf8',
+          stdio: ['pipe', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 3000,
+        });
+      } catch {
+        // Ignore netstat errors.
+      }
+
+      const parsed = JSON.parse(psOut.trim() || '[]');
+      const items = Array.isArray(parsed) ? parsed : [parsed];
+      const processEntries: Array<{ pid: string; ports: number[] }> = [];
+
+      for (const item of [...items].reverse()) {
+        const pid = item.ProcessId ? String(item.ProcessId) : undefined;
+        const cmd = typeof item.CommandLine === 'string' ? item.CommandLine : '';
+        if (!pid) continue;
+        candidatePids.add(pid);
+
+        const tokenMatch = cmd.match(/(?:--csrf_token|csrf-token|token)[=\s]+([A-Za-z0-9_-]+)/i);
+        if (tokenMatch?.[1]) {
+          candidateTokens.add(tokenMatch[1]);
+        }
+
+        const ports: number[] = [];
+        for (const m of cmd.matchAll(/(?:--hub-port|hub_port|extension_server_port|server_port|port)[=\s]+(\d+)/gi)) {
+          if (m[1]) ports.push(parseInt(m[1], 10));
+        }
+
+        if (netstatOut) {
+          for (const line of netstatOut.split('\n')) {
+            if (!line.includes('LISTENING')) continue;
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 5 && parts[parts.length - 1] === pid) {
+              const portMatch = parts[1].match(/:(\d+)$/);
+              if (portMatch?.[1]) {
+                const p = parseInt(portMatch[1], 10);
+                if (!isNaN(p) && !ports.includes(p)) ports.push(p);
+              }
+            }
+          }
+        }
+
+        processEntries.push({ pid, ports });
+      }
+
+      const allTokensToTry = [...candidateTokens, ''];
+
+      for (const entry of processEntries) {
+        for (const port of entry.ports) {
+          for (const tok of allTokensToTry) {
+            if (await probeQuotaEndpoint(port, tok)) {
+              return { port, token: tok, pid: Number(entry.pid) };
+            }
+          }
+        }
+      }
+
+      for (const entry of processEntries) {
+        for (const port of entry.ports) {
+          for (const tok of allTokensToTry) {
+            if (await probeEndpoint(port, tok)) {
+              return { port, token: tok, pid: Number(entry.pid) };
+            }
+          }
+        }
+      }
+    } else {
       const psOut = child_process.execSync('ps aux', {
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'ignore'],
@@ -549,10 +633,17 @@ export function ensureAgyHubDaemonRunning(): void {
   }
 
   const home = os.homedir();
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+
   const candidates = [
     path.join(home, '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
     '/opt/antigravity-ide/resources/app/extensions/agy/bin/agy',
     '/opt/antigravity/resources/app/extensions/agy/bin/agy',
+    path.join(localAppData, 'Programs', 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+    path.join(localAppData, 'Programs', 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+    path.join(programFiles, 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+    path.join(programFiles, 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
   ];
 
   for (const bin of candidates) {

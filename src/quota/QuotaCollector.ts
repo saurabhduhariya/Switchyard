@@ -346,7 +346,7 @@ export class QuotaCollector {
 
           const token = tokenMatch[1];
           const ports = this.getListeningPortsForPid(pid);
-          const portMatch = cmd.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          const portMatch = cmd.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
           if (portMatch) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p) && !ports.includes(p)) {

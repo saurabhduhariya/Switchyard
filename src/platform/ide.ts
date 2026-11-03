@@ -199,6 +199,37 @@ export function getMainProcessPid(): number {
       }
       return current;
     }
+
+    if (process.platform === 'win32') {
+      const psScript = `
+        $curr = ${startPid}
+        for ($i = 0; $i -lt 5; $i++) {
+          $p = Get-CimInstance Win32_Process -Filter "ProcessId = $curr" -ErrorAction SilentlyContinue
+          if (-not $p) { break }
+          $cmd = [string]$p.CommandLine
+          if (-not $cmd.Contains('--type=') -and ($cmd -match 'antigravity|electron')) {
+            Write-Output $curr
+            exit 0
+          }
+          if (-not $p.ParentProcessId -or $p.ParentProcessId -le 4 -or $p.ParentProcessId -eq $curr) { break }
+          $curr = $p.ParentProcessId
+        }
+        Write-Output $curr
+      `;
+
+      const out = child_process
+        .execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 3000,
+        })
+        .trim();
+      const parsed = Number(out);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
   } catch {
     // Fall back to the starting PID.
   }
