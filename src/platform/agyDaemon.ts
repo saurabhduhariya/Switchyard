@@ -336,7 +336,7 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
 
       const processEntries: Array<{ pid: string; ports: number[] }> = [];
 
-      for (const line of lines) {
+      for (const line of [...lines].reverse()) {
         const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
         if (!pidMatch?.[1]) continue;
         const pid = pidMatch[1];
