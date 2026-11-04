@@ -34,6 +34,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
+  // 0b. Check if user is running an older Antigravity IDE version (<= 2.5.5) without the built-in agy extension
+  const agyExtension = vscode.extensions.getExtension('google.google-antigravity');
+  const dismissedOldIdeWarning = context.globalState.get<boolean>('switchyard.dismissedOldIdeNotice', false);
+  if (!agyExtension && !dismissedOldIdeWarning) {
+    logger.warn('Detected legacy Antigravity IDE (<= 2.5.5): google.google-antigravity extension not found.');
+    void vscode.window
+      .showWarningMessage(
+        'Switchyard: You are using an older version of Antigravity IDE (<= 2.5.5). Please update Antigravity IDE to the latest version (v2.6.0+) for full OS Keychain and agy daemon support.',
+        'Dismiss',
+        "Don't Show Again"
+      )
+      .then((choice) => {
+        if (choice === "Don't Show Again") {
+          void context.globalState.update('switchyard.dismissedOldIdeNotice', true);
+        }
+      });
+  }
+
   // 1. Locate state.vscdb
   const dbPath = findStateDb({ globalStorageUriPath: context.globalStorageUri.fsPath });
   if (dbPath) {

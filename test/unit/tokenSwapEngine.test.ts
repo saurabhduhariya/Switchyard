@@ -20,6 +20,9 @@ vi.mock('vscode', () => {
     commands: {
       executeCommand: vi.fn(),
     },
+    extensions: {
+      getExtension: vi.fn(),
+    },
     Uri: {
       file: vi.fn((f: string) => ({ fsPath: f })),
     },
@@ -30,6 +33,7 @@ import * as vscode from 'vscode';
 import { AccountStore, MementoLike, SecretStorageLike } from '../../src/accounts/AccountStore';
 import { fingerprint } from '../../src/accounts/identity';
 import { KEYS } from '../../src/constants';
+import { clearKeychainToken } from '../../src/platform/keychain';
 import { TokenSwapEngine } from '../../src/switch/TokenSwapEngine';
 import { Logger } from '../../src/util/logger';
 import { writeSyntheticDb } from '../fixtures/makeDb';
@@ -86,6 +90,7 @@ describe('switch/TokenSwapEngine', () => {
     secrets = new MemorySecretStorage();
     store = new AccountStore({ secrets, state: memento });
     logger = new Logger({ appendLine: vi.fn() } as any);
+    clearKeychainToken();
     vi.clearAllMocks();
   });
 
@@ -368,6 +373,36 @@ describe('switch/TokenSwapEngine', () => {
 
     // Verify quit was triggered
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('workbench.action.quit');
+  });
+
+  it('prompts user and aborts switch if target account has a legacy <= 2.5.5 snapshot on 2.6.0+', async () => {
+    vi.mocked(vscode.extensions.getExtension).mockReturnValueOnce({} as any);
+
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-legacy', email: 'legacy@example.com', addedAt: Date.now(), fingerprint: '5555' },
+    ]);
+
+    await store.saveSnapshot('acc-legacy', {
+      values: { [KEYS.oauth]: 'legacy-token' }, // No KEYS.keychainToken
+      capturedAt: Date.now(),
+    });
+
+    vi.mocked(vscode.window.showWarningMessage)
+      .mockResolvedValueOnce('Switch and Restart' as any)
+      .mockResolvedValueOnce('Update Account in Side Window' as any);
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+    });
+
+    const result = await engine.switchTo('acc-legacy');
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/requires re-authentication/);
+    expect(vscode.commands.executeCommand).toHaveBeenCalledWith('switchyard.addNewAccount');
   });
 });
 
