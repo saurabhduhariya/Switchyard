@@ -193,17 +193,20 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     if (job.relaunch?.exe) {
       try {
         const cleanEnv: Record<string, string | undefined> = { ...process.env };
-        delete cleanEnv.ELECTRON_RUN_AS_NODE;
-        delete cleanEnv.VSCODE_IPC_HOOK;
-        delete cleanEnv.VSCODE_IPC_HOOK_EXTHOST;
-        delete cleanEnv.VSCODE_IPC_HOOK_CLI;
-        delete cleanEnv.VSCODE_PID;
-        delete cleanEnv.VSCODE_CLI;
-        delete cleanEnv.VSCODE_CODE_CACHE_PATH;
+        for (const key of Object.keys(cleanEnv)) {
+          if (
+            key.startsWith('VSCODE_') ||
+            key.startsWith('ELECTRON_') ||
+            key.startsWith('ANTIGRAVITY_')
+          ) {
+            delete cleanEnv[key];
+          }
+        }
 
         const child = spawn(job.relaunch.exe, job.relaunch.args || [], {
           detached: true,
           stdio: 'ignore',
+          windowsHide: true,
           env: cleanEnv as NodeJS.ProcessEnv,
         });
         child.unref();

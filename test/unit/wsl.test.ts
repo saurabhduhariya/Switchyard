@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
-import { isWsl, toWindowsPath, getWslWindowsUserHomes, __resetWslCacheForTest } from '../../src/platform/wsl';
+import * as path from 'node:path';
+import { isWsl, toWindowsPath, getWslWindowsUserHomes, __resetWslCacheForTest, resolveActiveWslDistro } from '../../src/platform/wsl';
+import { isAntigravity26OrNewer } from '../../src/platform/agyDaemon';
+import { getWorkspaceRelaunchArgs } from '../../src/platform/ide';
 import { getUserDataDirs } from '../../src/platform/paths';
 import { spawnIsolatedWindow } from '../../src/platform/launch';
 
@@ -261,6 +264,67 @@ describe('WSL2 Platform Interoperability', () => {
 
       const result = await detector.detectActive();
       expect(result).toHaveProperty('unsupported', true);
+    });
+  });
+
+  describe('resolveActiveWslDistro()', () => {
+    it('returns undefined during normal vitest runs', () => {
+      
+      expect(resolveActiveWslDistro()).toBeUndefined();
+    });
+
+    it('returns WSL_DISTRO_NAME when SWITCHYARD_TEST_WSL is set', () => {
+      const origFlag = process.env.SWITCHYARD_TEST_WSL;
+      const origDistro = process.env.WSL_DISTRO_NAME;
+      process.env.SWITCHYARD_TEST_WSL = '1';
+      process.env.WSL_DISTRO_NAME = 'Ubuntu-24.04';
+
+      
+      expect(resolveActiveWslDistro()).toBe('Ubuntu-24.04');
+
+      if (origFlag !== undefined) process.env.SWITCHYARD_TEST_WSL = origFlag;
+      else delete process.env.SWITCHYARD_TEST_WSL;
+      if (origDistro !== undefined) process.env.WSL_DISTRO_NAME = origDistro;
+      else delete process.env.WSL_DISTRO_NAME;
+    });
+  });
+
+  describe('isAntigravity26OrNewer()', () => {
+    it('returns true when bundled agy extension exists under appRoot', () => {
+      vi.mocked(fs.existsSync).mockImplementation((p) => String(p).includes('extensions') && String(p).includes('agy'));
+      expect(isAntigravity26OrNewer('/mock/app/root')).toBe(true);
+    });
+  });
+
+  describe('getWorkspaceRelaunchArgs()', () => {
+    it('preserves vscode-remote:// folder URIs and sets --remote authority', () => {
+      
+      const args = getWorkspaceRelaunchArgs({
+        workspaceFolders: [
+          {
+            uri: {
+              scheme: 'vscode-remote',
+              authority: 'wsl%2BUbuntu-24.04',
+              path: '/home/user/project',
+              fsPath: '/home/user/project',
+            },
+          },
+        ],
+      });
+
+      expect(args).toContain('--remote');
+      expect(args).toContain('wsl+Ubuntu-24.04');
+      expect(args).toContain('--folder-uri');
+      expect(args).toContain('vscode-remote://wsl+Ubuntu-24.04/home/user/project');
+    });
+
+    it('passes overrideFolders verbatim with --folder-uri if already a URI', () => {
+      
+      const args = getWorkspaceRelaunchArgs({
+        overrideFolders: ['vscode-remote://wsl+Ubuntu-24.04/home/user/test'],
+      });
+
+      expect(args).toEqual(['--folder-uri', 'vscode-remote://wsl+Ubuntu-24.04/home/user/test']);
     });
   });
 });

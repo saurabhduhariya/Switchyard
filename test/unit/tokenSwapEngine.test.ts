@@ -20,6 +20,7 @@ vi.mock('vscode', () => {
     commands: {
       executeCommand: vi.fn(),
     },
+    env: { remoteName: undefined, appRoot: '/mock/app/root' },
     extensions: {
       getExtension: vi.fn(),
     },

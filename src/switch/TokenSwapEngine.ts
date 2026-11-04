@@ -1,3 +1,5 @@
+import { getWorkspaceRelaunchArgs } from '../platform/ide';
+import { isAntigravity26OrNewer } from '../platform/agyDaemon';
 import { ChildProcess, spawn, SpawnOptions } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
@@ -131,10 +133,11 @@ export class TokenSwapEngine implements SwitchEngine {
     let isAgy26OrNewer = false;
     try {
       isAgy26OrNewer = Boolean(
-        vscode.extensions?.getExtension?.('google.google-antigravity') || readKeychainToken()
+        vscode.extensions?.getExtension?.('google.google-antigravity') ||
+          isAntigravity26OrNewer(vscode.env?.appRoot)
       );
     } catch {
-      isAgy26OrNewer = Boolean(readKeychainToken());
+      isAgy26OrNewer = isAntigravity26OrNewer();
     }
     if (isAgy26OrNewer && !targetSnapshot.values[KEYS.keychainToken]) {
       this.logger.warn(
@@ -184,9 +187,18 @@ export class TokenSwapEngine implements SwitchEngine {
       return { ok: false, mode: 'tokenSwap', error: msg };
     }
 
-    const currentFolders =
-      vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
-    const foldersToOpen = options?.folders ?? currentFolders;
+    let remoteName: string | undefined;
+    try {
+      remoteName = (vscode as any).env?.remoteName;
+    } catch {
+      // ignore when mocked in unit tests
+    }
+    const foldersToOpen = getWorkspaceRelaunchArgs({
+      overrideFolders: options?.folders,
+      workspaceFolders: vscode.workspace.workspaceFolders,
+      workspaceFile: vscode.workspace.workspaceFile,
+      remoteName,
+    });
 
     // 5. Determine state.vscdb and backup directory
     const resolvedDb =
@@ -333,9 +345,18 @@ export class TokenSwapEngine implements SwitchEngine {
       return { ok: false, mode: 'tokenSwap', error: msg };
     }
 
-    const currentFolders =
-      vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
-    const foldersToOpen = options?.folders ?? currentFolders;
+    let remoteName: string | undefined;
+    try {
+      remoteName = (vscode as any).env?.remoteName;
+    } catch {
+      // ignore when mocked in unit tests
+    }
+    const foldersToOpen = getWorkspaceRelaunchArgs({
+      overrideFolders: options?.folders,
+      workspaceFolders: vscode.workspace.workspaceFolders,
+      workspaceFile: vscode.workspace.workspaceFile,
+      remoteName,
+    });
 
     // 3. Determine state.vscdb and backup directory
     const resolvedDb =

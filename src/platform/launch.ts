@@ -39,11 +39,17 @@ export function spawnIsolatedWindow(
 
   const isWinExeOnWsl = process.platform === 'linux' && exe.toLowerCase().endsWith('.exe');
 
+  const translatedFolders = isWinExeOnWsl
+    ? folders.map((f) =>
+        f.startsWith('--') || /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(f) ? f : toWindowsPath(f)
+      )
+    : folders;
+
   // Build CLI arguments
   const args = buildLaunchArgs({
     userDataDir: isWinExeOnWsl ? toWindowsPath(userDataDir) : userDataDir,
     extensionsDir: extensionsDir && isWinExeOnWsl ? toWindowsPath(extensionsDir) : extensionsDir,
-    folders: isWinExeOnWsl ? folders.map(toWindowsPath) : folders,
+    folders: translatedFolders,
     newWindow,
     extraArgs,
   });

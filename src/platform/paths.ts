@@ -37,8 +37,9 @@ export function getUserDataDirs(
       // also check the Windows host's %APPDATA% directories mounted under /mnt/c/Users/<User>.
       if (platform === process.platform && isWsl()) {
         for (const winHome of getWslWindowsUserHomes()) {
-          dirs.push(path.join(winHome, 'AppData', 'Roaming', 'Antigravity IDE'));
-          dirs.push(path.join(winHome, 'AppData', 'Roaming', 'Antigravity'));
+          const joinFn = path.posix ? path.posix.join : path.join;
+          dirs.push(joinFn(winHome, 'AppData', 'Roaming', 'Antigravity IDE'));
+          dirs.push(joinFn(winHome, 'AppData', 'Roaming', 'Antigravity'));
         }
       }
       break;

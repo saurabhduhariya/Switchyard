@@ -2,7 +2,7 @@ import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { getWslWindowsUserHomes, isWsl } from './wsl';
+import { getWslWindowsUserHomes, isWsl, resolveActiveWslDistro } from './wsl';
 
 export interface LaunchArgsOptions {
   userDataDir: string;
@@ -33,9 +33,19 @@ export function buildLaunchArgs(options: LaunchArgsOptions): string[] {
   }
 
   if (options.folders && options.folders.length > 0) {
-    for (const folder of options.folders) {
-      if (folder) {
-        args.push(folder);
+    for (let i = 0; i < options.folders.length; i++) {
+      const item = options.folders[i];
+      if (!item) continue;
+      if (item === '--folder-uri' || item === '--file-uri' || item === '--remote') {
+        const next = options.folders[i + 1];
+        if (next) {
+          args.push(item, next);
+          i++;
+        }
+      } else if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(item)) {
+        args.push('--folder-uri', item);
+      } else {
+        args.push(item);
       }
     }
   }
@@ -247,4 +257,118 @@ export function getMainProcessPid(): number {
     // Fall back to the starting PID.
   }
   return startPid;
+}
+
+export interface WorkspaceUriLike {
+  scheme?: string;
+  authority?: string;
+  path?: string;
+  fsPath: string;
+  toString?: (skipEncoding?: boolean) => string;
+}
+
+export interface WorkspaceRelaunchInput {
+  overrideFolders?: string[];
+  workspaceFolders?: ReadonlyArray<{ uri: WorkspaceUriLike }>;
+  workspaceFile?: WorkspaceUriLike;
+  remoteName?: string;
+}
+
+function formatRemoteUri(uri: WorkspaceUriLike): string {
+  if (uri.scheme && uri.authority && uri.path) {
+    const auth = decodeURIComponent(uri.authority);
+    return `${uri.scheme}://${auth}${uri.path}`;
+  }
+  if (typeof uri.toString === 'function') {
+    return uri.toString(true);
+  }
+  return uri.fsPath;
+}
+
+/**
+ * Builds CLI arguments to reopen the current workspace (preserving WSL / SSH / DevContainer remote context).
+ */
+export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[] {
+  // 1. Explicit folder override (e.g. passed via options.folders)
+  if (input.overrideFolders !== undefined) {
+    const out: string[] = [];
+    for (const folder of input.overrideFolders) {
+      if (!folder) continue;
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(folder)) {
+        out.push('--folder-uri', folder);
+      } else if (
+        isWsl() &&
+        process.env.WSL_DISTRO_NAME &&
+        folder.startsWith('/') &&
+        !folder.startsWith('/mnt/')
+      ) {
+        out.push('--folder-uri', `vscode-remote://wsl+${process.env.WSL_DISTRO_NAME}${folder}`);
+      } else {
+        out.push(folder);
+      }
+    }
+    return out;
+  }
+
+  const args: string[] = [];
+  let detectedRemoteAuthority: string | undefined;
+
+  // 2. Multi-root .code-workspace file if open
+  if (
+    input.workspaceFile &&
+    input.workspaceFile.scheme &&
+    input.workspaceFile.scheme !== 'untitled'
+  ) {
+    if (input.workspaceFile.scheme !== 'file') {
+      if (input.workspaceFile.authority) {
+        detectedRemoteAuthority = decodeURIComponent(input.workspaceFile.authority);
+      }
+      if (detectedRemoteAuthority) {
+        args.push('--remote', detectedRemoteAuthority);
+      }
+      args.push('--file-uri', formatRemoteUri(input.workspaceFile));
+      return args;
+    }
+  }
+
+  // 3. Open workspace folders (local or vscode-remote://wsl+<distro>/...)
+  if (input.workspaceFolders && input.workspaceFolders.length > 0) {
+    for (const folder of input.workspaceFolders) {
+      const uri = folder.uri;
+      if (!uri) continue;
+
+      if (uri.scheme && uri.scheme !== 'file') {
+        if (uri.authority && !detectedRemoteAuthority) {
+          detectedRemoteAuthority = decodeURIComponent(uri.authority);
+          args.push('--remote', detectedRemoteAuthority);
+        }
+        args.push('--folder-uri', formatRemoteUri(uri));
+      } else if (
+        isWsl() &&
+        process.env.WSL_DISTRO_NAME &&
+        uri.fsPath.startsWith('/') &&
+        !uri.fsPath.startsWith('/mnt/')
+      ) {
+        const wslAuth = `wsl+${process.env.WSL_DISTRO_NAME}`;
+        if (!detectedRemoteAuthority) {
+          detectedRemoteAuthority = wslAuth;
+          args.push('--remote', wslAuth);
+        }
+        args.push('--folder-uri', `vscode-remote://${wslAuth}${uri.fsPath}`);
+      } else if (uri.fsPath) {
+        args.push(uri.fsPath);
+      }
+    }
+    return args;
+  }
+
+  // 4. Empty WSL window (no folder open yet, e.g. ">< WSL: Ubuntu-24.04")
+  if (input.remoteName === 'wsl' || isWsl()) {
+    const distro = resolveActiveWslDistro();
+    if (distro) {
+      args.push('--remote', `wsl+${distro}`);
+    }
+  }
+
+  return args;
 }

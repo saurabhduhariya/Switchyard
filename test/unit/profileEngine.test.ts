@@ -17,6 +17,7 @@ vi.mock('vscode', () => {
       })),
       workspaceFolders: [],
     },
+    env: { remoteName: undefined, appRoot: '/mock/app/root' },
     commands: {
       executeCommand: vi.fn(),
     },

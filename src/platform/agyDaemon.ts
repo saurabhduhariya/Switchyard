@@ -1,3 +1,4 @@
+import { readKeychainToken } from './keychain';
 import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
@@ -673,3 +674,44 @@ export function ensureAgyHubDaemonRunning(): void {
   }
 }
 
+/**
+ * Returns true when running on Antigravity IDE 2.6.0+ (OS Keychain token, agy daemon dir, or bundled agy extension exists).
+ */
+export function isAntigravity26OrNewer(appRoot?: string): boolean {
+  try {
+    if (readKeychainToken()) {
+      return true;
+    }
+    if (appRoot) {
+      if (
+        fs.existsSync(path.join(appRoot, 'extensions', 'agy')) ||
+        fs.existsSync(path.join(appRoot, 'extensions', 'google-antigravity'))
+      ) {
+        return true;
+      }
+    }
+    if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
+      return false;
+    }
+    for (const dir of getAgyDaemonDirs()) {
+      if (fs.existsSync(dir)) {
+        return true;
+      }
+    }
+    const home = os.homedir();
+    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const binCandidates = [
+      path.join(home, '.gemini', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
+      '/opt/antigravity-ide/resources/app/extensions/agy/bin/agy',
+      '/opt/antigravity/resources/app/extensions/agy/bin/agy',
+      path.join(localAppData, 'Programs', 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+      path.join(localAppData, 'Programs', 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+      path.join(programFiles, 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+      path.join(programFiles, 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+    ];
+    return binCandidates.some((b) => fs.existsSync(b));
+  } catch {
+    return false;
+  }
+}

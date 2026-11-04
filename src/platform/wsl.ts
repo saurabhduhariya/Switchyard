@@ -118,7 +118,7 @@ export function getWslWindowsUserHomes(): string[] {
       for (const entry of fs.readdirSync(usersRoot, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
         if (['Public', 'Default', 'Default User', 'All Users'].includes(entry.name)) continue;
-        const full = path.join(usersRoot, entry.name);
+        const full = path.posix ? path.posix.join(usersRoot, entry.name) : `${usersRoot}/${entry.name}`;
         if (!homes.includes(full)) {
           homes.push(full);
         }
@@ -132,3 +132,32 @@ export function getWslWindowsUserHomes(): string[] {
   return homes;
 }
 
+/**
+ * Resolves the active WSL distribution name (e.g. "Ubuntu-24.04") when connected to a WSL remote window.
+ */
+export function resolveActiveWslDistro(): string | undefined {
+  if (process.env.VITEST && !process.env.SWITCHYARD_TEST_WSL) {
+    return undefined;
+  }
+  if (process.env.WSL_DISTRO_NAME) {
+    return process.env.WSL_DISTRO_NAME;
+  }
+  if (process.platform === 'win32') {
+    try {
+      const out = child_process
+        .execFileSync('wsl.exe', ['-e', 'sh', '-c', 'echo "$WSL_DISTRO_NAME"'], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 2500,
+        })
+        .trim();
+      if (out && !out.includes('$WSL_DISTRO_NAME')) {
+        return out.split(/\r?\n/)[0]?.trim() || undefined;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
