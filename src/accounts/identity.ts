@@ -133,8 +133,34 @@ export function jwtPayload(token: string): Record<string, unknown> | undefined {
 
 /**
  * Computes a SHA-256 fingerprint (first 12 chars hex) of a token or session value.
+ * If the value is a go-keyring-base64 JSON token, hashes the stable refresh_token
+ * so access_token / expiry rotations on IDE restart never cause fingerprint mismatches!
  */
 export function fingerprint(value: string): string {
+  if (value && typeof value === 'string') {
+    const trimmed = value.trim();
+    const rawJson = trimmed.startsWith('go-keyring-base64:')
+      ? b64decode(trimmed.slice('go-keyring-base64:'.length).trim()).toString('utf8')
+      : trimmed;
+    try {
+      const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+      const tokenObj =
+        typeof parsed.token === 'object' && parsed.token !== null
+          ? (parsed.token as Record<string, unknown>)
+          : parsed;
+      const refresh =
+        typeof tokenObj.refresh_token === 'string'
+          ? tokenObj.refresh_token
+          : typeof tokenObj.refreshToken === 'string'
+            ? tokenObj.refreshToken
+            : undefined;
+      if (refresh) {
+        return crypto.createHash('sha256').update(refresh).digest('hex').slice(0, 12);
+      }
+    } catch {
+      // Not JSON; hash the raw string below.
+    }
+  }
   return crypto.createHash('sha256').update(value || '').digest('hex').slice(0, 12);
 }
 
@@ -276,6 +302,9 @@ export function formatPlanFromTier(tier: UserTierInfo): string | undefined {
   if (name?.toLowerCase().includes('ai pro')) {
     return 'AI Pro';
   }
+  if (name?.toLowerCase().trim() === 'pro') {
+    return 'Google AI Pro';
+  }
   return name || tier.id;
 }
 
@@ -367,10 +396,14 @@ export function parseSnapshot(
   valuesOrOauth?: Record<string, string> | string,
   userStatusValue?: string
 ): AccountIdentity {
+  let keychainToken: string | undefined;
+  let agyUserStatusJson: string | undefined;
   let oauth: string | undefined;
   let userStatus: string | undefined;
 
   if (typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
+    keychainToken = valuesOrOauth[KEYS.keychainToken];
+    agyUserStatusJson = valuesOrOauth[KEYS.agyUserStatus];
     oauth = valuesOrOauth[KEYS.oauth] || valuesOrOauth[KEYS.legacyInit] || valuesOrOauth['oauth'];
     userStatus = valuesOrOauth[KEYS.userStatus] || valuesOrOauth['userStatus'];
   } else {
@@ -381,21 +414,71 @@ export function parseSnapshot(
   let email: string | undefined;
   let plan: string | undefined;
 
-  // 1. Try extracting email and plan from userStatus
-  if (userStatus) {
-    const userStatusBuf = b64decode(userStatus);
-    email = extractEmailFromBuffer(userStatusBuf);
-    plan = extractPlanFromBuffer(userStatusBuf);
+  // 1. v2.6.0: Extract email and plan from agyUserStatusJson if present
+  if (agyUserStatusJson) {
+    try {
+      const parsed = JSON.parse(agyUserStatusJson) as {
+        email?: string;
+        plan?: string;
+        rawStatus?: unknown;
+      };
+      if (typeof parsed.email === 'string' && parsed.email.includes('@')) {
+        email = parsed.email;
+      }
+      if (typeof parsed.plan === 'string' && parsed.plan) {
+        plan = parsed.plan;
+      }
+      if (!email && parsed.rawStatus) {
+        email = extractEmailFromBuffer(Buffer.from(JSON.stringify(parsed.rawStatus), 'utf8'));
+      }
+      if (!plan && parsed.rawStatus) {
+        plan = extractPlanFromBuffer(Buffer.from(JSON.stringify(parsed.rawStatus), 'utf8'));
+      }
+    } catch {
+      email = extractEmailFromBuffer(Buffer.from(agyUserStatusJson, 'utf8'));
+    }
   }
 
-  // 2. Fallback to oauthToken if email not found
+  // 2. v2.6.0: Extract email from go-keyring-base64 payload if not yet found
+  if (!email && keychainToken) {
+    const rawStr = keychainToken.startsWith('go-keyring-base64:')
+      ? keychainToken.slice('go-keyring-base64:'.length).trim()
+      : keychainToken;
+    const decoded = b64decode(rawStr);
+    email =
+      extractEmailFromBuffer(decoded.length > 0 ? decoded : Buffer.from(keychainToken, 'utf8'));
+  }
+
+  // 3. v2.5.5 fallback: Try extracting email and plan from userStatus protobuf
+  if (userStatus) {
+    const userStatusBuf = b64decode(userStatus);
+    if (!email) email = extractEmailFromBuffer(userStatusBuf);
+    if (!plan) plan = extractPlanFromBuffer(userStatusBuf);
+  }
+
+  // 4. v2.5.5 fallback: oauthToken
   if (!email && oauth) {
     const oauthBuf = b64decode(oauth);
     email = extractEmailFromBuffer(oauthBuf);
   }
 
-  // 3. Compute fingerprint from primary auth value
-  const fp = fingerprint(oauth || userStatus || '');
+  // 5. Scan any other values in the snapshot for an email address.
+  if (!email && typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
+    for (const val of Object.values(valuesOrOauth)) {
+      if (typeof val === 'string' && val.length > 3) {
+        const found =
+          extractEmailFromBuffer(Buffer.from(val, 'utf8')) ||
+          extractEmailFromBuffer(b64decode(val));
+        if (found) {
+          email = found;
+          break;
+        }
+      }
+    }
+  }
+
+  // 6. Compute fingerprint from primary auth credential
+  const fp = fingerprint(keychainToken || oauth || userStatus || agyUserStatusJson || '');
 
   return {
     email,

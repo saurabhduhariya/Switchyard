@@ -4,7 +4,9 @@ import { fingerprint } from '../../accounts/identity';
 import { KEYS } from '../../constants';
 import { createBackup, restoreBackup } from '../../db/backup';
 import { deleteKeys, readKeys, writeKeys } from '../../db/StateDb';
+import { killAgyHubDaemon } from '../../platform/agyDaemon';
 import { isProcessAlive } from '../../platform/ide';
+import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../../platform/keychain';
 import { SwitchJob, SwitchResultFile } from '../job';
 
 export interface WaitForExitOptions {
@@ -24,6 +26,7 @@ export async function waitForExit(
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 200;
+  const settleDelayMs = options.settleDelayMs ?? 500;
 
   const start = Date.now();
   while (isProcessAlive(pid)) {
@@ -35,8 +38,9 @@ export async function waitForExit(
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  // Process is dead - no additional settle delay needed
-  // SQLite will return EBUSY if files are still locked
+  if (settleDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+  }
 }
 
 /**
@@ -62,53 +66,87 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
 
   const result: SwitchResultFile = { ok: false };
   let backupInfo: Awaited<ReturnType<typeof createBackup>> | undefined;
+  const previousKeychainToken = readKeychainToken();
 
   try {
-    // 1. Wait for parent IDE process to terminate
+    // 1. Wait for parent IDE process to terminate + settle
     if (job.parentPid && job.parentPid > 0) {
-      await waitForExit(job.parentPid);
+      await waitForExit(job.parentPid, { settleDelayMs: 400 });
     }
 
-    // 2. Create full backup of state.vscdb and sidecars before writing
-    backupInfo = await createBackup(job.dbPath, job.backupDir);
+    // 2. Kill the detached agy --hub daemon so it doesn't keep the old account in memory
+    killAgyHubDaemon();
 
-    // 3. Clean up old WAL/SHM companion files before writing
-    // This ensures we don't replay stale uncommitted transactions from the previous session
-    const walFile = `${job.dbPath}-wal`;
-    const shmFile = `${job.dbPath}-shm`;
-    try {
-      if (fs.existsSync(walFile)) fs.rmSync(walFile, { force: true });
-      if (fs.existsSync(shmFile)) fs.rmSync(shmFile, { force: true });
-    } catch {
-      // WAL removal is best-effort
+    // 3. Create full backup of state.vscdb if present
+    if (job.dbPath && fs.existsSync(job.dbPath)) {
+      backupInfo = await createBackup(job.dbPath, job.backupDir);
     }
 
-    // 4. Write target session keys
-    await writeKeys(job.dbPath, job.values);
+    // 4. v2.6.0+ OS Keychain swap or clear
+    if (job.clearKeychain) {
+      clearKeychainToken();
+    } else if (job.keychainToken) {
+      const wrote = writeKeychainToken(job.keychainToken);
+      if (!wrote) {
+        throw new Error(
+          'Failed to write OAuth token to OS Keychain (service: gemini, username: antigravity).'
+        );
+      }
 
-    // 5. Delete requested keys if any
-    if (job.deleteKeys && job.deleteKeys.length > 0) {
-      await deleteKeys(job.dbPath, job.deleteKeys);
+      // Kill agy hub again after writing the new keychain token so it cannot overwrite or cache old state.
+      killAgyHubDaemon();
+      const readBack = readKeychainToken() || '';
+      const computedFp = fingerprint(readBack);
+      if (job.targetFingerprint && computedFp !== job.targetFingerprint) {
+        throw new Error(
+          `Keychain verification failed: written fingerprint (${computedFp}) !== expected (${job.targetFingerprint})`
+        );
+      }
     }
 
-    // 6. Verify written values match target fingerprint
-    const verified = await readKeys(job.dbPath, [
-      KEYS.oauth,
-      KEYS.legacyInit,
-      KEYS.userStatus,
-    ]);
+    // 5. Also write/delete any state.vscdb keys (for v2.5.5 compatibility or profileUrl)
+    const dbValues = { ...job.values };
+    delete dbValues[KEYS.keychainToken];
+    delete dbValues[KEYS.agyUserStatus];
 
-    const primaryAuth =
-      verified[KEYS.oauth] ||
-      verified[KEYS.legacyInit] ||
-      verified[KEYS.userStatus] ||
-      '';
-    const computedFp = fingerprint(primaryAuth);
+    if (job.dbPath && fs.existsSync(job.dbPath)) {
+      // Clean up old WAL/SHM companion files before writing
+      const walFile = `${job.dbPath}-wal`;
+      const shmFile = `${job.dbPath}-shm`;
+      try {
+        if (fs.existsSync(walFile)) fs.rmSync(walFile, { force: true });
+        if (fs.existsSync(shmFile)) fs.rmSync(shmFile, { force: true });
+      } catch {
+        // WAL removal is best-effort
+      }
 
-    if (job.targetFingerprint && computedFp !== job.targetFingerprint) {
-      throw new Error(
-        `Verification failed: Written fingerprint (${computedFp}) does not match expected (${job.targetFingerprint})`
-      );
+      if (job.deleteKeys && job.deleteKeys.length > 0) {
+        await deleteKeys(job.dbPath, job.deleteKeys);
+      }
+
+      if (Object.keys(dbValues).length > 0) {
+        await writeKeys(job.dbPath, dbValues);
+      }
+
+      // If we don't have a keychainToken (e.g. legacy v2.5.5), verify from DB
+      if (!job.keychainToken && !job.clearKeychain) {
+        const verified = await readKeys(job.dbPath, [
+          KEYS.oauth,
+          KEYS.legacyInit,
+          KEYS.userStatus,
+        ]);
+        const primaryAuth =
+          verified[KEYS.oauth] ||
+          verified[KEYS.legacyInit] ||
+          verified[KEYS.userStatus] ||
+          '';
+        const computedFp = fingerprint(primaryAuth);
+        if (job.targetFingerprint && computedFp !== job.targetFingerprint) {
+          throw new Error(
+            `Verification failed: Written fingerprint (${computedFp}) does not match expected (${job.targetFingerprint})`
+          );
+        }
+      }
     }
 
     result.ok = true;
@@ -118,8 +156,13 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     console.error(`Switchyard Helper Error: ${msg}`);
     result.error = msg;
 
+    // Rollback OS Keychain if we had a previous token
+    if (previousKeychainToken) {
+      writeKeychainToken(previousKeychainToken);
+    }
+
     // Rollback from backup if backup was created
-    if (backupInfo) {
+    if (backupInfo && job.dbPath) {
       try {
         await restoreBackup(backupInfo, job.dbPath);
         console.info(`Switchyard Helper: Successfully rolled back to backup ${backupInfo.id}`);

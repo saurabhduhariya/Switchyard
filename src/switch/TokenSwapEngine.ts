@@ -8,6 +8,7 @@ import { AuthDetector } from '../accounts/AuthDetector';
 import { parseSnapshot } from '../accounts/identity';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
 import { findExecutable, getMainProcessPid } from '../platform/ide';
+import { readKeychainToken } from '../platform/keychain';
 import { findStateDb, getBackupsDir } from '../platform/paths';
 import { KEYS } from '../constants';
 import { Logger } from '../util/logger';
@@ -99,11 +100,11 @@ export class TokenSwapEngine implements SwitchEngine {
     }
 
     // 2. Re-capture active session before switching (rotation safety)
-    if (this.detector) {
+    if (this.detector && activeId) {
       try {
         const activeResult = await this.detector.detectActive();
         if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
-          await this.store.upsertFromSnapshot(activeResult.snapshot);
+          await this.store.saveSnapshot(activeId, activeResult.snapshot);
           this.logger.debug('Re-captured active session before token swap');
         }
       } catch (err) {
@@ -122,6 +123,37 @@ export class TokenSwapEngine implements SwitchEngine {
         ok: false,
         mode: 'tokenSwap',
         error: `Session credentials for ${account.email} not found in secure storage. Please sign in again.`,
+      };
+    }
+
+    // 3b. If running on Antigravity 2.6.0+ (agy extension or OS Keychain active),
+    // verify the saved account has a v2.6.0 keychainToken before quitting the IDE.
+    let isAgy26OrNewer = false;
+    try {
+      isAgy26OrNewer = Boolean(
+        vscode.extensions?.getExtension?.('google.google-antigravity') || readKeychainToken()
+      );
+    } catch {
+      isAgy26OrNewer = Boolean(readKeychainToken());
+    }
+    if (isAgy26OrNewer && !targetSnapshot.values[KEYS.keychainToken]) {
+      this.logger.warn(
+        `Account ${account.email} has a legacy <= 2.5.5 snapshot without ${KEYS.keychainToken}`
+      );
+      const action = await vscode.window.showWarningMessage(
+        `Account "${account.email}" was saved in an older version of Antigravity IDE (<= 2.5.5). Antigravity 2.6+ now uses the OS Keychain. Please sign in with ${account.email} once in the side window to update this saved account.`,
+        { modal: true },
+        'Update Account in Side Window',
+        'Cancel'
+      );
+      if (action === 'Update Account in Side Window') {
+        void vscode.commands.executeCommand('switchyard.addNewAccount');
+      }
+      return {
+        ok: false,
+        mode: 'tokenSwap',
+        message: 'Account requires re-authentication for Antigravity 2.6+',
+        error: 'Account requires re-authentication for Antigravity 2.6+',
       };
     }
 
@@ -184,6 +216,7 @@ export class TokenSwapEngine implements SwitchEngine {
       targetEmail: account.email,
       targetFingerprint,
       values: targetSnapshot.values,
+      keychainToken: targetSnapshot.values[KEYS.keychainToken],
       backupDir,
       relaunch: {
         exe,
@@ -263,15 +296,17 @@ export class TokenSwapEngine implements SwitchEngine {
     // 1. Capture current active session if available
     let previousId = options?.previousId;
     let previousEmail = options?.previousEmail;
+    const currentActiveId = previousId || (await this.store.activeId());
 
-    if (this.detector) {
+    if (this.detector && currentActiveId) {
       try {
         const activeResult = await this.detector.detectActive();
         if (!('unsupported' in activeResult) && !('partial' in activeResult)) {
-          const meta = await this.store.upsertFromSnapshot(activeResult.snapshot);
-          previousId = previousId || meta.id;
-          previousEmail = previousEmail || meta.email;
-          this.logger.debug(`Captured current active session before sign-out: ${meta.email}`);
+          await this.store.saveSnapshot(currentActiveId, activeResult.snapshot);
+          previousId = currentActiveId;
+          const currentMeta = await this.store.get(currentActiveId);
+          previousEmail = previousEmail || currentMeta?.email;
+          this.logger.debug(`Captured current active session before sign-out: ${currentActiveId}`);
         }
       } catch (err) {
         this.logger.warn('Failed to capture active session before sign-out', err);
@@ -330,6 +365,7 @@ export class TokenSwapEngine implements SwitchEngine {
       targetEmail: '',
       targetFingerprint: '',
       values: {},
+      clearKeychain: true,
       deleteKeys: [
         KEYS.oauth,
         KEYS.legacyInit,

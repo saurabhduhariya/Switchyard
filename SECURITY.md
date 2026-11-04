@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.3.x   | :white_check_mark: |
+| < 0.3.0 | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -97,7 +98,8 @@ This extension handles **highly sensitive authentication credentials**. Understa
 │  │  ┌──────────────────────────────────────────────────┐  │ │
 │  │  │  switch-helper.js (Detached Process)             │  │ │
 │  │  │  • Runs ONLY when IDE is closed                  │  │ │
-│  │  │  • Writes tokens to state.vscdb                  │  │ │
+│  │  │  • Swaps OS Keychain credentials & agy daemon    │  │ │
+│  │  │  • Writes state.vscdb fallback for legacy <=2.5.5│  │ │
 │  │  │  • Job file: 0600 permissions, temp dir          │  │ │
 │  │  │  • Auto-deleted after completion                 │  │ │
 │  │  └──────────────────────────────────────────────────┘  │ │
@@ -105,15 +107,15 @@ This extension handles **highly sensitive authentication credentials**. Understa
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  OS Keychain (Operating System)                        │ │
-│  │  • Encrypted at rest                                   │ │
-│  │  • Per-user isolation                                  │ │
-│  │  • Requires user authentication on some platforms      │ │
+│  │  • Active credentials (service: gemini, username: agy) │ │
+│  │  • Encrypted at rest, per-user isolation               │ │
+│  │  • Managed via local agy --hub daemon in v2.6.0+       │ │
 │  └────────────────────────────────────────────────────────┘ │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  state.vscdb (Antigravity IDE Database)                │ │
-│  │  ⚠️  Tokens stored UNENCRYPTED by Antigravity IDE      │ │
-│  │  • This is an upstream limitation                      │ │
+│  │  • Preferences and legacy <= 2.5.5 fallback            │ │
+│  │  • Active tokens reside in OS Keychain on v2.6.0+      │ │
 │  │  • Switchyard only writes when IDE is fully closed     │ │
 │  │  • Readable by any local process (OS file permissions) │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -199,11 +201,11 @@ Both modes are safe when used properly, but **Profile mode is recommended** if y
 
 ## Known Limitations
 
-### 1. state.vscdb Unencrypted Storage (Upstream)
+### 1. Legacy state.vscdb Storage vs OS Keychain
 
-**Issue:** The Antigravity IDE stores OAuth tokens in `state.vscdb` without encryption. Any process running as your user can read this file.
+**Architecture:** In Antigravity 2.6.0+, active credentials are encrypted and stored in the OS Keychain (`service: gemini, username: antigravity`) and managed via the local `agy --hub` daemon. In legacy Antigravity (`<= 2.5.5`), OAuth tokens were stored unencrypted in `state.vscdb`.
 
-**Status:** This is a limitation of Antigravity IDE itself, not Switchyard. Switchyard improves security by storing snapshots in the OS keychain.
+**Status:** Switchyard uses the native OS Keychain for active credentials on 2.6.0+ and stores all saved snapshots in VS Code's encrypted `SecretStorage`. `state.vscdb` is only used for UI preferences and legacy `<= 2.5.5` fallback.
 
 **Mitigation:** 
 - Use Mode A (Profile) which never touches tokens
@@ -299,5 +301,5 @@ If you're contributing code:
 
 ---
 
-**Last Updated:** October 11, 2026  
-**Version:** 0.2.1
+**Last Updated:** November 4, 2026  
+**Version:** 0.3.0

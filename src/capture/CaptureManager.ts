@@ -4,6 +4,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
+import { AccountQuotaSummary } from '../accounts/types';
+import { fingerprint } from '../accounts/identity';
 import {
   CAPTURE_CLOSE_REQUEST_FILE,
   CAPTURE_MARKER_FILE,
@@ -14,10 +16,14 @@ import {
   CAPTURE_DETECTED_TTL_MS,
   CAPTURE_DONE_LINGER_MS,
   CAPTURE_STALE_SWEEP_MS,
+  KEYS,
 } from '../constants';
+import { logoutAgyDaemon, killAgyHubDaemon, ensureAgyHubDaemonRunning } from '../platform/agyDaemon';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
+import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../platform/keychain';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
+import { QuotaCollector } from '../quota/QuotaCollector';
 import { Logger } from '../util/logger';
 import { DEFAULT_CAPTURE_FLAGS, sanitizeCaptureLaunchArgs } from './launchArgs';
 import { CaptureWatcher, CaptureWatchStatus } from './CaptureWatcher';
@@ -59,6 +65,10 @@ export interface CaptureSessionData {
   heartbeatAt?: number;
   /** Whether the detected account is new, already saved, or the currently active one. */
   detectedKind?: 'new' | 'saved' | 'active';
+  /** v2.6.0+: OS Keychain token stashed before opening Window 2, to restore to Window 1 */
+  stashedKeychainToken?: string;
+  /** v2.6.0+: Fingerprint of Account 1 before capture started, to avoid false positive triggers */
+  preCaptureFingerprint?: string;
 }
 
 export interface StartCaptureOptions {
@@ -123,6 +133,7 @@ export class CaptureManager {
   private timeoutTimer?: NodeJS.Timeout;
   private onStateChangeCallback?: (session: CaptureSessionData) => void;
   private lastDetectedSnapshots = new Map<string, Record<string, string>>();
+  private lastDetectedQuotas = new Map<string, AccountQuotaSummary>();
 
   constructor(options: CaptureManagerOptions) {
     this.store = options.store;
@@ -289,6 +300,22 @@ export class CaptureManager {
       promoteToProfile: options?.promoteToProfile === true,
     };
 
+    // v2.6.0+: Stash current OS Keychain token to restore to Window 1 later
+    const currentToken = readKeychainToken();
+    if (currentToken) {
+      session.stashedKeychainToken = currentToken;
+      session.preCaptureFingerprint = fingerprint(currentToken);
+    }
+
+    // Clear OS Keychain and terminate agy --hub so Window 2 opens on clean Sign-In page
+    clearKeychainToken();
+    try {
+      await logoutAgyDaemon();
+    } catch {
+      // ignore
+    }
+    killAgyHubDaemon();
+
     await this.persistSession(session);
     this.startHeartbeat();
     this.notifyStateChange(session);
@@ -314,6 +341,7 @@ export class CaptureManager {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`Failed to spawn capture window: ${msg}`);
+      this.restoreStashedKeychain(session);
       session.state = 'failed';
       session.error = msg;
       await this.persistSession(session);
@@ -454,13 +482,30 @@ export class CaptureManager {
   }
 
   /**
+   * Restores Account 1's stashed keychain token to OS Keychain and restarts agy --hub.
+   */
+  private restoreStashedKeychain(session?: CaptureSessionData): void {
+    if (!session || !session.stashedKeychainToken) {
+      return;
+    }
+    try {
+      this.logger.info('Restoring stashed primary keychain token for Window 1...');
+      writeKeychainToken(session.stashedKeychainToken);
+      killAgyHubDaemon();
+      ensureAgyHubDaemonRunning();
+    } catch (err) {
+      this.logger.warn('Failed to restore stashed keychain token:', err);
+    }
+  }
+
+  /**
    * Starts the watcher to poll for sign-in completion.
    */
   private async startWatching(session: CaptureSessionData): Promise<void> {
     const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
 
     // Start watcher
-    this.watcher = new CaptureWatcher(dbPath, this.logger);
+    this.watcher = new CaptureWatcher(dbPath, this.logger, session.preCaptureFingerprint);
     this.watcher.onSignedInUnflushed(() => {
       const current = this.getCurrentSession();
       if (current && current.sessionId === session.sessionId && current.state === 'waitingForSignIn') {
@@ -481,22 +526,43 @@ export class CaptureManager {
         return; // Stale session
       }
 
-      this.logger.info(`Detected sign-in: ${identity.email || identity.fingerprint}`);
+      this.logger.info(`Detected sign-in in side window: ${identity.email || identity.fingerprint}`);
 
-      await this.markDetected(current, identity, detectedSnapshot?.values);
-
-      // Stop watching
+      // Stop watcher & timeout immediately
       this.watcher?.stop();
       this.watcher = undefined;
-
-      // Clear timeout
       if (this.timeoutTimer) {
         clearTimeout(this.timeoutTimer);
         this.timeoutTimer = undefined;
       }
 
-      // Automatically close the side window once detection succeeds
-      void this.closeWindowAndWaitForFlush(current);
+      // Cache the detected snapshot from OS Keychain + agy --hub BEFORE closing Window 2
+      if (detectedSnapshot?.values) {
+        this.lastDetectedSnapshots.set(current.sessionId, detectedSnapshot.values);
+      }
+
+      // Grab the new account's live quota while Window 2's language server / agy daemon is still running!
+      try {
+        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath);
+        if (capturedQuota) {
+          this.lastDetectedQuotas.set(current.sessionId, capturedQuota);
+        }
+      } catch {
+        // best effort
+      }
+
+      current.state = 'finishing';
+      current.diagnostic = 'Sign-in detected! Closing side window...';
+      await this.persistSession(current);
+      this.notifyStateChange(current);
+
+      // Automatically close the side window
+      await this.closeWindowAndWaitForFlush(current);
+
+      // Restore Account 1's stashed keychain token so Window 1 stays signed into Account 1
+      this.restoreStashedKeychain(current);
+
+      await this.markDetected(current, identity, detectedSnapshot?.values);
     });
 
     this.watcher.start();
@@ -518,6 +584,7 @@ export class CaptureManager {
 
     if (session.state === 'waitingForSignIn') {
       this.logger.warn(`Capture session timed out: ${sessionId}`);
+      this.restoreStashedKeychain(session);
       session.state = 'timedOut';
       await this.persistSession(session);
       this.notifyStateChange(session);
@@ -572,10 +639,12 @@ export class CaptureManager {
       const result = await new CaptureWatcher(dbPath, this.logger).readOnce();
 
       if (result && !('unsupported' in result) && !('partial' in result)) {
+        this.restoreStashedKeychain(session);
         await this.markDetected(session, result.identity, result.snapshot.values);
         return { ok: true };
       }
 
+      this.restoreStashedKeychain(session);
       const reason =
         result && 'partial' in result
           ? 'You are signed in in the side window, but the credentials are stored in the OS secret store and cannot be copied. Use the "signOutRestart" add-account method (setting: switchyard.addAccountMethod) on this system.'
@@ -590,6 +659,7 @@ export class CaptureManager {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error(`finishSignIn failed: ${msg}`);
+      this.restoreStashedKeychain(session);
       session.state = 'failed';
       session.error = msg;
       await this.persistSession(session);
@@ -681,13 +751,15 @@ export class CaptureManager {
       // Request window 2 to close cooperatively and wait for its DB to flush
       await this.closeWindowAndWaitForFlush(session);
 
-      // Final read of capture DB (picks up latest tokens after flush)
+      // Final read of capture DB (picks up any userStatus/profileUrl flushed when Window 2 closed).
       const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
       const { readKeys } = await import('../db/StateDb');
       const { KEYS } = await import('../constants');
       const { parseSnapshot } = await import('../accounts/identity');
 
       const targetKeys = [
+        KEYS.keychainToken,
+        KEYS.agyUserStatus,
         KEYS.oauth,
         KEYS.userStatus,
         KEYS.modelCredits,
@@ -696,37 +768,81 @@ export class CaptureManager {
       ];
 
       const hasToken = (v: Record<string, string>) =>
-        Boolean(v[KEYS.oauth] || v[KEYS.legacyInit] || v[KEYS.userStatus]);
+        Boolean(v[KEYS.keychainToken] || v[KEYS.oauth] || v[KEYS.legacyInit]);
 
       const fromDb: Record<string, string> = fs.existsSync(dbPath)
         ? await readKeys(dbPath, targetKeys)
         : {};
       const cached = this.lastDetectedSnapshots.get(session.sessionId) ?? {};
 
-      // Never save a snapshot without a login token: it would create an "unknown" account
-      // that cannot be switched to. Prefer the final read (latest rotated token), else the
-      // snapshot taken when the sign-in was detected.
-      let snapshot: Record<string, string>;
-      if (hasToken(fromDb)) {
-        snapshot = fromDb;
-      } else if (hasToken(cached)) {
-        this.logger.warn('Final read had no token; using snapshot from detection time');
-        snapshot = cached;
-      } else {
+      // Merge `fromDb` (which may have userStatus/profileUrl flushed on close) with `cached`
+      // (which holds KEYS.keychainToken and KEYS.agyUserStatus captured before restoring Account 1).
+      const merged: Record<string, string> = {
+        ...fromDb,
+        ...cached,
+      };
+
+      // If fromDb has userStatus/profileUrl that cached lacked, keep them.
+      if (fromDb[KEYS.userStatus] && !merged[KEYS.userStatus]) {
+        merged[KEYS.userStatus] = fromDb[KEYS.userStatus];
+      }
+      if (fromDb[KEYS.profileUrl] && !merged[KEYS.profileUrl]) {
+        merged[KEYS.profileUrl] = fromDb[KEYS.profileUrl];
+      }
+
+      if (!hasToken(merged)) {
         throw new Error(
           'The sign-in window did not provide a login token, so nothing was saved. ' +
             'Add the account again and wait for the side window to close on its own.'
         );
       }
 
+      const snapshot = merged;
       const identity = parseSnapshot(snapshot);
+
+      // If agy only stored oauth2 tokens in the keychain without an email, check if the user
+      // typed an email in the label box, or prompt them for the account email so we never save "unknown-...@switchyard.local".
+      if (!identity.email) {
+        if (label && label.includes('@')) {
+          identity.email = label.trim();
+        } else if (!process.env.VITEST) {
+          const enteredEmail = await vscode.window.showInputBox({
+            title: 'Confirm Google Account Email',
+            prompt: 'Sign-in token captured! Enter the Google email address for this account:',
+            placeHolder: 'e.g. your.second.account@gmail.com',
+            ignoreFocusOut: true,
+          });
+          if (enteredEmail && enteredEmail.trim().includes('@')) {
+            identity.email = enteredEmail.trim();
+          }
+        }
+
+        // Persist the resolved email inside agyUserStatus so parseSnapshot always resolves it.
+        if (identity.email) {
+          let statusObj: Record<string, unknown> = {};
+          try {
+            if (snapshot[KEYS.agyUserStatus]) {
+              statusObj = JSON.parse(snapshot[KEYS.agyUserStatus]);
+            }
+          } catch {
+            // Ignore malformed status JSON.
+          }
+          statusObj.email = identity.email;
+          snapshot[KEYS.agyUserStatus] = JSON.stringify(statusObj);
+        }
+      }
+
       this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
-      // Check if the account is already saved
+      // Check if the account is already saved (by email OR by fingerprint).
       const existingAccounts = await this.store.list();
-      const duplicate = identity.email
-        ? existingAccounts.find((acc) => acc.email === identity.email)
-        : undefined;
+      const duplicate =
+        (identity.email
+          ? existingAccounts.find((acc) => acc.email.toLowerCase() === identity.email!.toLowerCase())
+          : undefined) ||
+        (identity.fingerprint
+          ? existingAccounts.find((acc) => acc.fingerprint === identity.fingerprint)
+          : undefined);
 
       let savedId: string;
       let savedEmail: string | undefined = identity.email;
@@ -752,6 +868,12 @@ export class CaptureManager {
         savedId = meta.id;
         savedEmail = meta.email;
         this.logger.info(`Saved new account: ${identity.email || identity.fingerprint}`);
+      }
+
+      const capturedQuota = this.lastDetectedQuotas.get(session.sessionId);
+      if (capturedQuota) {
+        await this.store.updateQuota(savedId, capturedQuota);
+        this.lastDetectedQuotas.delete(session.sessionId);
       }
 
       // Profile mode: keep the window's data as the account's profile; otherwise delete it
@@ -817,6 +939,7 @@ export class CaptureManager {
       this.timeoutTimer = undefined;
     }
 
+    this.restoreStashedKeychain(session);
     session.state = 'cancelled';
     await this.persistSession(session);
     await this.cleanup(session.dir, session.pid);

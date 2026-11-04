@@ -346,6 +346,16 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
   private async _runDetectAndRefresh(force: boolean): Promise<void> {
     try {
+      // Do not clobber Window 1's active account while a side-window capture is temporarily using the OS Keychain
+      const captureSession = this.captureManager?.getCurrentSession();
+      if (
+        captureSession &&
+        ['launching', 'waitingForSignIn', 'finishing', 'saving'].includes(captureSession.state)
+      ) {
+        await this.push();
+        return;
+      }
+
       if (!this.detector) {
         await this.push();
         return;
@@ -551,7 +561,12 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     }
 
     this.quotaFailures++;
-    if (userRequested || this.quotaFailures >= 2) {
+    const existingAccount = await this.store.get(accountId);
+    const hasExistingQuota = Boolean(existingAccount?.quota);
+
+    // Only display the warning banner if the user explicitly clicked Retry/Refresh,
+    // or if the account has no prior quota numbers to display after 2 consecutive failures.
+    if (userRequested || (!hasExistingQuota && this.quotaFailures >= 2)) {
       this.quotaError = { ...error, accountId, at: Date.now() };
     }
     return false;
@@ -862,6 +877,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       vscode.window.showErrorMessage(`Switchyard: Failed to save account: ${result.error}`);
     } else {
       vscode.window.showInformationMessage('Switchyard: Account saved successfully!');
+
+      // Reset quota endpoint cache after side-window capture restored the primary keychain token
+      this.quotaCollector.clearCache();
+      this.quotaError = undefined;
+      this.quotaFailures = 0;
+      setTimeout(() => {
+        void this.refreshActiveQuota();
+      }, 1500);
     }
     await this.push();
   }

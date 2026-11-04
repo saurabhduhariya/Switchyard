@@ -32,7 +32,7 @@ Click **Switch** on any inactive account card to switch into that session.
 Switchyard supports two switching strategies:
 
 1. **Token Swap (Default)**:
-   Swaps the active session credentials in `state.vscdb` while the IDE is closed and relaunches the editor into your target account. Ideal when working in a single workspace.
+   Swaps the active session credentials in the OS Keychain (`service: gemini, username: antigravity`) and restarts the `agy --hub` daemon (with `state.vscdb` fallback for legacy Antigravity `<= 2.5.5`) while the IDE is closed, then relaunches the editor into your target account. Ideal when working in a single workspace.
 
 2. **Isolated Profiles**:
    Spawns a separate Antigravity window with `--user-data-dir` pointing to an isolated profile folder. Both accounts can remain open side-by-side simultaneously.
@@ -64,6 +64,8 @@ Your main IDE window never closes or reloads during this process, and your activ
 | "did not provide a login token" | The sign-in did not finish before the window closed. Add the account again and wait for the window to close by itself. |
 | The side window shows welcome pages | Set `switchyard.captureWindowArgs` (for example `["--skip-welcome", "--skip-release-notes"]`) and `switchyard.captureWindowDisabledExtensions` (for example `["eamodio.gitlens"]`). |
 | The side window will not open | Set `switchyard.executablePath`, or use the sign-out method. |
+| Account saved on Antigravity `<= 2.5.5` asks to update | Antigravity 2.6.0+ moved credentials from `state.vscdb` to the OS Keychain. Click **Update Account in Side Window** and sign in once to upgrade the saved snapshot. |
+| Keychain read/write fails on Linux | Ensure `libsecret` (`secret-tool`) or Python 3 `secretstorage` is installed (`sudo pacman -S libsecret` on Arch/Garuda, `sudo apt install libsecret-tools` on Debian/Ubuntu). |
 
 ## Extension Settings
 
@@ -73,7 +75,9 @@ This extension contributes the following settings (`switchyard.*`):
 |---|---|---|
 | `switchyard.mode` | `tokenSwap` | Switching method: `tokenSwap` (same window with restart) or `profile` (isolated side-by-side windows). |
 | `switchyard.addAccountMethod` | `sideWindow` | Method for adding new accounts: `sideWindow` (open separate window without closing main IDE) or `signOutRestart` (legacy sign-out and restart flow). |
-| `switchyard.captureWindowArgs` | `[]` | Extra flags for the sign-in window. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Machine scope. |
+| `switchyard.notifyOnQuotaReset` | `true` | Show a notification when an exhausted quota (10% or less) on a saved account has reset. |
+| `switchyard.suggestBestAccount` | `true` | Show a banner suggesting the saved account with the most remaining quota when the active account drops to 10% or less. |
+| `switchyard.captureWindowArgs` | `["--skip-welcome", ...]` | Extra flags for the sign-in window. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Machine scope. |
 | `switchyard.captureWindowDisabledExtensions` | `[]` | Extension IDs to disable inside the sign-in window only (Switchyard itself cannot be disabled there). Machine scope. |
 | `switchyard.confirmBeforeSwitch` | `true` | Ask for confirmation before restarting the IDE during a switch. |
 | `switchyard.maskEmails` | `false` | Mask email addresses in the panel and status bar (e.g., `s****@gmail.com`). |
@@ -107,3 +111,8 @@ The following commands are available from the Command Palette (`Ctrl+Shift+P` / 
 ## Disclaimer
 
 This extension is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google. Users are responsible for complying with the applicable Google and Antigravity terms of service for their accounts.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).  
+Copyright © 2026 Saurabh Duhariya. All rights reserved.

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
+### Added
+- **Antigravity IDE 2.6.0+ Support (`agy` Hub & OS Keychain Architecture)**:
+  - Full support for the new `google.google-antigravity` (`agy --hub`) daemon and OS Keychain credential storage (`service: gemini, username: antigravity`) across Linux, Windows, and macOS.
+  - Side-window account capture automatically stashes and restores the primary window's keychain token so the side window opens cleanly on the Google Sign-In page without signing out Window 1.
+  - Live quota collection for newly added accounts during side-window capture before the side window closes.
+  - Automatic detection of legacy Antigravity IDE (`<= 2.5.5`) and migration prompts for accounts saved prior to 2.6.0.
+
 ## [0.2.3] - 2026-10-26
 
 ### Fixed

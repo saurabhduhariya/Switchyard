@@ -3,6 +3,7 @@ import * as net from 'node:net';
 import { AccountQuotaSummary, QuotaBucket } from '../accounts/types';
 import type { QuotaErrorKind, QuotaReadError } from '../shared/messages';
 import { readKeys } from '../db/StateDb';
+import { discoverAgyHubEndpoint } from '../platform/agyDaemon';
 import { Logger } from '../util/logger';
 
 interface LSServerEndpoint {
@@ -85,6 +86,10 @@ export class QuotaCollector {
   private cachedEndpoint?: LSServerEndpoint;
 
   constructor(private readonly logger?: Logger) {}
+
+  public clearCache(): void {
+    this.cachedEndpoint = undefined;
+  }
 
   /**
    * Retrieves the current account's model quota summary.
@@ -295,13 +300,24 @@ export class QuotaCollector {
       return this.cachedEndpoint;
     }
 
-    // Try finding running language_server process
-    const endpoint = await this.discoverEndpoint();
-    if (endpoint) {
-      this.cachedEndpoint = endpoint;
-      this.logger?.debug(`Discovered Language Server on port ${endpoint.port}`);
+    // 1. Try finding the active window's language_server / agy process with --csrf_token first
+    // (this process serves RetrieveUserQuotaSummary and GetUserStatus model configs directly).
+    const lsEndpoint = await this.discoverEndpoint();
+    if (lsEndpoint) {
+      this.cachedEndpoint = lsEndpoint;
+      this.logger?.debug(`Discovered Language Server on port ${lsEndpoint.port}`);
+      return this.cachedEndpoint;
     }
-    return endpoint;
+
+    // 2. Fallback: Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
+    const hubEndpoint = await discoverAgyHubEndpoint();
+    if (hubEndpoint) {
+      this.cachedEndpoint = { port: hubEndpoint.port, token: hubEndpoint.token };
+      this.logger?.debug(`Discovered agy --hub daemon on port ${hubEndpoint.port}`);
+      return this.cachedEndpoint;
+    }
+
+    return undefined;
   }
 
   private async discoverEndpoint(): Promise<LSServerEndpoint | undefined> {
@@ -320,7 +336,7 @@ export class QuotaCollector {
         const parsed = JSON.parse(psOut.trim() || '[]');
         const items = Array.isArray(parsed) ? parsed : [parsed];
 
-        for (const item of items) {
+        for (const item of [...items].reverse()) {
           const cmd = item?.CommandLine;
           const pid = item?.ProcessId ? String(item.ProcessId) : undefined;
           if (!cmd || !pid) continue;
@@ -330,7 +346,7 @@ export class QuotaCollector {
 
           const token = tokenMatch[1];
           const ports = this.getListeningPortsForPid(pid);
-          const portMatch = cmd.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          const portMatch = cmd.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
           if (portMatch) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p) && !ports.includes(p)) {
@@ -371,7 +387,7 @@ export class QuotaCollector {
         (l) => (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) && l.includes('--csrf_token')
       );
 
-      for (const line of lsLines) {
+      for (const line of [...lsLines].reverse()) {
         const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
         const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
         if (!tokenMatch || !pidMatch) continue;
@@ -382,7 +398,7 @@ export class QuotaCollector {
         if (token && pid) {
           // Check if port is specified directly on the command line
           const candidatePorts: number[] = [];
-          const portMatch = line.match(/--(?:hub-port|hub_port|port)[=\s]+(\d+)/i);
+          const portMatch = line.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
           if (portMatch) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p)) {
@@ -450,7 +466,7 @@ export class QuotaCollector {
     try {
       if (process.platform === 'linux') {
         const ssOut = child_process.execSync('ss -tlpn', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-        const regex = new RegExp(`127\\.0\\.0\\.1:(\\d+).*?pid=${pid}\\b`, 'g');
+        const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
         for (const match of ssOut.matchAll(regex)) {
           const p = match[1];
           if (p) ports.push(parseInt(p, 10));
