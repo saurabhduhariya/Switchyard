@@ -66,7 +66,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     state: context.globalState,
   });
 
-  const detector = dbPath ? new AuthDetector(dbPath) : undefined;
+  const detector = new AuthDetector(dbPath);
 
   const mode = vscode.workspace
     .getConfiguration('switchyard')
@@ -289,11 +289,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // switchyard.openBackupsFolder: reveals the backup directory in system file explorer
     vscode.commands.registerCommand('switchyard.openBackupsFolder', async () => {
-      if (!dbPath) {
-        vscode.window.showErrorMessage('Switchyard: Cannot locate database path.');
-        return;
-      }
-      const backupDir = getBackupsDir(getGlobalStorageDir(dbPath));
+      const storageDir = dbPath
+        ? getGlobalStorageDir(dbPath)
+        : path.dirname(context.globalStorageUri.fsPath);
+      const backupDir = getBackupsDir(storageDir);
       if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
       }

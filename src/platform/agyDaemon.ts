@@ -4,6 +4,7 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { extractEmailFromBuffer, extractPlanFromBuffer, formatPlanFromTier } from '../accounts/identity';
+import { getWslWindowsUserHomes, isWsl } from './wsl';
 
 export interface AgyHubEndpoint {
   port: number;
@@ -26,11 +27,20 @@ export interface AgyLiveAuthStatus {
 export function getAgyDaemonDirs(): string[] {
   const home = os.homedir();
   const geminiHome = process.env.GEMINI_CLI_HOME || path.join(home, '.gemini');
-  return [
+  const dirs = [
     path.join(geminiHome, 'antigravity', 'daemon'),
     path.join(home, '.gemini', 'antigravity', 'daemon'),
     path.join(home, '.gemini', 'daemon'),
   ];
+  if (isWsl()) {
+    for (const winHome of getWslWindowsUserHomes()) {
+      dirs.push(
+        path.join(winHome, '.gemini', 'antigravity', 'daemon'),
+        path.join(winHome, '.gemini', 'daemon')
+      );
+    }
+  }
+  return dirs;
 }
 
 /**

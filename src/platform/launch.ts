@@ -1,5 +1,6 @@
 import { ChildProcess, spawn, SpawnOptions } from 'node:child_process';
 import { buildLaunchArgs } from './ide';
+import { toWindowsPath } from './wsl';
 
 export type ProcessSpawner = (
   command: string,
@@ -36,11 +37,13 @@ export function spawnIsolatedWindow(
     spawner = spawn,
   } = options;
 
+  const isWinExeOnWsl = process.platform === 'linux' && exe.toLowerCase().endsWith('.exe');
+
   // Build CLI arguments
   const args = buildLaunchArgs({
-    userDataDir,
-    extensionsDir,
-    folders,
+    userDataDir: isWinExeOnWsl ? toWindowsPath(userDataDir) : userDataDir,
+    extensionsDir: extensionsDir && isWinExeOnWsl ? toWindowsPath(extensionsDir) : extensionsDir,
+    folders: isWinExeOnWsl ? folders.map(toWindowsPath) : folders,
     newWindow,
     extraArgs,
   });

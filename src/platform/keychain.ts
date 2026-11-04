@@ -1,5 +1,6 @@
 import * as child_process from 'node:child_process';
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE } from '../constants';
+import { isWsl } from './wsl';
 
 const WIN32_CRED_CSHARP = `
 using System;
@@ -152,6 +153,86 @@ export function __setTestKeychainToken(token?: string): void {
   inMemoryTestKeychain = token;
 }
 
+function readWindowsCredential(): string | undefined {
+  try {
+    const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+${WIN32_CRED_CSHARP}
+'@
+$val = [WinCred]::ReadSecret('${target}')
+if (-not $val) { $val = [WinCred]::ReadSecret('${KEYCHAIN_SERVICE}') }
+if ($val) { [Console]::Out.Write($val); exit 0 }
+exit 1
+`;
+    const out = child_process.execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', psScript],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+        timeout: 4000,
+      }
+    );
+    return out.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeWindowsCredential(secret: string): boolean {
+  try {
+    const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
+    const psScript = `
+$ErrorActionPreference = 'Stop'
+$secret = [Console]::In.ReadToEnd().Trim()
+Add-Type -TypeDefinition @'
+${WIN32_CRED_CSHARP}
+'@
+if (-not [WinCred]::WriteSecret('${target}', '${KEYCHAIN_ACCOUNT}', $secret)) {
+  exit 1
+}
+`;
+    child_process.execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', psScript],
+      {
+        input: secret,
+        encoding: 'utf8',
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+        timeout: 4000,
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function deleteWindowsCredential(): boolean {
+  try {
+    const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
+    const psScript = `
+Add-Type -TypeDefinition @'
+${WIN32_CRED_CSHARP}
+'@
+[void][WinCred]::DeleteSecret('${target}')
+[void][WinCred]::DeleteSecret('${KEYCHAIN_SERVICE}')
+`;
+    child_process.execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', psScript],
+      { stdio: 'ignore', windowsHide: true, timeout: 4000 }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Reads the active Antigravity credential from the OS Keychain (service: gemini, username: antigravity).
  */
@@ -161,6 +242,12 @@ export function readKeychainToken(): string | undefined {
   }
   try {
     if (process.platform === 'linux') {
+      // If running inside WSL, check Windows Credential Manager first via powershell.exe
+      if (isWsl()) {
+        const winToken = readWindowsCredential();
+        if (winToken) return winToken;
+      }
+
       // 1. Primary: secret-tool (libsecret CLI)
       try {
         const out = child_process.execFileSync(
@@ -211,28 +298,7 @@ sys.exit(1)
     }
 
     if (process.platform === 'win32') {
-      const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
-      const psScript = `
-$ErrorActionPreference = 'Stop'
-Add-Type -TypeDefinition @'
-${WIN32_CRED_CSHARP}
-'@
-$val = [WinCred]::ReadSecret('${target}')
-if (-not $val) { $val = [WinCred]::ReadSecret('${KEYCHAIN_SERVICE}') }
-if ($val) { [Console]::Out.Write($val); exit 0 }
-exit 1
-`;
-      const out = child_process.execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', psScript],
-        {
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-          windowsHide: true,
-          timeout: 4000,
-        }
-      );
-      return out.trim() || undefined;
+      return readWindowsCredential();
     }
   } catch {
     return undefined;
@@ -255,6 +321,11 @@ export function writeKeychainToken(rawSecret: string): boolean {
 
   try {
     if (process.platform === 'linux') {
+      let wroteWin = false;
+      if (isWsl()) {
+        wroteWin = writeWindowsCredential(secret);
+      }
+
       try {
         child_process.execFileSync(
           'secret-tool',
@@ -285,13 +356,17 @@ bus = secretstorage.dbus_init()
 col = secretstorage.get_default_collection(bus)
 col.create_item('${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}', {'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}, secret, replace=True)
 `;
-      child_process.execFileSync('python3', ['-c', pyScript], {
-        input: secret,
-        encoding: 'utf8',
-        stdio: ['pipe', 'ignore', 'ignore'],
-        timeout: 3000,
-      });
-      return true;
+      try {
+        child_process.execFileSync('python3', ['-c', pyScript], {
+          input: secret,
+          encoding: 'utf8',
+          stdio: ['pipe', 'ignore', 'ignore'],
+          timeout: 3000,
+        });
+        return true;
+      } catch {
+        return wroteWin;
+      }
     }
 
     if (process.platform === 'darwin') {
@@ -304,29 +379,7 @@ col.create_item('${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}', {'service': '${KEYCHA
     }
 
     if (process.platform === 'win32') {
-      const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
-      const psScript = `
-$ErrorActionPreference = 'Stop'
-$secret = [Console]::In.ReadToEnd().Trim()
-Add-Type -TypeDefinition @'
-${WIN32_CRED_CSHARP}
-'@
-if (-not [WinCred]::WriteSecret('${target}', '${KEYCHAIN_ACCOUNT}', $secret)) {
-  exit 1
-}
-`;
-      child_process.execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', psScript],
-        {
-          input: secret,
-          encoding: 'utf8',
-          stdio: ['pipe', 'ignore', 'ignore'],
-          windowsHide: true,
-          timeout: 4000,
-        }
-      );
-      return true;
+      return writeWindowsCredential(secret);
     }
   } catch {
     return false;
@@ -345,6 +398,10 @@ export function clearKeychainToken(): boolean {
 
   try {
     if (process.platform === 'linux') {
+      if (isWsl()) {
+        deleteWindowsCredential();
+      }
+
       try {
         child_process.execFileSync(
           'secret-tool',
@@ -360,8 +417,12 @@ col = secretstorage.get_default_collection(bus)
 for item in col.search_items({'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}):
     item.delete()
 `;
-        child_process.execFileSync('python3', ['-c', pyScript], { stdio: 'ignore', timeout: 3000 });
-        return true;
+        try {
+          child_process.execFileSync('python3', ['-c', pyScript], { stdio: 'ignore', timeout: 3000 });
+          return true;
+        } catch {
+          return true;
+        }
       }
     }
 
@@ -375,20 +436,7 @@ for item in col.search_items({'service': '${KEYCHAIN_SERVICE}', 'username': '${K
     }
 
     if (process.platform === 'win32') {
-      const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
-      const psScript = `
-Add-Type -TypeDefinition @'
-${WIN32_CRED_CSHARP}
-'@
-[void][WinCred]::DeleteSecret('${target}')
-[void][WinCred]::DeleteSecret('${KEYCHAIN_SERVICE}')
-`;
-      child_process.execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', psScript],
-        { stdio: 'ignore', windowsHide: true, timeout: 4000 }
-      );
-      return true;
+      return deleteWindowsCredential();
     }
   } catch {
     return false;

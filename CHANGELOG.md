@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-05
+
+### Fixed
+- **WSL2 (Windows 11 + Linux Remote Workspace Host) Compatibility**:
+  - Declared `"extensionKind": ["ui", "workspace"]` in `package.json` to instruct Antigravity to run Switchyard on the Windows 11 UI host where `state.vscdb`, Windows Credential Manager, and the native browser reside.
+  - Added live quota bridge for WSL2 workspaces: when running on Windows, `QuotaCollector` queries `wsl.exe` for WSL2 language server processes and forwarded loopback ports, enabling live quota fetching in WSL2.
+  - Implemented WSL2 platform interop helper (`src/platform/wsl.ts`) with path translation (`toWindowsPath`) and Windows user profile discovery (`/mnt/c/Users/...`).
+  - Added Windows Credential Manager bridge for WSL2 via `powershell.exe`.
+  - Ensured `AuthDetector` remains functional when `dbPath` is undefined, and `openBackupsFolder` falls back gracefully to global storage.
+
 ## [0.3.0] - 2026-11-04
 
 ### Added

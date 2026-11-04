@@ -376,6 +376,71 @@ export class QuotaCollector {
             }
           }
         }
+
+        // Fallback on Windows: if the user's workspace is in WSL2, the language_server / agy
+        // process runs inside the WSL2 Linux container (which shares 127.0.0.1 loopback with Windows!).
+        try {
+          const wslOut = child_process.execFileSync(
+            'wsl.exe',
+            ['-e', 'sh', '-c', 'ps aux; echo "===SS==="; ss -tlpn 2>/dev/null || true'],
+            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
+          );
+          const [psPart = '', ssPart = ''] = wslOut.split('===SS===');
+          const wslLines = psPart
+            .split('\n')
+            .filter(
+              (l) =>
+                (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) &&
+                l.includes('--csrf_token')
+            );
+
+          for (const line of [...wslLines].reverse()) {
+            const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
+            const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
+            if (!tokenMatch?.[1] || !pidMatch?.[1]) continue;
+            const token = tokenMatch[1];
+            const pid = pidMatch[1];
+
+            const wslPorts: number[] = [];
+            const portMatch = line.match(
+              /--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i
+            );
+            if (portMatch?.[1]) {
+              wslPorts.push(parseInt(portMatch[1], 10));
+            }
+            const ssRegex = new RegExp(
+              `(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`,
+              'g'
+            );
+            for (const m of ssPart.matchAll(ssRegex)) {
+              if (m[1]) {
+                const p = parseInt(m[1], 10);
+                if (!wslPorts.includes(p)) wslPorts.push(p);
+              }
+            }
+
+            for (const port of wslPorts) {
+              try {
+                const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
+                if (res && res.userStatus) return { port, token };
+              } catch {
+                try {
+                  const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+                    port,
+                    token,
+                    'RetrieveUserQuotaSummary'
+                  );
+                  if (qRes && qRes.response) return { port, token };
+                } catch {
+                  // try next port
+                }
+              }
+            }
+          }
+        } catch {
+          // WSL not installed or no WSL distro running; ignore
+        }
+
         return undefined;
       }
 

@@ -2,6 +2,7 @@ import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getWslWindowsUserHomes, isWsl } from './wsl';
 
 export interface LaunchArgsOptions {
   userDataDir: string;
@@ -74,6 +75,18 @@ export function findExecutable(customPath?: string): string {
       '/opt/antigravity-ide/bin/antigravity-ide',
       path.join(os.homedir(), '.local/bin/antigravity-ide')
     );
+    if (isWsl()) {
+      for (const winHome of getWslWindowsUserHomes()) {
+        candidates.push(
+          path.join(winHome, 'AppData', 'Local', 'Programs', 'Antigravity IDE', 'Antigravity IDE.exe'),
+          path.join(winHome, 'AppData', 'Local', 'Programs', 'Antigravity', 'Antigravity.exe')
+        );
+      }
+      candidates.push(
+        '/mnt/c/Program Files/Antigravity IDE/Antigravity IDE.exe',
+        '/mnt/c/Program Files/Antigravity/Antigravity.exe'
+      );
+    }
   } else if (platform === 'darwin') {
     candidates.push(
       '/Applications/Antigravity.app/Contents/MacOS/Electron',

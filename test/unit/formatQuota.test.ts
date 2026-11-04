@@ -25,7 +25,7 @@ describe('formatQuota', () => {
     });
 
     it('formats minutes only when under 1 hour', () => {
-      const future = new Date(Date.now() + 25 * 60 * 1000).toISOString();
+      const future = new Date(Date.now() + (25 * 60 + 10) * 1000).toISOString();
       expect(formatCountdown(future)).toBe('Resets in 25m');
     });
   });

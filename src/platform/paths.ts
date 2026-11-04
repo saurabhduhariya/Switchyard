@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getWslWindowsUserHomes, isWsl } from './wsl';
 
 /**
  * Returns candidate user data directories for Antigravity IDE across platforms.
@@ -31,6 +32,15 @@ export function getUserDataDirs(
       const configHome = env.XDG_CONFIG_HOME || path.join(homeDir, '.config');
       dirs.push(path.join(configHome, 'Antigravity IDE'));
       dirs.push(path.join(configHome, 'Antigravity'));
+
+      // If running inside WSL2 while Antigravity IDE is installed on the Windows host,
+      // also check the Windows host's %APPDATA% directories mounted under /mnt/c/Users/<User>.
+      if (platform === process.platform && isWsl()) {
+        for (const winHome of getWslWindowsUserHomes()) {
+          dirs.push(path.join(winHome, 'AppData', 'Roaming', 'Antigravity IDE'));
+          dirs.push(path.join(winHome, 'AppData', 'Roaming', 'Antigravity'));
+        }
+      }
       break;
     }
   }
