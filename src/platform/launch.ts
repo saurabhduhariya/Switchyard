@@ -1,4 +1,6 @@
 import { ChildProcess, spawn, SpawnOptions } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { buildLaunchArgs } from './ide';
 import { toWindowsPath } from './wsl';
 
@@ -65,12 +67,28 @@ export function spawnIsolatedWindow(
       delete cleanEnv[key];
     }
   }
+  if (isWinExeOnWsl) {
+    delete cleanEnv.WSL_INTEROP;
+    delete cleanEnv.NODE_OPTIONS;
+  }
 
   // Spawn detached process
-  const child = spawner(exe, args, {
+  const spawnOpts: SpawnOptions = {
     detached: true,
     stdio: 'ignore',
     env: cleanEnv as NodeJS.ProcessEnv,
+  };
+  if (isWinExeOnWsl || process.platform === 'win32') {
+    spawnOpts.windowsHide = false;
+    const exeDir = path.dirname(exe);
+    if (fs.existsSync(exeDir)) {
+      spawnOpts.cwd = exeDir;
+    }
+  }
+
+  const child = spawner(exe, args, spawnOpts);
+  child.on?.('error', () => {
+    // Prevent uncaught async spawn errors from crashing the extension host
   });
 
   child.unref();

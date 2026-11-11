@@ -2,7 +2,7 @@ import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { getWslWindowsUserHomes, isWsl, resolveActiveWslDistro } from './wsl';
+import { getWslWindowsUserHomes, isWsl, resolveActiveWslDistro, toWindowsPath } from './wsl';
 
 export interface LaunchArgsOptions {
   userDataDir: string;
@@ -148,8 +148,36 @@ export function findExecutable(customPath?: string): string {
 
 /**
  * Discovers the shared extensions directory from the running extension's location or standard defaults.
+ * On WSL2, prefers the Windows host extensions directory because isolated GUI windows run via Windows .exe.
  */
 export function getSharedExtensionsDir(extensionUri?: { fsPath: string }): string | undefined {
+  if (isWsl()) {
+    const winExtensionDirs: string[] = [];
+    for (const winHome of getWslWindowsUserHomes()) {
+      winExtensionDirs.push(
+        path.join(winHome, '.antigravity-ide', 'extensions'),
+        path.join(winHome, '.antigravity', 'extensions'),
+        path.join(winHome, '.vscode', 'extensions')
+      );
+    }
+    const existingWinDirs = winExtensionDirs.filter((dir) => fs.existsSync(dir));
+    // Prefer a Windows extensions directory that already contains Switchyard itself
+    for (const dir of existingWinDirs) {
+      try {
+        if (
+          fs.readdirSync(dir).some((entry) => entry.toLowerCase().startsWith('saurabhduhariya.ag-switchyard'))
+        ) {
+          return dir;
+        }
+      } catch {
+        // ignore unreadable dir
+      }
+    }
+    if (existingWinDirs[0]) {
+      return existingWinDirs[0];
+    }
+  }
+
   if (extensionUri?.fsPath) {
     const parentDir = path.dirname(extensionUri.fsPath);
     if (fs.existsSync(parentDir) && path.basename(parentDir) === 'extensions') {
@@ -185,7 +213,22 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException;
-    return error.code === 'EPERM';
+    if (error.code === 'EPERM') {
+      return true;
+    }
+    if (isWsl()) {
+      try {
+        const out = child_process.execFileSync(
+          'tasklist.exe',
+          ['/FI', `PID eq ${pid}`, '/NH'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 5000 }
+        );
+        return out.includes(String(pid));
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 }
 
@@ -202,6 +245,25 @@ export function isProcessAlive(pid: number): boolean {
 export function getMainProcessPid(): number {
   const startPid = process.ppid || process.pid;
   try {
+    if (isWsl()) {
+      const psScript = [
+        `$p = Get-CimInstance Win32_Process -Filter "Name like '%Antigravity%'" | Where-Object { -not ($_.CommandLine -like '*--type=*') } | Select-Object -First 1 -ExpandProperty ProcessId`,
+        `if ($p) { [Console]::Out.Write($p) }`,
+      ].join('\n');
+      const b64 = Buffer.from(psScript, 'utf16le').toString('base64');
+      const out = child_process
+        .execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 8000,
+        })
+        .trim();
+      const parsed = Number(out.split(/\r?\n/)[0]?.trim());
+      if (Number.isInteger(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
     if (process.platform === 'linux' || process.platform === 'darwin') {
       let current = startPid;
       for (let depth = 0; depth < 5; depth++) {
@@ -230,7 +292,7 @@ export function getMainProcessPid(): number {
           $p = Get-CimInstance Win32_Process -Filter "ProcessId = $curr" -ErrorAction SilentlyContinue
           if (-not $p) { break }
           $cmd = [string]$p.CommandLine
-          if (-not $cmd.Contains('--type=') -and ($cmd -match 'antigravity|electron')) {
+          if (-not ($cmd -like '*--type=*') -and ($cmd -match 'antigravity|electron')) {
             Write-Output $curr
             exit 0
           }
@@ -239,13 +301,13 @@ export function getMainProcessPid(): number {
         }
         Write-Output $curr
       `;
-
+      const b64 = Buffer.from(psScript, 'utf16le').toString('base64');
       const out = child_process
-        .execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+        .execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64], {
           encoding: 'utf8',
           stdio: ['ignore', 'pipe', 'ignore'],
           windowsHide: true,
-          timeout: 3000,
+          timeout: 8000,
         })
         .trim();
       const parsed = Number(out);
@@ -285,10 +347,46 @@ function formatRemoteUri(uri: WorkspaceUriLike): string {
   return uri.fsPath;
 }
 
+function encodePosixPathForUri(posixPath: string): string {
+  return posixPath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function appendWslRemoteTarget(
+  args: string[],
+  flag: '--folder-uri' | '--file-uri',
+  posixPath: string,
+  distro: string | undefined,
+  state: { remoteAdded: boolean }
+): void {
+  if (distro) {
+    const wslAuth = `wsl+${distro}`;
+    if (!state.remoteAdded) {
+      state.remoteAdded = true;
+      args.push('--remote', wslAuth);
+    }
+    args.push(flag, `vscode-remote://${wslAuth}${encodePosixPathForUri(posixPath)}`);
+    return;
+  }
+
+  // Fallback only if distro name could not be resolved: never pass bare /mnt/... to Windows IDE.exe.
+  if (posixPath.startsWith('/mnt/')) {
+    args.push(toWindowsPath(posixPath));
+  } else {
+    args.push(posixPath);
+  }
+}
+
 /**
  * Builds CLI arguments to reopen the current workspace (preserving WSL / SSH / DevContainer remote context).
  */
 export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[] {
+  const isWslContext = input.remoteName === 'wsl' || isWsl();
+  const wslDistro = isWslContext ? resolveActiveWslDistro() : undefined;
+  const remoteState = { remoteAdded: false };
+
   // 1. Explicit folder override (e.g. passed via options.folders)
   if (input.overrideFolders !== undefined) {
     const out: string[] = [];
@@ -296,13 +394,8 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
       if (!folder) continue;
       if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(folder)) {
         out.push('--folder-uri', folder);
-      } else if (
-        isWsl() &&
-        process.env.WSL_DISTRO_NAME &&
-        folder.startsWith('/') &&
-        !folder.startsWith('/mnt/')
-      ) {
-        out.push('--folder-uri', `vscode-remote://wsl+${process.env.WSL_DISTRO_NAME}${folder}`);
+      } else if (isWslContext && folder.startsWith('/')) {
+        appendWslRemoteTarget(out, '--folder-uri', folder, wslDistro, remoteState);
       } else {
         out.push(folder);
       }
@@ -311,7 +404,6 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
   }
 
   const args: string[] = [];
-  let detectedRemoteAuthority: string | undefined;
 
   // 2. Multi-root .code-workspace file if open
   if (
@@ -321,12 +413,20 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
   ) {
     if (input.workspaceFile.scheme !== 'file') {
       if (input.workspaceFile.authority) {
-        detectedRemoteAuthority = decodeURIComponent(input.workspaceFile.authority);
-      }
-      if (detectedRemoteAuthority) {
-        args.push('--remote', detectedRemoteAuthority);
+        remoteState.remoteAdded = true;
+        args.push('--remote', decodeURIComponent(input.workspaceFile.authority));
       }
       args.push('--file-uri', formatRemoteUri(input.workspaceFile));
+      return args;
+    }
+
+    if (isWslContext && input.workspaceFile.fsPath.startsWith('/')) {
+      appendWslRemoteTarget(args, '--file-uri', input.workspaceFile.fsPath, wslDistro, remoteState);
+      return args;
+    }
+
+    if (input.workspaceFile.fsPath) {
+      args.push(input.workspaceFile.fsPath);
       return args;
     }
   }
@@ -338,23 +438,13 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
       if (!uri) continue;
 
       if (uri.scheme && uri.scheme !== 'file') {
-        if (uri.authority && !detectedRemoteAuthority) {
-          detectedRemoteAuthority = decodeURIComponent(uri.authority);
-          args.push('--remote', detectedRemoteAuthority);
+        if (uri.authority && !remoteState.remoteAdded) {
+          remoteState.remoteAdded = true;
+          args.push('--remote', decodeURIComponent(uri.authority));
         }
         args.push('--folder-uri', formatRemoteUri(uri));
-      } else if (
-        isWsl() &&
-        process.env.WSL_DISTRO_NAME &&
-        uri.fsPath.startsWith('/') &&
-        !uri.fsPath.startsWith('/mnt/')
-      ) {
-        const wslAuth = `wsl+${process.env.WSL_DISTRO_NAME}`;
-        if (!detectedRemoteAuthority) {
-          detectedRemoteAuthority = wslAuth;
-          args.push('--remote', wslAuth);
-        }
-        args.push('--folder-uri', `vscode-remote://${wslAuth}${uri.fsPath}`);
+      } else if (isWslContext && uri.fsPath.startsWith('/')) {
+        appendWslRemoteTarget(args, '--folder-uri', uri.fsPath, wslDistro, remoteState);
       } else if (uri.fsPath) {
         args.push(uri.fsPath);
       }
@@ -363,11 +453,8 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
   }
 
   // 4. Empty WSL window (no folder open yet, e.g. ">< WSL: Ubuntu-24.04")
-  if (input.remoteName === 'wsl' || isWsl()) {
-    const distro = resolveActiveWslDistro();
-    if (distro) {
-      args.push('--remote', `wsl+${distro}`);
-    }
+  if (isWslContext && wslDistro) {
+    args.push('--remote', `wsl+${wslDistro}`);
   }
 
   return args;

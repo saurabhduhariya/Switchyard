@@ -36,11 +36,15 @@ export function getUserDataDirs(
       // If running inside WSL2 while Antigravity IDE is installed on the Windows host,
       // also check the Windows host's %APPDATA% directories mounted under /mnt/c/Users/<User>.
       if (platform === process.platform && isWsl()) {
+        const winDirs: string[] = [];
         for (const winHome of getWslWindowsUserHomes()) {
           const joinFn = path.posix ? path.posix.join : path.join;
-          dirs.push(joinFn(winHome, 'AppData', 'Roaming', 'Antigravity IDE'));
-          dirs.push(joinFn(winHome, 'AppData', 'Roaming', 'Antigravity'));
+          winDirs.push(
+            joinFn(winHome, 'AppData', 'Roaming', 'Antigravity IDE'),
+            joinFn(winHome, 'AppData', 'Roaming', 'Antigravity')
+          );
         }
+        dirs.unshift(...winDirs);
       }
       break;
     }
@@ -64,7 +68,16 @@ export function findStateDb(options: FindStateDbOptions = {}): string | undefine
   const fsImpl = options.fsModule || fs;
 
   // 1. Try deriving from extension's globalStorageUri path
-  if (options.globalStorageUriPath) {
+  // (Skip if running inside a headless WSL remote server path like ~/.antigravity-server or ~/.vscode-server,
+  // unless it is an isolated switchyard-capture directory).
+  const isRemoteServerStorage =
+    options.globalStorageUriPath &&
+    isWsl() &&
+    (options.globalStorageUriPath.includes('.antigravity-server') ||
+      options.globalStorageUriPath.includes('.vscode-server')) &&
+    !options.globalStorageUriPath.includes('switchyard-capture');
+
+  if (options.globalStorageUriPath && !isRemoteServerStorage) {
     const parentDir = path.dirname(options.globalStorageUriPath);
     const candidatePath = path.join(parentDir, 'state.vscdb');
     if (fsImpl.existsSync(candidatePath)) {
