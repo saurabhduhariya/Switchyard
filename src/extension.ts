@@ -12,6 +12,7 @@ import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
 import { listBackups, recoverCorruptedQuotas, restoreBackup } from './db/backup';
 import { readKeys } from './db/StateDb';
 import { findStateDb, getBackupsDir, getGlobalStorageDir } from './platform/paths';
+import { resolveWslContextFromVscode } from './platform/wsl';
 import { PanelProvider } from './ui/PanelProvider';
 import { StatusBar } from './ui/StatusBar';
 import { Logger } from './util/logger';
@@ -72,7 +73,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     state: context.globalState,
   });
 
-  const detector = new AuthDetector(dbPath);
+  const wslCtx = resolveWslContextFromVscode(vscode);
+  const detector = new AuthDetector(dbPath, wslCtx);
 
   const mode = vscode.workspace
     .getConfiguration('switchyard')
@@ -399,22 +401,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // switchyard.importAccount: import account from a database file (e.g. spike/B.vscdb or backup)
+    // switchyard.importAccount: import account from a state.vscdb database or backup file
     vscode.commands.registerCommand('switchyard.importAccount', async (targetDbUri?: vscode.Uri) => {
       let chosenPath: string | undefined;
 
       if (targetDbUri?.fsPath) {
         chosenPath = targetDbUri.fsPath;
       } else {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        let defaultUri: vscode.Uri | undefined;
-        const firstFolder = workspaceFolders?.[0];
-        if (firstFolder) {
-          const spikeB = path.join(firstFolder.uri.fsPath, 'spike', 'B.vscdb');
-          if (fs.existsSync(spikeB)) {
-            defaultUri = vscode.Uri.file(spikeB);
-          }
-        }
+        const backupsDir = dbPath ? getBackupsDir(getGlobalStorageDir(dbPath)) : undefined;
+        const defaultUri = backupsDir && fs.existsSync(backupsDir) ? vscode.Uri.file(backupsDir) : undefined;
 
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,

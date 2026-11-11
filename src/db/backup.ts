@@ -251,5 +251,3 @@ export async function recoverCorruptedQuotas(
 
   return anyRestored;
 }
-
-export const recoverCorruptedProQuotas = recoverCorruptedQuotas;
