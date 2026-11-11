@@ -23,6 +23,7 @@ let busyMessage = $state('');
 let error = $state('');
 let maskEmails = $state(false);
 let mode = $state<'profile' | 'tokenSwap'>('profile');
+let addAccountMethod = $state<'sideWindow' | 'signOutRestart'>('sideWindow');
 let confirmBeforeSwitch = $state(true);
 let backupRetention = $state(5);
 let currentView = $state<'accounts' | 'settings'>('accounts');
@@ -84,6 +85,10 @@ export function getBackupRetention(): number {
 
 export function getMode(): 'profile' | 'tokenSwap' {
   return mode;
+}
+
+export function getAddAccountMethod(): 'sideWindow' | 'signOutRestart' {
+  return addAccountMethod;
 }
 
 export function getAccounts(): AccountMeta[] {
@@ -173,6 +178,7 @@ export function handleMessage(data: ToWebview): void {
       activeId = data.activeId;
       maskEmails = data.maskEmails ?? false;
       mode = data.mode ?? 'profile';
+      addAccountMethod = data.addAccountMethod ?? 'sideWindow';
       confirmBeforeSwitch = data.confirmBeforeSwitch ?? true;
       backupRetention = data.backupRetention ?? 5;
       addAccountGuide = data.addAccountGuide;

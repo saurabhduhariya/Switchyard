@@ -133,6 +133,7 @@ export type ToWebview =
       activeId?: string;
       maskEmails?: boolean;
       mode?: 'profile' | 'tokenSwap';
+      addAccountMethod?: 'sideWindow' | 'signOutRestart';
       confirmBeforeSwitch?: boolean;
       backupRetention?: number;
       addAccountGuide?: AddAccountGuideState;

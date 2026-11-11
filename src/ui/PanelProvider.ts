@@ -225,6 +225,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('switchyard');
     const maskEmails = config.get<boolean>('maskEmails', false);
     const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+    const addAccountMethod = config.get<'sideWindow' | 'signOutRestart'>('addAccountMethod', 'sideWindow');
     const confirmBeforeSwitch = config.get<boolean>('confirmBeforeSwitch', true);
     const backupRetention = config.get<number>('backupRetention', 5);
 
@@ -284,6 +285,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       activeId,
       maskEmails,
       mode,
+      addAccountMethod,
       confirmBeforeSwitch,
       backupRetention,
       addAccountGuide,
@@ -515,9 +517,20 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           return;
         }
 
+        if (!identity.email) {
+          // Never prompt to save a nameless "Account (xxxxxx)" dummy account in the main panel
+          // (transient post-login window before agy resolves email, or incomplete metadata).
+          this.logger.debug(
+            `Detected auth snapshot (${identity.fingerprint}) without resolvable email; waiting before prompting.`
+          );
+          this.pendingSnapshot = undefined;
+          await this.push();
+          return;
+        }
+
         this.pendingSnapshot = snapshot;
-        const emailDisplay = identity.email || `Account (${identity.fingerprint.slice(0, 6)})`;
-        const candidateId = identity.email ? createAccountId(identity.email) : `fp-${identity.fingerprint}`;
+        const emailDisplay = identity.email;
+        const candidateId = createAccountId(identity.email);
 
         // Clear activeId so the old account is not shown as active
         await this.store.setActive(undefined);
