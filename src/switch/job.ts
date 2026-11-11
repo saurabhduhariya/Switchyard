@@ -16,6 +16,8 @@ export interface SwitchJob {
     args: string[];
   };
   resultFile: string;
+  /** Persistent log file for post-mortem diagnosis of detached switch-helper runs */
+  logFile?: string;
 }
 
 export interface SwitchResultFile {
