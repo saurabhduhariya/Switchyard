@@ -1,9 +1,11 @@
 import * as child_process from 'node:child_process';
 import * as net from 'node:net';
+import { extractEmailFromBuffer } from '../accounts/identity';
 import { AccountQuotaSummary, QuotaBucket } from '../accounts/types';
 import type { QuotaErrorKind, QuotaReadError } from '../shared/messages';
 import { readKeys } from '../db/StateDb';
 import { discoverAgyHubEndpoint } from '../platform/agyDaemon';
+import { isWsl, toWindowsPath } from '../platform/wsl';
 import { Logger } from '../util/logger';
 
 interface LSServerEndpoint {
@@ -61,6 +63,14 @@ export interface QuotaReadResult {
   error?: QuotaReadError;
 }
 
+/** Optional scoping constraints when querying live quota (e.g. during side-window capture). */
+export interface QuotaQueryOptions {
+  /** Reject any live Language Server / hub daemon whose status email conflicts with this address. */
+  expectedEmail?: string;
+  /** Side-window capture directory; avoids falling back to the primary window's Language Server. */
+  captureDir?: string;
+}
+
 const QUOTA_ERROR_MESSAGES: Record<QuotaErrorKind, string> = {
   'no-language-server':
     "Antigravity's language server is not running yet. It starts shortly after the IDE opens.",
@@ -95,19 +105,22 @@ export class QuotaCollector {
    * Retrieves the current account's model quota summary.
    * Use getQuotaResult when the reason for a failure matters.
    */
-  public async getQuotaSummary(dbPath?: string): Promise<AccountQuotaSummary | undefined> {
-    return (await this.getQuotaResult(dbPath)).quota;
+  public async getQuotaSummary(
+    dbPath?: string,
+    options?: QuotaQueryOptions
+  ): Promise<AccountQuotaSummary | undefined> {
+    return (await this.getQuotaResult(dbPath, options)).quota;
   }
 
   /**
    * Like getQuotaSummary, but when nothing could be read it says why, so the panel can show a
    * useful message instead of empty dashes.
    */
-  public async getQuotaResult(dbPath?: string): Promise<QuotaReadResult> {
+  public async getQuotaResult(dbPath?: string, options?: QuotaQueryOptions): Promise<QuotaReadResult> {
     let error: QuotaReadError | undefined;
 
     try {
-      const live = await this.queryLiveQuota();
+      const live = await this.queryLiveQuota(options);
       if (live.quota) {
         return { quota: live.quota };
       }
@@ -132,8 +145,8 @@ export class QuotaCollector {
   /**
    * Queries user quota directly from local language server via loopback net.Socket.
    */
-  private async queryLiveQuota(): Promise<QuotaReadResult> {
-    const endpoint = await this.getOrDiscoverEndpoint();
+  private async queryLiveQuota(options?: QuotaQueryOptions): Promise<QuotaReadResult> {
+    const endpoint = await this.getOrDiscoverEndpoint(options);
     if (!endpoint) return { error: describeQuotaError('no-language-server') };
 
     try {
@@ -141,8 +154,10 @@ export class QuotaCollector {
     } catch (err) {
       this.logger?.debug('Live quota request failed, retrying discovery once:', err);
       // Clear cache and retry discovery once
-      this.cachedEndpoint = undefined;
-      const retryEndpoint = await this.getOrDiscoverEndpoint();
+      if (!options?.expectedEmail && !options?.captureDir) {
+        this.cachedEndpoint = undefined;
+      }
+      const retryEndpoint = await this.getOrDiscoverEndpoint(options);
       if (!retryEndpoint) return { error: describeQuotaError('no-language-server') };
       try {
         return this.liveResult(await this.requestLiveQuota(retryEndpoint));
@@ -292,35 +307,119 @@ export class QuotaCollector {
     return JSON.parse(body) as T;
   }
 
+  private matchesCaptureDir(cmdLine: string | undefined, captureDir: string | undefined): boolean {
+    if (!cmdLine || !captureDir) return false;
+    const normCmd = cmdLine.replace(/\\/g, '/').toLowerCase();
+    const candidates = [captureDir];
+    if (isWsl() && captureDir.startsWith('/')) {
+      const winPath = toWindowsPath(captureDir);
+      if (winPath) candidates.push(winPath);
+    }
+    return candidates.some((c) => normCmd.includes(c.replace(/\\/g, '/').toLowerCase()));
+  }
+
+  private async probeEndpoint(
+    port: number,
+    token: string,
+    cmdLine: string | undefined,
+    options?: QuotaQueryOptions
+  ): Promise<boolean> {
+    const captureMatched = this.matchesCaptureDir(cmdLine, options?.captureDir);
+    const expectedEmail = options?.expectedEmail?.trim().toLowerCase();
+
+    try {
+      const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
+      if (res && res.userStatus) {
+        const returnedEmail = extractEmailFromBuffer(
+          Buffer.from(JSON.stringify(res.userStatus), 'utf8')
+        )?.toLowerCase();
+        if (expectedEmail) {
+          if (returnedEmail && returnedEmail !== expectedEmail) {
+            return false;
+          }
+          if (!returnedEmail && options?.captureDir && !captureMatched) {
+            return false;
+          }
+        } else if (options?.captureDir && !captureMatched) {
+          return false;
+        }
+        return true;
+      }
+    } catch {
+      // Fallback to RetrieveUserQuotaSummary below
+    }
+
+    if ((expectedEmail || options?.captureDir) && !captureMatched) {
+      return false;
+    }
+
+    try {
+      const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
+        port,
+        token,
+        'RetrieveUserQuotaSummary'
+      );
+      if (qRes && qRes.response) {
+        return true;
+      }
+    } catch {
+      // Port wasn't the HTTP service
+    }
+
+    return false;
+  }
+
+  private async findWorkingEndpointOnPorts(
+    ports: number[],
+    token: string,
+    cmdLine: string | undefined,
+    options?: QuotaQueryOptions
+  ): Promise<LSServerEndpoint | undefined> {
+    for (const port of ports) {
+      if (await this.probeEndpoint(port, token, cmdLine, options)) {
+        return { port, token };
+      }
+    }
+    return undefined;
+  }
+
   /**
    * Discovers the language server listening port and CSRF token.
    */
-  private async getOrDiscoverEndpoint(): Promise<LSServerEndpoint | undefined> {
-    if (this.cachedEndpoint) {
+  private async getOrDiscoverEndpoint(options?: QuotaQueryOptions): Promise<LSServerEndpoint | undefined> {
+    const scoped = Boolean(options?.expectedEmail || options?.captureDir);
+    if (!scoped && this.cachedEndpoint) {
       return this.cachedEndpoint;
     }
 
     // 1. Try finding the active window's language_server / agy process with --csrf_token first
     // (this process serves RetrieveUserQuotaSummary and GetUserStatus model configs directly).
-    const lsEndpoint = await this.discoverEndpoint();
+    const lsEndpoint = await this.discoverEndpoint(options);
     if (lsEndpoint) {
-      this.cachedEndpoint = lsEndpoint;
+      if (!scoped) {
+        this.cachedEndpoint = lsEndpoint;
+      }
       this.logger?.debug(`Discovered Language Server on port ${lsEndpoint.port}`);
-      return this.cachedEndpoint;
+      return lsEndpoint;
     }
 
     // 2. Fallback: Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
     const hubEndpoint = await discoverAgyHubEndpoint();
     if (hubEndpoint) {
-      this.cachedEndpoint = { port: hubEndpoint.port, token: hubEndpoint.token };
-      this.logger?.debug(`Discovered agy --hub daemon on port ${hubEndpoint.port}`);
-      return this.cachedEndpoint;
+      if (!scoped || (await this.probeEndpoint(hubEndpoint.port, hubEndpoint.token, undefined, options))) {
+        const endpoint = { port: hubEndpoint.port, token: hubEndpoint.token };
+        if (!scoped) {
+          this.cachedEndpoint = endpoint;
+        }
+        this.logger?.debug(`Discovered agy --hub daemon on port ${hubEndpoint.port}`);
+        return endpoint;
+      }
     }
 
     return undefined;
   }
 
-  private async discoverEndpoint(): Promise<LSServerEndpoint | undefined> {
+  private async discoverEndpoint(options?: QuotaQueryOptions): Promise<LSServerEndpoint | undefined> {
     try {
       if (process.platform === 'win32') {
         const psScript = `
@@ -334,111 +433,89 @@ export class QuotaCollector {
         );
 
         const parsed = JSON.parse(psOut.trim() || '[]');
-        const items = Array.isArray(parsed) ? parsed : [parsed];
+        const items: Array<{ ProcessId?: number | string; CommandLine?: string }> = Array.isArray(parsed)
+          ? parsed
+          : [parsed];
+        const orderedItems = [...items].reverse();
+        if (options?.captureDir) {
+          orderedItems.sort((a, b) => {
+            const aMatch = this.matchesCaptureDir(a?.CommandLine, options.captureDir) ? 0 : 1;
+            const bMatch = this.matchesCaptureDir(b?.CommandLine, options.captureDir) ? 0 : 1;
+            return aMatch - bMatch;
+          });
+        }
 
-        for (const item of [...items].reverse()) {
+        for (const item of orderedItems) {
           const cmd = item?.CommandLine;
           const pid = item?.ProcessId ? String(item.ProcessId) : undefined;
           if (!cmd || !pid) continue;
 
           const tokenMatch = cmd.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
-          if (!tokenMatch) continue;
+          if (!tokenMatch?.[1]) continue;
 
           const token = tokenMatch[1];
           const ports = this.getListeningPortsForPid(pid);
           const portMatch = cmd.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
-          if (portMatch) {
+          if (portMatch?.[1]) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p) && !ports.includes(p)) {
               ports.unshift(p);
             }
           }
 
-          for (const port of ports) {
-            try {
-              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
-              if (res && res.userStatus) {
-                return { port, token };
-              }
-            } catch {
-              try {
-                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
-                  port,
-                  token,
-                  'RetrieveUserQuotaSummary'
-                );
-                if (qRes && qRes.response) {
-                  return { port, token };
-                }
-              } catch {
-                // Port wasn't the HTTP service, continue trying
-              }
-            }
-          }
+          const found = await this.findWorkingEndpointOnPorts(ports, token, cmd, options);
+          if (found) return found;
         }
 
         // Fallback on Windows: if the user's workspace is in WSL2, the language_server / agy
         // process runs inside the WSL2 Linux container (which shares 127.0.0.1 loopback with Windows!).
-        try {
-          const wslOut = child_process.execFileSync(
-            'wsl.exe',
-            ['-e', 'sh', '-c', 'ps aux; echo "===SS==="; ss -tlpn 2>/dev/null || true'],
-            { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
-          );
-          const [psPart = '', ssPart = ''] = wslOut.split('===SS===');
-          const wslLines = psPart
-            .split('\n')
-            .filter(
-              (l) =>
-                (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) &&
-                l.includes('--csrf_token')
+        if (!options?.captureDir) {
+          try {
+            const wslOut = child_process.execFileSync(
+              'wsl.exe',
+              ['-e', 'sh', '-c', 'ps aux; echo "===SS==="; ss -tlpn 2>/dev/null || true'],
+              { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
             );
+            const [psPart = '', ssPart = ''] = wslOut.split('===SS===');
+            const wslLines = psPart
+              .split('\n')
+              .filter(
+                (l) =>
+                  (l.includes('language_server') || l.includes('agy') || l.includes('--hub')) &&
+                  l.includes('--csrf_token')
+              );
 
-          for (const line of [...wslLines].reverse()) {
-            const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
-            const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
-            if (!tokenMatch?.[1] || !pidMatch?.[1]) continue;
-            const token = tokenMatch[1];
-            const pid = pidMatch[1];
+            for (const line of [...wslLines].reverse()) {
+              const tokenMatch = line.match(/--csrf_token[=\s]+([a-f0-9-]+)/i);
+              const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
+              if (!tokenMatch?.[1] || !pidMatch?.[1]) continue;
+              const token = tokenMatch[1];
+              const pid = pidMatch[1];
 
-            const wslPorts: number[] = [];
-            const portMatch = line.match(
-              /--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i
-            );
-            if (portMatch?.[1]) {
-              wslPorts.push(parseInt(portMatch[1], 10));
-            }
-            const ssRegex = new RegExp(
-              `(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`,
-              'g'
-            );
-            for (const m of ssPart.matchAll(ssRegex)) {
-              if (m[1]) {
-                const p = parseInt(m[1], 10);
-                if (!wslPorts.includes(p)) wslPorts.push(p);
+              const wslPorts: number[] = [];
+              const portMatch = line.match(
+                /--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i
+              );
+              if (portMatch?.[1]) {
+                wslPorts.push(parseInt(portMatch[1], 10));
               }
-            }
-
-            for (const port of wslPorts) {
-              try {
-                const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
-                if (res && res.userStatus) return { port, token };
-              } catch {
-                try {
-                  const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
-                    port,
-                    token,
-                    'RetrieveUserQuotaSummary'
-                  );
-                  if (qRes && qRes.response) return { port, token };
-                } catch {
-                  // try next port
+              const ssRegex = new RegExp(
+                `(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`,
+                'g'
+              );
+              for (const m of ssPart.matchAll(ssRegex)) {
+                if (m[1]) {
+                  const p = parseInt(m[1], 10);
+                  if (!wslPorts.includes(p)) wslPorts.push(p);
                 }
               }
+
+              const found = await this.findWorkingEndpointOnPorts(wslPorts, token, line, options);
+              if (found) return found;
             }
+          } catch {
+            // WSL not installed or no WSL distro running; ignore
           }
-        } catch {
-          // WSL not installed or no WSL distro running; ignore
         }
 
         return undefined;
@@ -464,7 +541,7 @@ export class QuotaCollector {
           // Check if port is specified directly on the command line
           const candidatePorts: number[] = [];
           const portMatch = line.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
-          if (portMatch) {
+          if (portMatch?.[1]) {
             const p = parseInt(portMatch[1], 10);
             if (!isNaN(p)) {
               candidatePorts.push(p);
@@ -472,52 +549,13 @@ export class QuotaCollector {
           }
 
           // Test candidate port directly first if present
-          for (const port of candidatePorts) {
-            try {
-              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
-              if (res && res.userStatus) {
-                return { port, token };
-              }
-            } catch {
-              try {
-                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
-                  port,
-                  token,
-                  'RetrieveUserQuotaSummary'
-                );
-                if (qRes && qRes.response) {
-                  return { port, token };
-                }
-              } catch {
-                // Try next
-              }
-            }
-          }
+          const direct = await this.findWorkingEndpointOnPorts(candidatePorts, token, line, options);
+          if (direct) return direct;
 
           // Fall back to scanning listening ports for this pid
-          const ports = this.getListeningPortsForPid(pid);
-          for (const port of ports) {
-            if (candidatePorts.includes(port)) continue;
-            try {
-              const res = await this.sendConnectRpc<GetUserStatusResponse>(port, token, 'GetUserStatus');
-              if (res && res.userStatus) {
-                return { port, token };
-              }
-            } catch {
-              try {
-                const qRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
-                  port,
-                  token,
-                  'RetrieveUserQuotaSummary'
-                );
-                if (qRes && qRes.response) {
-                  return { port, token };
-                }
-              } catch {
-                // Port wasn't the HTTP service, continue trying
-              }
-            }
-          }
+          const ports = this.getListeningPortsForPid(pid).filter((p) => !candidatePorts.includes(p));
+          const discovered = await this.findWorkingEndpointOnPorts(ports, token, line, options);
+          if (discovered) return discovered;
         }
       }
     } catch (err) {

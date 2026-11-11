@@ -7,7 +7,12 @@ import { createBackup, restoreBackup } from '../../db/backup';
 import { deleteKeys, readKeys, writeKeys } from '../../db/StateDb';
 import { killAgyHubDaemon } from '../../platform/agyDaemon';
 import { isProcessAlive } from '../../platform/ide';
-import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../../platform/keychain';
+import {
+  clearKeychainToken,
+  readKeychainToken,
+  readWslStandaloneToken,
+  writeKeychainToken,
+} from '../../platform/keychain';
 import { SwitchJob, SwitchResultFile } from '../job';
 
 export interface WaitForExitOptions {
@@ -99,14 +104,20 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     }
   };
 
+  const wslOpts =
+    job.includeWsl || job.wslDistro
+      ? { includeWsl: true, wslDistro: job.wslDistro }
+      : undefined;
+
   log(
     'INFO',
-    `Helper started (pid=${process.pid}, parentPid=${job.parentPid}, target=${job.targetEmail || '<sign-out>'}, dbPath=${job.dbPath}, resultFile=${job.resultFile})`
+    `Helper started (pid=${process.pid}, parentPid=${job.parentPid}, target=${job.targetEmail || '<sign-out>'}, dbPath=${job.dbPath}, resultFile=${job.resultFile}, wsl=${wslOpts ? wslOpts.wslDistro || 'auto' : 'off'})`
   );
 
   const result: SwitchResultFile = { ok: false };
   let backupInfo: Awaited<ReturnType<typeof createBackup>> | undefined;
   const previousKeychainToken = readKeychainToken();
+  const previousWslToken = wslOpts ? readWslStandaloneToken(wslOpts) : undefined;
 
   try {
     // 1. Wait for parent IDE process to terminate + settle
@@ -116,7 +127,7 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     }
 
     // 2. Kill the detached agy --hub daemon so it doesn't keep the old account in memory
-    killAgyHubDaemon();
+    killAgyHubDaemon(wslOpts);
     log('INFO', 'Cleared agy hub daemon/cache');
 
     // 3. Create full backup of state.vscdb if present
@@ -127,10 +138,10 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
 
     // 4. v2.6.0+ OS Keychain swap or clear
     if (job.clearKeychain || !job.keychainToken) {
-      const cleared = clearKeychainToken();
+      const cleared = clearKeychainToken(wslOpts);
       log('INFO', `Cleared OS keychain token (ok=${cleared})`);
     } else if (job.keychainToken) {
-      const wrote = writeKeychainToken(job.keychainToken, job.targetEmail);
+      const wrote = writeKeychainToken(job.keychainToken, job.targetEmail, wslOpts);
       log('INFO', `Wrote OS keychain token (ok=${wrote})`);
       if (!wrote) {
         throw new Error(
@@ -139,8 +150,12 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       }
 
       // Kill agy hub again after writing the new keychain token so it cannot overwrite or cache old state.
-      killAgyHubDaemon();
-      const readBack = readKeychainToken() || '';
+      killAgyHubDaemon(wslOpts);
+      if (wslOpts) {
+        const wslReadBack = readWslStandaloneToken(wslOpts);
+        log('INFO', `WSL standalone token synced=${Boolean(wslReadBack)}`);
+      }
+      const readBack = readKeychainToken(wslOpts) || '';
       const computedFp = fingerprint(readBack);
       const hasDbAuthToWrite = Boolean(
         job.values[KEYS.oauth] || job.values[KEYS.legacyInit] || job.values[KEYS.userStatus]
@@ -232,8 +247,12 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
 
     // Rollback OS Keychain if we had a previous token
     if (previousKeychainToken) {
-      writeKeychainToken(previousKeychainToken);
+      writeKeychainToken(previousKeychainToken, undefined, wslOpts);
       log('INFO', 'Rolled back OS keychain token');
+    }
+    if (previousWslToken && previousWslToken !== previousKeychainToken && wslOpts) {
+      writeKeychainToken(previousWslToken, undefined, { ...wslOpts, wslOnly: true });
+      log('INFO', 'Rolled back WSL standalone token');
     }
 
     // Rollback from backup if backup was created
@@ -277,7 +296,8 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
           if (
             key.startsWith('VSCODE_') ||
             key.startsWith('ELECTRON_') ||
-            key.startsWith('ANTIGRAVITY_')
+            key.startsWith('ANTIGRAVITY_') ||
+            key.startsWith('SWITCHYARD_')
           ) {
             delete cleanEnv[key];
           }

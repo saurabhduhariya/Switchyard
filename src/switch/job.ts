@@ -18,6 +18,10 @@ export interface SwitchJob {
   resultFile: string;
   /** Persistent log file for post-mortem diagnosis of detached switch-helper runs */
   logFile?: string;
+  /** Target WSL distribution name when IDE/workspace is running against WSL2. */
+  wslDistro?: string;
+  /** When true, sync/clear WSL standalone token & agy --hub daemon alongside Windows credentials. */
+  includeWsl?: boolean;
 }
 
 export interface SwitchResultFile {

@@ -7,7 +7,7 @@ import { parseSnapshot } from '../accounts/identity';
 import { readKeys } from '../db/StateDb';
 import { KEYS } from '../constants';
 import { readKeychainToken } from '../platform/keychain';
-import { isWsl, toWindowsPath } from '../platform/wsl';
+import { isWsl, resolveWslContextFromVscode, toWindowsPath } from '../platform/wsl';
 
 function resolveExistingResultFile(resultFile?: string): string | undefined {
   if (!resultFile) return undefined;
@@ -106,7 +106,13 @@ export async function reconcilePendingSwitch(
     const targetAccount = await store.get(pending.targetId);
     if (targetAccount) {
       try {
-        const liveKeychain = readKeychainToken();
+        const wslCtx = resolveWslContextFromVscode(vscode);
+        const liveKeychain =
+          readKeychainToken(
+            wslCtx.isWslRemote
+              ? { includeWsl: true, preferWsl: true, wslDistro: wslCtx.wslDistro }
+              : undefined
+          ) ?? (wslCtx.isWslRemote ? readKeychainToken() : undefined);
         const liveValues: Record<string, string> = {};
         if (liveKeychain) {
           liveValues[KEYS.keychainToken] = liveKeychain;

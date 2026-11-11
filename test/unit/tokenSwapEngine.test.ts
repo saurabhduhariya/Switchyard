@@ -556,5 +556,54 @@ describe('switch/TokenSwapEngine', () => {
     expect(res.error).toMatch(/other@example\.com/);
     expect(fakeSpawner).not.toHaveBeenCalled();
   });
+
+  it('propagates wslDistro and includeWsl to SwitchJob and helper env when in WSL remote workspace', async () => {
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-wsl', email: 'wsl@example.com', addedAt: Date.now(), fingerprint: 'fp-wsl' },
+    ]);
+    await store.saveSnapshot('acc-wsl', {
+      values: {
+        [KEYS.keychainToken]: JSON.stringify({
+          id_token_email: 'wsl@example.com',
+          token: { access_token: 'a-wsl', refresh_token: 'r-wsl' },
+        }),
+      },
+      capturedAt: Date.now(),
+    });
+
+    const origRemoteName = vscode.env.remoteName;
+    const origFolders = vscode.workspace.workspaceFolders;
+    (vscode.env as any).remoteName = 'wsl';
+    (vscode.workspace as any).workspaceFolders = [
+      { uri: { scheme: 'vscode-remote', authority: 'wsl+Ubuntu-24.04', fsPath: '/home/ubuntu/proj' } },
+    ];
+
+    try {
+      const fakeSpawner = vi.fn().mockReturnValue({ pid: 9999, unref: vi.fn() });
+      const engine = new TokenSwapEngine({
+        store,
+        logger,
+        globalStorageUri: { fsPath: tmpDir } as any,
+        memento,
+        dbPath,
+        spawner: fakeSpawner as any,
+        executableFinder: () => '/mock/exe',
+      });
+
+      const res = await engine.switchTo('acc-wsl');
+      expect(res.ok).toBe(true);
+      expect(fakeSpawner).toHaveBeenCalledOnce();
+
+      const spawnedJobPath = fakeSpawner.mock.calls[0][1][1] as string;
+      const spawnedOptions = fakeSpawner.mock.calls[0][2] as { env?: Record<string, string> };
+      const jobJson = JSON.parse(fs.readFileSync(spawnedJobPath, 'utf8'));
+      expect(jobJson.includeWsl).toBe(true);
+      expect(jobJson.wslDistro).toBe('Ubuntu-24.04');
+      expect(spawnedOptions.env?.SWITCHYARD_WSL_DISTRO).toBe('Ubuntu-24.04');
+    } finally {
+      (vscode.env as any).remoteName = origRemoteName;
+      (vscode.workspace as any).workspaceFolders = origFolders;
+    }
+  });
 });
 

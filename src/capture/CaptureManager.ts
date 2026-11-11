@@ -20,8 +20,13 @@ import {
 } from '../constants';
 import { logoutAgyDaemon, killAgyHubDaemon, ensureAgyHubDaemonRunning } from '../platform/agyDaemon';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
-import { isWsl } from '../platform/wsl';
-import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../platform/keychain';
+import { isWsl, resolveWslContextFromVscode } from '../platform/wsl';
+import {
+  clearKeychainToken,
+  KeychainWslOptions,
+  readKeychainToken,
+  writeKeychainToken,
+} from '../platform/keychain';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
 import { findStateDb, getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
 import { QuotaCollector } from '../quota/QuotaCollector';
@@ -331,7 +336,9 @@ export class CaptureManager {
       this.notifyStateChange(session);
 
       // v2.6.0+: Stash current OS Keychain token to restore to Window 1 later
-      const currentToken = readKeychainToken();
+      const wslOpts = this.getKeychainWslOptions();
+      const currentToken =
+        readKeychainToken() || (wslOpts ? readKeychainToken(wslOpts) : undefined);
       if (currentToken) {
         session.stashedKeychainToken = currentToken;
         session.preCaptureFingerprint = fingerprint(currentToken);
@@ -415,7 +422,10 @@ export class CaptureManager {
       return 'new';
     }
     try {
-      const match = (await this.store.list()).find((acc) => acc.email === email);
+      const normalized = email.trim().toLowerCase();
+      const match = (await this.store.list()).find(
+        (acc) => acc.email?.trim().toLowerCase() === normalized
+      );
       if (!match) {
         return 'new';
       }
@@ -511,6 +521,19 @@ export class CaptureManager {
     return false;
   }
 
+  private getKeychainWslOptions(): KeychainWslOptions | undefined {
+    const wslCtx = resolveWslContextFromVscode(vscode);
+    if (!wslCtx.isWslRemote) {
+      return undefined;
+    }
+    return {
+      includeWsl: true,
+      preferWsl: true,
+      wslDistro: wslCtx.wslDistro,
+      wslRunningOnly: true,
+    };
+  }
+
   /**
    * Restores Account 1's stashed keychain token to OS Keychain and restarts agy --hub.
    */
@@ -520,7 +543,7 @@ export class CaptureManager {
     }
     try {
       this.logger.info('Restoring stashed primary keychain token for Window 1...');
-      writeKeychainToken(session.stashedKeychainToken);
+      writeKeychainToken(session.stashedKeychainToken, undefined, this.getKeychainWslOptions());
       killAgyHubDaemon();
       ensureAgyHubDaemonRunning();
     } catch (err) {
@@ -573,7 +596,10 @@ export class CaptureManager {
 
       // Grab the new account's live quota while Window 2's language server / agy daemon is still running!
       try {
-        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath);
+        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath, {
+          expectedEmail: identity.email,
+          captureDir: current.dir,
+        });
         if (capturedQuota) {
           this.lastDetectedQuotas.set(current.sessionId, capturedQuota);
         }
@@ -833,11 +859,13 @@ export class CaptureManager {
       };
 
       // If fromDb has userStatus/profileUrl that cached lacked, keep them.
-      if (fromDb[KEYS.userStatus] && !merged[KEYS.userStatus]) {
-        merged[KEYS.userStatus] = fromDb[KEYS.userStatus];
+      const flushedUserStatus = fromDb[KEYS.userStatus];
+      if (flushedUserStatus && !merged[KEYS.userStatus]) {
+        merged[KEYS.userStatus] = flushedUserStatus;
       }
-      if (fromDb[KEYS.profileUrl] && !merged[KEYS.profileUrl]) {
-        merged[KEYS.profileUrl] = fromDb[KEYS.profileUrl];
+      const flushedProfileUrl = fromDb[KEYS.profileUrl];
+      if (flushedProfileUrl && !merged[KEYS.profileUrl]) {
+        merged[KEYS.profileUrl] = flushedProfileUrl;
       }
 
       if (!hasToken(merged)) {
@@ -871,8 +899,9 @@ export class CaptureManager {
         if (identity.email) {
           let statusObj: Record<string, unknown> = {};
           try {
-            if (snapshot[KEYS.agyUserStatus]) {
-              statusObj = JSON.parse(snapshot[KEYS.agyUserStatus]);
+            const agyStatus = snapshot[KEYS.agyUserStatus];
+            if (agyStatus) {
+              statusObj = JSON.parse(agyStatus);
             }
           } catch {
             // Ignore malformed status JSON.

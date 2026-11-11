@@ -778,5 +778,18 @@ describe('capture/CaptureManager', () => {
       expect(fakeSpawner).toHaveBeenCalledTimes(1);
       manager.dispose();
     });
+
+    it('classifies detected emails case-insensitively as active or saved', async () => {
+      const manager = new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+      });
+
+      expect(await (manager as any).classifyDetected('MAIN@EXAMPLE.COM')).toBe('active');
+      expect(await (manager as any).classifyDetected('other@example.com')).toBe('new');
+      manager.dispose();
+    });
   });
 });

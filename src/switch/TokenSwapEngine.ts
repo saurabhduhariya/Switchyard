@@ -10,7 +10,7 @@ import { AuthDetector } from '../accounts/AuthDetector';
 import { parseSnapshot } from '../accounts/identity';
 import { AccountStore, MementoLike } from '../accounts/AccountStore';
 import { findStateDb, getBackupsDir } from '../platform/paths';
-import { isWsl } from '../platform/wsl';
+import { getWslDistrosOnWindows, isWsl, resolveWslContextFromVscode } from '../platform/wsl';
 import { CAPTURE_SESSION_STATE_KEY, KEYS } from '../constants';
 import { Logger } from '../util/logger';
 import { SwitchJob } from './job';
@@ -458,6 +458,11 @@ export class TokenSwapEngine implements SwitchEngine {
     const resultFile = path.join(jobsDir, `switchyard-result-${randomSuffix}.json`);
     const logFile = path.join(jobsDir, 'switch-helper.log');
 
+    const wslCtx = resolveWslContextFromVscode(vscode);
+    const includeWsl =
+      wslCtx.isWslRemote ||
+      (process.platform === 'win32' && getWslDistrosOnWindows({ runningOnly: true }).length > 0);
+
     const job: SwitchJob = {
       version: 1,
       parentPid: getMainProcessPid(), // Use Electron Main Process PID, not Extension Host PID
@@ -465,6 +470,8 @@ export class TokenSwapEngine implements SwitchEngine {
       backupDir: params.backupDir,
       resultFile,
       logFile,
+      ...(wslCtx.wslDistro ? { wslDistro: wslCtx.wslDistro } : {}),
+      ...(includeWsl ? { includeWsl: true } : {}),
       ...params.jobFields,
     };
 
@@ -485,6 +492,9 @@ export class TokenSwapEngine implements SwitchEngine {
       delete helperEnv.VSCODE_IPC_HOOK;
       delete helperEnv.VSCODE_IPC_HOOK_EXTHOST;
       delete helperEnv.VSCODE_IPC_HOOK_CLI;
+      if (wslCtx.wslDistro) {
+        helperEnv.SWITCHYARD_WSL_DISTRO = wslCtx.wslDistro;
+      }
       if (isWsl() && helperEnv.WSL_INTEROP && !fs.existsSync(helperEnv.WSL_INTEROP)) {
         delete helperEnv.WSL_INTEROP;
       }
