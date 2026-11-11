@@ -33,6 +33,9 @@ vi.mock('vscode', () => {
       Left: 1,
       Right: 2,
     },
+    ConfigurationTarget: {
+      Global: 1,
+    },
   };
 });
 
@@ -271,7 +274,7 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
     const mockSwitchEngine = {
       mode: 'profile' as const,
       switchTo: vi.fn(async () => ({ ok: true, mode: 'profile' as const })),
-      revealProfile: vi.fn(async () => {}),
+      revealProfile: vi.fn(async () => { }),
       copySettingsToProfile: vi.fn(async () => ({ ok: true, count: 2 })),
     };
 
@@ -428,6 +431,43 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
 
       await panelProvider.handleUseLegacyAdd();
       expect(capture.dismiss).toHaveBeenCalledOnce();
+      expect(capture.startCapture).not.toHaveBeenCalled();
+      expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
+    });
+
+    it('pushes addAccountMethod in state and routes after updateSetting toggles it', async () => {
+      const storeMap: Record<string, unknown> = { addAccountMethod: 'sideWindow' };
+      const updateSpy = vi.fn(async (key: string, value: unknown) => {
+        storeMap[key] = value;
+      });
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () =>
+          ({
+            get: (key: string, def: unknown) => (key in storeMap ? storeMap[key] : def),
+            update: updateSpy,
+          }) as any
+      );
+
+      await panelProvider.push();
+      let stateMsg = [...postedMessages].reverse().find((m) => m.type === 'state') as any;
+      expect(stateMsg?.addAccountMethod).toBe('sideWindow');
+
+      const handler = vi.mocked(fakeWebviewView.webview.onDidReceiveMessage).mock.calls[0]![0] as (
+        m: any
+      ) => Promise<void>;
+      await handler({ type: 'updateSetting', key: 'addAccountMethod', value: 'signOutRestart' });
+      expect(updateSpy).toHaveBeenCalledWith('addAccountMethod', 'signOutRestart', vscode.ConfigurationTarget.Global);
+
+      stateMsg = [...postedMessages].reverse().find((m) => m.type === 'state') as any;
+      expect(stateMsg?.addAccountMethod).toBe('signOutRestart');
+
+      const capture = fakeCapture();
+      const engine = fakeEngine('tokenSwap');
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+      vi.mocked(vscode.window.showInformationMessage).mockResolvedValueOnce('Sign Out & Restart' as any);
+
+      await panelProvider.handleAddNewAccount();
       expect(capture.startCapture).not.toHaveBeenCalled();
       expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
     });
@@ -742,6 +782,110 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       await setup();
       await panelProvider.push();
       expect(lastState().trends).toBeUndefined();
+    });
+  });
+
+  describe('capture & auto-save improvements', () => {
+    it('does not fall back to signOutAndRestart when capture is alreadyInProgress', async () => {
+      const engine = {
+        mode: 'tokenSwap' as const,
+        switchTo: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+        signOutAndRestart: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+      };
+      const capture = {
+        startCapture: vi.fn(async () => ({
+          ok: false,
+          alreadyInProgress: true,
+          error: 'A capture session is already in progress.',
+        })),
+        dismiss: vi.fn(async () => undefined),
+        reopenWindow: vi.fn(async () => ({ ok: true })),
+        getCurrentSession: vi.fn(() => ({ sessionId: 's1', state: 'waitingForSignIn' })),
+      };
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+
+      vi.mocked(vscode.window.showErrorMessage).mockClear();
+      await panelProvider.handleAddNewAccount();
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+      expect(engine.signOutAndRestart).not.toHaveBeenCalled();
+      expect(capture.reopenWindow).toHaveBeenCalledOnce();
+    });
+
+    it('auto-saves and activates newly detected unsaved account when addingAccount guide is active', async () => {
+      await state.update('switchyard.addingAccount', {
+        previousId: 'old-acc',
+        previousEmail: 'old@example.com',
+        startedAt: Date.now(),
+      });
+      const fakeDetector = {
+        detectActive: vi.fn(async () => ({
+          identity: { email: 'fresh@example.com', fingerprint: 'fp-fresh', plan: 'Free' },
+          snapshot: {
+            values: {
+              'agy.keychainToken': 'go-keyring-base64:Zm9v',
+              'agy.userStatusJson': JSON.stringify({ email: 'fresh@example.com', plan: 'Free' }),
+            },
+            capturedAt: Date.now(),
+          },
+        })),
+      };
+      const localPanel = new PanelProvider(fakeContext, store, fakeDetector as any, logger, statusBar);
+      localPanel.resolveWebviewView(fakeWebviewView);
+
+      await localPanel.detectAndRefresh(true);
+
+      const saved = await store.getByEmail('fresh@example.com');
+      expect(saved).toBeDefined();
+      expect(await store.activeId()).toBe(saved!.id);
+      expect(state.get('switchyard.addingAccount')).toBeUndefined();
+    });
+  });
+
+  describe('dummy account guard', () => {
+    it('ignores unsaved detection without identity.email instead of prompting or clearing active account', async () => {
+      const existing = await store.upsertFromSnapshot(
+        {
+          values: {
+            'antigravityUnifiedStateSync.oauthToken': 'existing-token-bytes',
+            'agy.userStatusJson': JSON.stringify({ email: 'existing@example.com' }),
+          },
+          capturedAt: 1,
+        },
+        'Existing User'
+      );
+      await store.setActive(existing.id);
+
+      const det = Object.values(panelProvider as any).find(
+        (v: any): v is { detectActive: () => Promise<unknown> } =>
+          Boolean(v && typeof v === 'object' && typeof v.detectActive === 'function')
+      );
+      expect(det).toBeDefined();
+
+      vi.mocked(vscode.window.showInformationMessage).mockClear();
+      postedMessages.length = 0;
+
+      const spy = vi.spyOn(det!, 'detectActive').mockResolvedValue({
+        snapshot: {
+          values: { 'antigravityUnifiedStateSync.oauthToken': 'opaque-no-email-blob' },
+          capturedAt: Date.now(),
+        },
+        identity: {
+          fingerprint: 'deadbeef1234',
+          label: 'Account (deadbe)',
+        },
+      });
+
+      try {
+        await (panelProvider as any)._runDetectAndRefresh();
+      } finally {
+        spy.mockRestore();
+      }
+
+      expect(await store.activeId()).toBe(existing.id);
+      expect((panelProvider as any).pendingSnapshot).toBeUndefined();
+      expect(vscode.window.showInformationMessage).not.toHaveBeenCalled();
+      expect(postedMessages.some((m) => m.type === 'toast')).toBe(false);
     });
   });
 });

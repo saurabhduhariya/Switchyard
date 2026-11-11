@@ -83,9 +83,14 @@
     transition: background 0.12s, border-color 0.12s;
   }
 
-  .add-btn:hover {
+  .add-btn:hover:not(:disabled) {
     background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff), transparent 90%);
     border-color: var(--vscode-textLink-foreground, #3794ff);
+  }
+
+  .add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .add-btn:focus-visible {

@@ -20,6 +20,7 @@ vi.mock('vscode', () => {
     commands: {
       executeCommand: vi.fn(),
     },
+    env: { remoteName: undefined, appRoot: '/mock/app/root' },
     extensions: {
       getExtension: vi.fn(),
     },
@@ -224,6 +225,8 @@ describe('switch/TokenSwapEngine', () => {
       executableFinder: () => '/mock/antigravity-ide',
     });
 
+    await memento.update('switchyard.captureSession', { sessionId: 'stale-cap', state: 'waitingForSignIn' });
+
     const result = await engine.signOutAndRestart({
       previousId: 'acc-prev',
       previousEmail: 'prev@example.com',
@@ -231,6 +234,7 @@ describe('switch/TokenSwapEngine', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(memento.get('switchyard.captureSession')).toBeUndefined();
     expect(fakeSpawner).toHaveBeenCalled();
 
     // Verify addingAccount was stored in memento
@@ -344,6 +348,8 @@ describe('switch/TokenSwapEngine', () => {
       executableFinder: () => '/mock/antigravity-ide',
     });
 
+    await memento.update('switchyard.captureSession', { sessionId: 'stale-cap', state: 'waitingForSignIn' });
+
     const result = await engine.signOutAndRestart({
       previousId: 'acc-prev',
       previousEmail: 'prev@example.com',
@@ -351,6 +357,7 @@ describe('switch/TokenSwapEngine', () => {
     });
 
     expect(result.ok).toBe(true);
+    expect(memento.get('switchyard.captureSession')).toBeUndefined();
     expect(fakeSpawner).toHaveBeenCalledOnce();
     expect(spawnedEnv.ELECTRON_RUN_AS_NODE).toBe('1');
 
@@ -403,6 +410,200 @@ describe('switch/TokenSwapEngine', () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/requires re-authentication/);
     expect(vscode.commands.executeCommand).toHaveBeenCalledWith('switchyard.addNewAccount');
+  });
+
+  it('skips active session re-capture when detected email conflicts with active account', async () => {
+    // Setup active account A
+    const accountA = await store.upsertFromSnapshot({
+      values: { [KEYS.keychainToken]: 'token-a' },
+      capturedAt: Date.now(),
+    });
+    accountA.email = 'account-a@example.com';
+    await memento.update('switchyard.accounts', [accountA]);
+    await store.setActive(accountA.id);
+
+    // Save initial snapshot for account A
+    await store.saveSnapshot(accountA.id, {
+      values: { [KEYS.keychainToken]: 'token-a-original' },
+      capturedAt: Date.now(),
+    });
+
+    // Target account B
+    const accountB = await store.upsertFromSnapshot({
+      values: { [KEYS.keychainToken]: 'token-b' },
+      capturedAt: Date.now(),
+    });
+    accountB.email = 'account-b@example.com';
+    await memento.update('switchyard.accounts', [accountA, accountB]);
+    await store.saveSnapshot(accountB.id, {
+      values: { [KEYS.keychainToken]: 'token-b' },
+      capturedAt: Date.now(),
+    });
+
+    // Mock detector detecting Account X (different email)
+    const mockDetector = {
+      detectActive: vi.fn().mockResolvedValue({
+        identity: { email: 'different-account@example.com', fingerprint: 'fp-diff' },
+        snapshot: {
+          values: { [KEYS.keychainToken]: 'polluted-token' },
+          capturedAt: Date.now(),
+        },
+      }),
+    } as any;
+
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValueOnce('Switch and Restart' as any);
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      detector: mockDetector,
+      spawner: vi.fn().mockReturnValue({ unref: vi.fn(), pid: 1234 } as any),
+      executableFinder: () => '/mock/exe',
+    });
+
+    await engine.switchTo(accountB.id);
+
+    // Account A's snapshot should NOT have been overwritten with polluted-token
+    const snapA = await store.loadSnapshot(accountA.id);
+    expect(snapA?.values[KEYS.keychainToken]).toBe('token-a-original');
+  });
+
+  it('writes job, result, and log paths under switchyard-jobs beside state.vscdb and aborts if target snapshot email mismatches', async () => {
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-ok', email: 'ok@example.com', addedAt: Date.now(), fingerprint: '1111' },
+      { id: 'acc-bad', email: 'wanted@example.com', addedAt: Date.now(), fingerprint: '2222' },
+    ]);
+
+    const pollutedPayload = JSON.stringify({
+      id_token_email: 'other@example.com',
+      token: { access_token: 'a', refresh_token: 'r-other' },
+    });
+    await store.saveSnapshot('acc-bad', {
+      values: { [KEYS.keychainToken]: pollutedPayload },
+      capturedAt: Date.now(),
+    });
+
+    vi.mocked(vscode.window.showWarningMessage).mockResolvedValue('Switch and Restart' as any);
+    const fakeSpawner = vi.fn().mockReturnValue({ pid: 9999, unref: vi.fn() });
+
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      spawner: fakeSpawner as any,
+      executableFinder: () => '/mock/exe',
+    });
+
+    const mismatchRes = await engine.switchTo('acc-bad');
+    expect(mismatchRes.ok).toBe(false);
+    expect(mismatchRes.error).toMatch(/other@example\.com/);
+    expect(fakeSpawner).not.toHaveBeenCalled();
+
+    // Valid snapshot with matching email should place job/result/log next to dbPath
+    const cleanPayload = JSON.stringify({
+      id_token_email: 'ok@example.com',
+      token: { access_token: 'a2', refresh_token: 'r-ok' },
+    });
+    await store.saveSnapshot('acc-ok', {
+      values: { [KEYS.keychainToken]: cleanPayload },
+      capturedAt: Date.now(),
+    });
+    const okRes = await engine.switchTo('acc-ok');
+    expect(okRes.ok).toBe(true);
+    expect(fakeSpawner).toHaveBeenCalledOnce();
+    const spawnedJobPath = fakeSpawner.mock.calls[0][1][1] as string;
+    expect(spawnedJobPath.startsWith(path.join(tmpDir, 'switchyard-jobs'))).toBe(true);
+    const jobJson = JSON.parse(fs.readFileSync(spawnedJobPath, 'utf8'));
+    expect(jobJson.logFile).toBe(path.join(tmpDir, 'switchyard-jobs', 'switch-helper.log'));
+    expect(jobJson.resultFile.startsWith(path.join(tmpDir, 'switchyard-jobs'))).toBe(true);
+  });
+
+  it('catches keychainToken email mismatch even when antigravityUserStatus reports expected email', async () => {
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-mixed', email: 'wanted@example.com', addedAt: Date.now(), fingerprint: 'fp-mixed' },
+    ]);
+
+    const wrongKeychainPayload = JSON.stringify({
+      id_token_email: 'other@example.com',
+      token: { access_token: 'a', refresh_token: 'r-other' },
+    });
+    await store.saveSnapshot('acc-mixed', {
+      values: {
+        [KEYS.agyUserStatus]: JSON.stringify({ email: 'wanted@example.com' }),
+        [KEYS.keychainToken]: wrongKeychainPayload,
+      },
+      capturedAt: Date.now(),
+    });
+
+    const fakeSpawner = vi.fn().mockReturnValue({ pid: 9999, unref: vi.fn() });
+    const engine = new TokenSwapEngine({
+      store,
+      logger,
+      globalStorageUri: { fsPath: tmpDir } as any,
+      memento,
+      dbPath,
+      spawner: fakeSpawner as any,
+      executableFinder: () => '/mock/exe',
+    });
+
+    const res = await engine.switchTo('acc-mixed');
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/other@example\.com/);
+    expect(fakeSpawner).not.toHaveBeenCalled();
+  });
+
+  it('propagates wslDistro and includeWsl to SwitchJob and helper env when in WSL remote workspace', async () => {
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-wsl', email: 'wsl@example.com', addedAt: Date.now(), fingerprint: 'fp-wsl' },
+    ]);
+    await store.saveSnapshot('acc-wsl', {
+      values: {
+        [KEYS.keychainToken]: JSON.stringify({
+          id_token_email: 'wsl@example.com',
+          token: { access_token: 'a-wsl', refresh_token: 'r-wsl' },
+        }),
+      },
+      capturedAt: Date.now(),
+    });
+
+    const origRemoteName = vscode.env.remoteName;
+    const origFolders = vscode.workspace.workspaceFolders;
+    (vscode.env as any).remoteName = 'wsl';
+    (vscode.workspace as any).workspaceFolders = [
+      { uri: { scheme: 'vscode-remote', authority: 'wsl+Ubuntu-24.04', fsPath: '/home/ubuntu/proj' } },
+    ];
+
+    try {
+      const fakeSpawner = vi.fn().mockReturnValue({ pid: 9999, unref: vi.fn() });
+      const engine = new TokenSwapEngine({
+        store,
+        logger,
+        globalStorageUri: { fsPath: tmpDir } as any,
+        memento,
+        dbPath,
+        spawner: fakeSpawner as any,
+        executableFinder: () => '/mock/exe',
+      });
+
+      const res = await engine.switchTo('acc-wsl');
+      expect(res.ok).toBe(true);
+      expect(fakeSpawner).toHaveBeenCalledOnce();
+
+      const spawnedJobPath = fakeSpawner.mock.calls[0][1][1] as string;
+      const spawnedOptions = fakeSpawner.mock.calls[0][2] as { env?: Record<string, string> };
+      const jobJson = JSON.parse(fs.readFileSync(spawnedJobPath, 'utf8'));
+      expect(jobJson.includeWsl).toBe(true);
+      expect(jobJson.wslDistro).toBe('Ubuntu-24.04');
+      expect(spawnedOptions.env?.SWITCHYARD_WSL_DISTRO).toBe('Ubuntu-24.04');
+    } finally {
+      (vscode.env as any).remoteName = origRemoteName;
+      (vscode.workspace as any).workspaceFolders = origFolders;
+    }
   });
 });
 

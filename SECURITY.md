@@ -107,7 +107,7 @@ This extension handles **highly sensitive authentication credentials**. Understa
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐ │
 │  │  OS Keychain (Operating System)                        │ │
-│  │  • Active credentials (service: gemini, username: agy) │ │
+│  │  • Active: service=gemini, username=antigravity        │ │
 │  │  • Encrypted at rest, per-user isolation               │ │
 │  │  • Managed via local agy --hub daemon in v2.6.0+       │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -301,5 +301,5 @@ If you're contributing code:
 
 ---
 
-**Last Updated:** November 4, 2026  
-**Version:** 0.3.0
+**Last Updated:** November 12, 2026  
+**Version:** 0.3.1

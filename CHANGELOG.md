@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-12
+
+### Fixed
+- **WSL2 (Windows 11 + Linux Remote Workspace Host) Compatibility**:
+  - Declared `"extensionKind": ["ui", "workspace"]` in `package.json` to run Switchyard on the Windows 11 UI host where `state.vscdb`, Windows Credential Manager, and the default browser reside.
+  - Added `src/platform/wsl.ts` for WSL2 detection, POSIX ↔ Windows/UNC path translation (`toWindowsPath`), Windows user profile discovery, and active WSL distro home/authority resolution.
+  - Bridged OS Keychain and `agy --hub` daemon discovery across Windows and WSL2 (`keychain.ts`, `agyDaemon.ts`, `QuotaCollector.ts`) so credentials sync and live model quotas fetch over forwarded loopback ports.
+  - Resolved Windows IDE/extensions directories and WSL relaunch arguments (`ide.ts`, `launch.ts`, `paths.ts`, `processes.ts`), preserving remote WSL context during token-swap restarts and cross-OS helper reconciliation (`TokenSwapEngine.ts`, `switch-helper.ts`, `reconcile.ts`).
+- **Authentication, Capture & UI Reliability**:
+  - Hardened identity parsing (`identity.ts`, `AuthDetector.ts`) against signed-out sentinels, invalid emails, nameless detections, and conflicting keychain/DB identities, while keeping `AuthDetector` and `openBackupsFolder` functional if `state.vscdb` is absent.
+  - Improved side-window capture stability (`CaptureManager.ts`), auto-saved newly added accounts, disabled **Add Another Account** while a capture session is active, and avoided false sign-out fallbacks in `PanelProvider.ts`.
+  - Exposed **Add Account Method** (`Side Window` / `Sign Out & Restart`) in the in-panel Settings view (`SettingsView.svelte`).
+
 ## [0.3.0] - 2026-11-04
 
 ### Added

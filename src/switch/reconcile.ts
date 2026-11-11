@@ -7,6 +7,53 @@ import { parseSnapshot } from '../accounts/identity';
 import { readKeys } from '../db/StateDb';
 import { KEYS } from '../constants';
 import { readKeychainToken } from '../platform/keychain';
+import { isWsl, resolveWslContextFromVscode, toWindowsPath } from '../platform/wsl';
+
+function resolveExistingResultFile(resultFile?: string): string | undefined {
+  if (!resultFile) return undefined;
+  if (fs.existsSync(resultFile)) return resultFile;
+
+  // Cross-OS fallback in case Switchyard runs on the opposite side of a Windows<->WSL bridge
+  if (process.platform === 'win32' && resultFile.startsWith('/mnt/')) {
+    const winMatch = resultFile.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
+    if (winMatch?.[1] && winMatch[2] !== undefined) {
+      const winPath = `${winMatch[1].toUpperCase()}:\\${winMatch[2].replace(/\//g, '\\')}`;
+      if (fs.existsSync(winPath)) return winPath;
+    }
+  } else if (isWsl()) {
+    const driveMatch = resultFile.match(/^([a-zA-Z]):[\\/](.*)$/);
+    if (driveMatch?.[1] && driveMatch[2] !== undefined) {
+      const wslPath = `/mnt/${driveMatch[1].toLowerCase()}/${driveMatch[2].replace(/\\/g, '/')}`;
+      if (fs.existsSync(wslPath)) return wslPath;
+    }
+    const winConverted = toWindowsPath(resultFile);
+    if (winConverted !== resultFile && fs.existsSync(winConverted)) return winConverted;
+  }
+  return undefined;
+}
+
+/**
+ * Displays a VS Code action notification without blocking callers on user dismissal,
+ * while still draining microtasks so pre-resolved promises run before returning.
+ */
+async function promptAction(
+  prompt: Thenable<string | undefined>,
+  onChoice: (choice: string | undefined) => void
+): Promise<void> {
+  void Promise.resolve(prompt).then(onChoice, () => {
+    // Ignore errors from dismissed or cancelled VS Code notifications
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+async function offerRestoreBackup(message: string): Promise<void> {
+  await promptAction(vscode.window.showErrorMessage(message, 'Restore Backup'), (choice) => {
+    if (choice === 'Restore Backup') {
+      void vscode.commands.executeCommand('switchyard.restoreBackup');
+    }
+  });
+}
 
 export interface PendingSwitchState {
   targetId: string;
@@ -39,15 +86,16 @@ export async function reconcilePendingSwitch(
   logger.info(`Reconciling pending switch for ${pending.targetEmail}...`);
 
   let resultFileContent: SwitchResultFile | undefined;
-  if (pending.resultFile && fs.existsSync(pending.resultFile)) {
+  const resolvedResultFile = resolveExistingResultFile(pending.resultFile);
+  if (resolvedResultFile) {
     try {
-      const raw = fs.readFileSync(pending.resultFile, 'utf8');
+      const raw = fs.readFileSync(resolvedResultFile, 'utf8');
       resultFileContent = JSON.parse(raw) as SwitchResultFile;
     } catch (err) {
-      logger.warn(`Failed to parse resultFile ${pending.resultFile}:`, err);
+      logger.warn(`Failed to parse resultFile ${resolvedResultFile}:`, err);
     } finally {
       try {
-        fs.rmSync(pending.resultFile, { force: true });
+        fs.rmSync(resolvedResultFile, { force: true });
       } catch {
         // ignore
       }
@@ -58,7 +106,13 @@ export async function reconcilePendingSwitch(
     const targetAccount = await store.get(pending.targetId);
     if (targetAccount) {
       try {
-        const liveKeychain = readKeychainToken();
+        const wslCtx = resolveWslContextFromVscode(vscode);
+        const liveKeychain =
+          readKeychainToken(
+            wslCtx.isWslRemote
+              ? { includeWsl: true, preferWsl: true, wslDistro: wslCtx.wslDistro }
+              : undefined
+          ) ?? (wslCtx.isWslRemote ? readKeychainToken() : undefined);
         const liveValues: Record<string, string> = {};
         if (liveKeychain) {
           liveValues[KEYS.keychainToken] = liveKeychain;
@@ -68,21 +122,26 @@ export async function reconcilePendingSwitch(
         }
         const liveIdentity = parseSnapshot(liveValues);
         const fpMatches = liveIdentity.fingerprint === targetAccount.fingerprint;
-        const emailMatches =
-          Boolean(liveIdentity.email) &&
-          liveIdentity.email!.toLowerCase().trim() === targetAccount.email.toLowerCase().trim();
-        if (!fpMatches && !emailMatches) {
+        const liveEmail = liveIdentity.email?.toLowerCase().trim();
+        const targetEmail = targetAccount.email?.toLowerCase().trim();
+        const emailMatches = Boolean(liveEmail && targetEmail && liveEmail === targetEmail);
+        const emailConflicts = Boolean(liveEmail && targetEmail && liveEmail !== targetEmail);
+        if (emailConflicts || (!fpMatches && !emailMatches)) {
           logger.warn(
-            `Fingerprint mismatch after switch! Expected ${targetAccount.fingerprint}, got ${liveIdentity.fingerprint}`
+            `Post-switch verification mismatch! Expected ${targetAccount.email} (${targetAccount.fingerprint}), got ${liveIdentity.email ?? 'unknown'} (${liveIdentity.fingerprint})`
           );
-          const choice = await vscode.window.showWarningMessage(
-            `Switchyard: Account switch completed, but verification detected a mismatch. The IDE may still be on the previous account.`,
-            'Retry Switch',
-            'Dismiss'
+          await promptAction(
+            vscode.window.showWarningMessage(
+              `Switchyard: Account switch completed, but verification detected a mismatch. The IDE may still be on the previous account.`,
+              'Retry Switch',
+              'Dismiss'
+            ),
+            (choice) => {
+              if (choice === 'Retry Switch') {
+                void vscode.commands.executeCommand('switchyard.switchAccount', pending.targetId);
+              }
+            }
           );
-          if (choice === 'Retry Switch') {
-            void vscode.commands.executeCommand('switchyard.switchAccount', pending.targetId);
-          }
           return;
         }
       } catch (err) {
@@ -97,13 +156,7 @@ export async function reconcilePendingSwitch(
   } else if (resultFileContent && !resultFileContent.ok) {
     const err = resultFileContent.error || 'Unknown error during token swap';
     logger.error(`Switch to ${pending.targetEmail} failed: ${err}`);
-    const choice = await vscode.window.showErrorMessage(
-      `Switchyard: Failed to switch to ${pending.targetEmail}: ${err}`,
-      'Restore Backup'
-    );
-    if (choice === 'Restore Backup') {
-      void vscode.commands.executeCommand('switchyard.restoreBackup');
-    }
+    await offerRestoreBackup(`Switchyard: Failed to switch to ${pending.targetEmail}: ${err}`);
   } else {
     // Result file missing (e.g. process died before helper ran or quit was cancelled)
     const elapsed = Date.now() - (pending.startedAt || 0);
@@ -120,26 +173,21 @@ export async function reconcilePendingSwitch(
     { resultFile?: string; previousEmail?: string } | undefined
   >('switchyard.addingAccount', undefined);
 
-  if (addingState?.resultFile && fs.existsSync(addingState.resultFile)) {
+  const resolvedAddingResult = resolveExistingResultFile(addingState?.resultFile);
+  if (resolvedAddingResult) {
     try {
-      const raw = fs.readFileSync(addingState.resultFile, 'utf8');
+      const raw = fs.readFileSync(resolvedAddingResult, 'utf8');
       const result = JSON.parse(raw) as SwitchResultFile;
       if (!result.ok) {
         const err = result.error || 'Unknown error while signing out';
         logger.error(`Sign out for adding account failed: ${err}`);
-        const choice = await vscode.window.showErrorMessage(
-          `Switchyard: Failed to sign out current session: ${err}`,
-          'Restore Backup'
-        );
-        if (choice === 'Restore Backup') {
-          void vscode.commands.executeCommand('switchyard.restoreBackup');
-        }
+        await offerRestoreBackup(`Switchyard: Failed to sign out current session: ${err}`);
       }
     } catch (err) {
       logger.warn('Failed to parse addingAccount resultFile:', err);
     } finally {
       try {
-        fs.rmSync(addingState.resultFile, { force: true });
+        fs.rmSync(resolvedAddingResult, { force: true });
       } catch {
         // ignore
       }

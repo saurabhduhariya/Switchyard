@@ -3,7 +3,7 @@
   "displayName": "Switchyard – Account Switcher for Antigravity",
   "description": "Multi-account switcher sidebar for the Google Antigravity IDE",
   "publisher": "saurabhduhariya",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -34,6 +34,10 @@
     "Other"
   ],
   "main": "./dist/extension.js",
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],

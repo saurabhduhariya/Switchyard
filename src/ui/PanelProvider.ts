@@ -225,6 +225,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration('switchyard');
     const maskEmails = config.get<boolean>('maskEmails', false);
     const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
+    const addAccountMethod = config.get<'sideWindow' | 'signOutRestart'>('addAccountMethod', 'sideWindow');
     const confirmBeforeSwitch = config.get<boolean>('confirmBeforeSwitch', true);
     const backupRetention = config.get<number>('backupRetention', 5);
 
@@ -284,6 +285,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       activeId,
       maskEmails,
       mode,
+      addAccountMethod,
       confirmBeforeSwitch,
       backupRetention,
       addAccountGuide,
@@ -425,20 +427,36 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       const contentHash = crypto.createHash('sha256').update(JSON.stringify(snapshot.values)).digest('hex');
 
       // Match detected account against store
+      const detectedEmailNorm = identity.email?.toLowerCase().trim();
+      const canMatchAccount = (candidate: AccountMeta | undefined): candidate is AccountMeta => {
+        if (!candidate) return false;
+        if (!detectedEmailNorm) return true;
+        const candEmail = candidate.email?.toLowerCase().trim();
+        // Never fall back by fingerprint/profileUrl onto an account that belongs to a different email
+        return !candEmail || candEmail.startsWith('unknown-') || candEmail === detectedEmailNorm;
+      };
+
       let matched: AccountMeta | undefined;
       if (identity.email) {
         matched = await this.store.getByEmail(identity.email);
       }
       if (!matched && identity.fingerprint) {
-        matched = await this.store.getByFingerprint(identity.fingerprint);
+        const byFp = await this.store.getByFingerprint(identity.fingerprint);
+        if (canMatchAccount(byFp)) {
+          matched = byFp;
+        }
       }
       if (!matched) {
-        matched = await this.store.get(`fp-${identity.fingerprint}`);
+        const byFpId = await this.store.get(`fp-${identity.fingerprint}`);
+        if (canMatchAccount(byFpId)) {
+          matched = byFpId;
+        }
       }
       if (!matched && snapshot.values['antigravity.profileUrl']) {
         const targetUrl = snapshot.values['antigravity.profileUrl'];
         const accounts = await this.store.list();
         for (const acc of accounts) {
+          if (!canMatchAccount(acc)) continue;
           const snap = await this.store.loadSnapshot(acc.id);
           if (snap?.values?.['antigravity.profileUrl'] === targetUrl) {
             matched = acc;
@@ -463,10 +481,14 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           this.logger.info(`Detected active account switched to: ${matched.email}`);
         }
 
-        // Token rotation sync: update stored snapshot if changed and >= 60s elapsed
+        // Token rotation sync: update stored snapshot if changed, >= 60s elapsed, and email matches
         const lastUpdate = this.lastSnapshotUpdateMap.get(matched.id) || 0;
         const now = Date.now();
-        if (contentHash !== this.lastDetectedHash && (now - lastUpdate >= 60_000 || force)) {
+        if (
+          canMatchAccount(matched) &&
+          contentHash !== this.lastDetectedHash &&
+          (now - lastUpdate >= 60_000 || force)
+        ) {
           this.lastSnapshotUpdateMap.set(matched.id, now);
           this.lastDetectedHash = contentHash;
           await this.store.saveSnapshot(matched.id, snapshot);
@@ -474,9 +496,41 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         }
       } else {
         // Unsaved account detected (first-run capture or new login)
+        const addingState = this.ctx.globalState?.get<
+          { previousId?: string; previousEmail?: string; expectedEmail?: string; startedAt?: number } | undefined
+        >('switchyard.addingAccount');
+
+        if (addingState && identity.email) {
+          const meta = await this.store.upsertFromSnapshot(snapshot);
+          await this.store.setActive(meta.id);
+          await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
+          this.dismissedSignOutBanner = false;
+          this.pendingSnapshot = undefined;
+          this.lastSnapshotUpdateMap.set(meta.id, Date.now());
+          this.lastDetectedHash = contentHash;
+          this.logger.info(`Auto-saved newly signed-in account after sign-out: ${meta.email}`);
+          void vscode.window.showInformationMessage(
+            `Switchyard: Detected and saved account ${meta.email}.`
+          );
+          await this.push();
+          void this.readQuota(meta.id, true).then(() => this.push());
+          return;
+        }
+
+        if (!identity.email) {
+          // Never prompt to save a nameless "Account (xxxxxx)" dummy account in the main panel
+          // (transient post-login window before agy resolves email, or incomplete metadata).
+          this.logger.debug(
+            `Detected auth snapshot (${identity.fingerprint}) without resolvable email; waiting before prompting.`
+          );
+          this.pendingSnapshot = undefined;
+          await this.push();
+          return;
+        }
+
         this.pendingSnapshot = snapshot;
-        const emailDisplay = identity.email || `Account (${identity.fingerprint.slice(0, 6)})`;
-        const candidateId = identity.email ? createAccountId(identity.email) : `fp-${identity.fingerprint}`;
+        const emailDisplay = identity.email;
+        const candidateId = createAccountId(identity.email);
 
         // Clear activeId so the old account is not shown as active
         await this.store.setActive(undefined);
@@ -814,7 +868,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       // so the real email is known and the first Switch opens already signed in.
       if (addAccountMethod === 'sideWindow' && this.captureManager) {
         const started = await this.captureManager.startCapture({ promoteToProfile: true });
-        if (started.ok) {
+        if (started.ok || started.alreadyInProgress) {
+          if (started.alreadyInProgress) {
+            await this.push();
+          }
           return;
         }
         vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${started.error}`);
@@ -829,6 +886,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     if (addAccountMethod === 'sideWindow' && this.captureManager) {
       // Use side-window capture flow
       const result = await this.captureManager.startCapture();
+      if (result.alreadyInProgress) {
+        // Session is already open/launching in this window — do NOT jump to Sign Out & Restart!
+        await this.push();
+        const current = this.captureManager.getCurrentSession();
+        if (current?.state === 'waitingForSignIn' && typeof this.captureManager.reopenWindow === 'function') {
+          await this.captureManager.reopenWindow();
+        }
+        return;
+      }
       if (!result.ok) {
         vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${result.error}`);
         // Fall back to legacy flow
@@ -912,7 +978,16 @@ export class PanelProvider implements vscode.WebviewViewProvider {
    * older flow for the current mode.
    */
   public async handleUseLegacyAdd(): Promise<void> {
-    await this.captureManager?.dismiss();
+    const activeCapture = this.captureManager?.getCurrentSession();
+    if (
+      activeCapture &&
+      ['launching', 'waitingForSignIn', 'detected', 'finishing', 'saving'].includes(activeCapture.state) &&
+      typeof this.captureManager?.cancel === 'function'
+    ) {
+      await this.captureManager.cancel();
+    } else {
+      await this.captureManager?.dismiss();
+    }
     await this.push();
     const mode = vscode.workspace
       .getConfiguration('switchyard')

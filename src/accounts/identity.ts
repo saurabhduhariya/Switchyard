@@ -164,6 +164,117 @@ export function fingerprint(value: string): string {
   return crypto.createHash('sha256').update(value || '').digest('hex').slice(0, 12);
 }
 
+const NON_EMAIL_ASSET_EXT_RE =
+  /\.(?:png|jpe?g|gif|svg|webp|ico|bmp|woff2?|ttf|eot|css|scss|js|mjs|cjs|ts|map|pb|db|vscdb|json|xml|html|lock)$/i;
+const STRICT_EMAIL_RE =
+  /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,15}$/;
+
+/**
+ * Validates that a candidate string looks like a real user email address
+ * (rejecting retina asset filenames like logo@2x.png or synthetic @switchyard.local placeholders).
+ */
+export function isPlausibleEmail(candidate: string): boolean {
+  const trimmed = candidate.trim();
+  if (!trimmed || trimmed.length > 254) return false;
+  if (!STRICT_EMAIL_RE.test(trimmed)) return false;
+  if (NON_EMAIL_ASSET_EXT_RE.test(trimmed)) return false;
+  if (trimmed.toLowerCase().endsWith('@switchyard.local')) return false;
+  return true;
+}
+
+function normalizeValidEmail(candidate?: string): string | undefined {
+  if (!candidate || typeof candidate !== 'string') return undefined;
+  const trimmed = candidate.trim();
+  return isPlausibleEmail(trimmed) ? trimmed : undefined;
+}
+
+/**
+ * Checks whether a raw or base64-encoded auth payload contains an explicit
+ * OAuth credential (access/refresh token, JWT, or Antigravity oauthToken sentinel).
+ */
+export function hasRecognizableOAuthCredential(rawValue?: string): boolean {
+  if (!rawValue || typeof rawValue !== 'string') return false;
+  const trimmed = rawValue.trim();
+  if (!trimmed) return false;
+
+  const inspectText = (text: string): boolean => {
+    if (!text) return false;
+    if (
+      text.includes('oauthTokenInfoSentinelKey') ||
+      text.includes('ya29.') ||
+      text.includes('1//')
+    ) {
+      return true;
+    }
+    const jwtMatch = text.match(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/);
+    if (jwtMatch?.[0] && jwtPayload(jwtMatch[0])) {
+      return true;
+    }
+    const checkJson = (candidate: string): boolean => {
+      try {
+        const parsed = JSON.parse(candidate) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+        const tokenObj =
+          typeof parsed.token === 'object' && parsed.token !== null
+            ? (parsed.token as Record<string, unknown>)
+            : parsed;
+        return Boolean(
+          (typeof tokenObj.access_token === 'string' && tokenObj.access_token.trim()) ||
+            (typeof tokenObj.accessToken === 'string' && tokenObj.accessToken.trim()) ||
+            (typeof tokenObj.refresh_token === 'string' && tokenObj.refresh_token.trim()) ||
+            (typeof tokenObj.refreshToken === 'string' && tokenObj.refreshToken.trim()) ||
+            (typeof tokenObj.id_token === 'string' && tokenObj.id_token.trim()) ||
+            (typeof tokenObj.idToken === 'string' && tokenObj.idToken.trim())
+        );
+      } catch {
+        return false;
+      }
+    };
+    if (checkJson(text)) return true;
+    return false;
+  };
+
+  if (inspectText(trimmed)) return true;
+  const jsonCandidate = trimmed.startsWith('go-keyring-base64:')
+    ? trimmed.slice('go-keyring-base64:'.length).trim()
+    : trimmed;
+  const decoded = b64decode(jsonCandidate);
+  if (decoded.length > 0 && inspectText(decoded.toString('utf8'))) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Returns true if an auth DB/keyring value explicitly indicates a signed-out state
+ * (e.g. Antigravity's authStateWithContextSentinelKey {"state":"signedOut",...})
+ * without carrying a real OAuth token.
+ */
+export function hasSignedOutSentinel(rawValue?: string): boolean {
+  if (!rawValue || typeof rawValue !== 'string') return false;
+  const trimmed = rawValue.trim();
+  if (!trimmed) return false;
+  if (hasRecognizableOAuthCredential(trimmed)) return false;
+
+  const containsSignedOutMarker = (text: string): boolean => {
+    if (!text) return false;
+    if (/"state"\s*:\s*"signedOut"/i.test(text)) {
+      return true;
+    }
+    if (text.includes('authStateWithContextSentinelKey')) {
+      return true;
+    }
+    return false;
+  };
+
+  if (containsSignedOutMarker(trimmed)) return true;
+  const b64Candidate = trimmed.startsWith('go-keyring-base64:')
+    ? trimmed.slice('go-keyring-base64:'.length).trim()
+    : trimmed;
+  const decoded = b64decode(b64Candidate);
+  return decoded.length > 0 && containsSignedOutMarker(decoded.toString('utf8'));
+}
+
 /**
  * Scans a buffer for emails, traversing protobuf fields, embedded base64, and JWTs.
  */
@@ -197,13 +308,21 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
   while ((match = jwtRegex.exec(str)) !== null) {
     const payload = jwtPayload(match[0]);
     if (payload && typeof payload.email === 'string') {
-      return payload.email;
+      const valid = normalizeValidEmail(payload.email);
+      if (valid) return valid;
     }
   }
 
-  // 3. Direct regex check
-  const directMatch = str.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-  if (directMatch) return directMatch[1];
+  // 3. Direct regex check (iterate matches so asset filenames like icon@2x.png do not shadow real emails)
+  const directRe = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,15})/g;
+  let directMatch: RegExpExecArray | null;
+  while ((directMatch = directRe.exec(str)) !== null) {
+    const candidate = directMatch[1];
+    if (candidate) {
+      const valid = normalizeValidEmail(candidate);
+      if (valid) return valid;
+    }
+  }
 
   // 4. Scan for embedded base64 chunks within binary buffer
   const latinStr = buf.toString('latin1');
@@ -422,8 +541,8 @@ export function parseSnapshot(
         plan?: string;
         rawStatus?: unknown;
       };
-      if (typeof parsed.email === 'string' && parsed.email.includes('@')) {
-        email = parsed.email;
+      if (typeof parsed.email === 'string') {
+        email = normalizeValidEmail(parsed.email);
       }
       if (typeof parsed.plan === 'string' && parsed.plan) {
         plan = parsed.plan;
@@ -462,10 +581,17 @@ export function parseSnapshot(
     email = extractEmailFromBuffer(oauthBuf);
   }
 
-  // 5. Scan any other values in the snapshot for an email address.
+  // 5. Fallback scan over identity/auth values only (avoid scanning unrelated keys like modelCredits/profileUrl)
   if (!email && typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
-    for (const val of Object.values(valuesOrOauth)) {
-      if (typeof val === 'string' && val.length > 3) {
+    const authCandidates = [
+      agyUserStatusJson,
+      keychainToken,
+      userStatus,
+      oauth,
+      valuesOrOauth[KEYS.legacyInit],
+    ];
+    for (const val of authCandidates) {
+      if (typeof val === 'string' && val.length > 3 && !hasSignedOutSentinel(val)) {
         const found =
           extractEmailFromBuffer(Buffer.from(val, 'utf8')) ||
           extractEmailFromBuffer(b64decode(val));

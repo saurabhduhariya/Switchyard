@@ -1,12 +1,18 @@
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { fingerprint } from '../../accounts/identity';
 import { KEYS } from '../../constants';
 import { createBackup, restoreBackup } from '../../db/backup';
 import { deleteKeys, readKeys, writeKeys } from '../../db/StateDb';
 import { killAgyHubDaemon } from '../../platform/agyDaemon';
 import { isProcessAlive } from '../../platform/ide';
-import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../../platform/keychain';
+import {
+  clearKeychainToken,
+  readKeychainToken,
+  readWslStandaloneToken,
+  writeKeychainToken,
+} from '../../platform/keychain';
 import { SwitchJob, SwitchResultFile } from '../job';
 
 export interface WaitForExitOptions {
@@ -25,7 +31,7 @@ export async function waitForExit(
   options: WaitForExitOptions = {}
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? 30_000;
-  const pollIntervalMs = options.pollIntervalMs ?? 200;
+  const pollIntervalMs = options.pollIntervalMs ?? 500;
   const settleDelayMs = options.settleDelayMs ?? 500;
 
   const start = Date.now();
@@ -40,6 +46,31 @@ export async function waitForExit(
 
   if (settleDelayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, settleDelayMs));
+  }
+}
+
+const MAX_LOG_BYTES = 512 * 1024;
+
+function appendHelperLog(logFile: string | undefined, level: 'INFO' | 'WARN' | 'ERROR', message: string): void {
+  if (!logFile) return;
+  try {
+    const dir = path.dirname(logFile);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+    try {
+      const st = fs.statSync(logFile);
+      if (st.size > MAX_LOG_BYTES) {
+        fs.truncateSync(logFile, 0);
+      }
+    } catch {
+      // file does not exist yet
+    }
+    fs.appendFileSync(logFile, `${new Date().toISOString()} [${level}] ${message}\n`, {
+      mode: 0o600,
+    });
+  } catch {
+    // Best-effort logging must never break token swapping
   }
 }
 
@@ -64,29 +95,54 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     return { ok: false, error: msg };
   }
 
+  const log = (level: 'INFO' | 'WARN' | 'ERROR', message: string) => {
+    appendHelperLog(job.logFile, level, message);
+    if (level === 'ERROR') {
+      console.error(message);
+    } else if (level === 'WARN') {
+      console.warn(message);
+    }
+  };
+
+  const wslOpts =
+    job.includeWsl || job.wslDistro
+      ? { includeWsl: true, wslDistro: job.wslDistro }
+      : undefined;
+
+  log(
+    'INFO',
+    `Helper started (pid=${process.pid}, parentPid=${job.parentPid}, target=${job.targetEmail || '<sign-out>'}, dbPath=${job.dbPath}, resultFile=${job.resultFile}, wsl=${wslOpts ? wslOpts.wslDistro || 'auto' : 'off'})`
+  );
+
   const result: SwitchResultFile = { ok: false };
   let backupInfo: Awaited<ReturnType<typeof createBackup>> | undefined;
   const previousKeychainToken = readKeychainToken();
+  const previousWslToken = wslOpts ? readWslStandaloneToken(wslOpts) : undefined;
 
   try {
     // 1. Wait for parent IDE process to terminate + settle
     if (job.parentPid && job.parentPid > 0) {
       await waitForExit(job.parentPid, { settleDelayMs: 400 });
+      log('INFO', `Parent IDE process ${job.parentPid} exited`);
     }
 
     // 2. Kill the detached agy --hub daemon so it doesn't keep the old account in memory
-    killAgyHubDaemon();
+    killAgyHubDaemon(wslOpts);
+    log('INFO', 'Cleared agy hub daemon/cache');
 
     // 3. Create full backup of state.vscdb if present
     if (job.dbPath && fs.existsSync(job.dbPath)) {
       backupInfo = await createBackup(job.dbPath, job.backupDir);
+      log('INFO', `Created backup ${backupInfo.id}`);
     }
 
     // 4. v2.6.0+ OS Keychain swap or clear
-    if (job.clearKeychain) {
-      clearKeychainToken();
+    if (job.clearKeychain || !job.keychainToken) {
+      const cleared = clearKeychainToken(wslOpts);
+      log('INFO', `Cleared OS keychain token (ok=${cleared})`);
     } else if (job.keychainToken) {
-      const wrote = writeKeychainToken(job.keychainToken);
+      const wrote = writeKeychainToken(job.keychainToken, job.targetEmail, wslOpts);
+      log('INFO', `Wrote OS keychain token (ok=${wrote})`);
       if (!wrote) {
         throw new Error(
           'Failed to write OAuth token to OS Keychain (service: gemini, username: antigravity).'
@@ -94,10 +150,18 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       }
 
       // Kill agy hub again after writing the new keychain token so it cannot overwrite or cache old state.
-      killAgyHubDaemon();
-      const readBack = readKeychainToken() || '';
+      killAgyHubDaemon(wslOpts);
+      if (wslOpts) {
+        const wslReadBack = readWslStandaloneToken(wslOpts);
+        log('INFO', `WSL standalone token synced=${Boolean(wslReadBack)}`);
+      }
+      const readBack = readKeychainToken(wslOpts) || '';
       const computedFp = fingerprint(readBack);
-      if (job.targetFingerprint && computedFp !== job.targetFingerprint) {
+      const hasDbAuthToWrite = Boolean(
+        job.values[KEYS.oauth] || job.values[KEYS.legacyInit] || job.values[KEYS.userStatus]
+      );
+      log('INFO', `Verified keychain fingerprint=${computedFp} (expected=${job.targetFingerprint || 'none'})`);
+      if (job.targetFingerprint && !hasDbAuthToWrite && computedFp !== job.targetFingerprint) {
         throw new Error(
           `Keychain verification failed: written fingerprint (${computedFp}) !== expected (${job.targetFingerprint})`
         );
@@ -110,6 +174,29 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     delete dbValues[KEYS.agyUserStatus];
 
     if (job.dbPath && fs.existsSync(job.dbPath)) {
+      // 5a. Update official Antigravity extension memento (google.google-antigravity)
+      try {
+        const existingAntigravity = await readKeys(job.dbPath, ['google.google-antigravity']);
+        if (existingAntigravity['google.google-antigravity']) {
+          const parsed = JSON.parse(existingAntigravity['google.google-antigravity']) as Record<string, any>;
+          if (parsed && typeof parsed === 'object') {
+            if (!parsed['antigravity-storage'] || typeof parsed['antigravity-storage'] !== 'object') {
+              parsed['antigravity-storage'] = {};
+            }
+            if (job.clearKeychain) {
+              delete parsed['antigravity-storage']['agy.onboarding.lastLoginUsername'];
+              delete parsed['antigravity-storage']['jetski.onboarding.lastLoginUsername'];
+            } else if (job.targetEmail) {
+              parsed['antigravity-storage']['agy.onboarding.lastLoginUsername'] = job.targetEmail;
+              parsed['antigravity-storage']['jetski.onboarding.lastLoginUsername'] = job.targetEmail;
+            }
+            dbValues['google.google-antigravity'] = JSON.stringify(parsed);
+          }
+        }
+      } catch (err) {
+        log('WARN', `Could not update google.google-antigravity in state.vscdb: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
       // Clean up old WAL/SHM companion files before writing
       const walFile = `${job.dbPath}-wal`;
       const shmFile = `${job.dbPath}-shm`;
@@ -127,6 +214,7 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       if (Object.keys(dbValues).length > 0) {
         await writeKeys(job.dbPath, dbValues);
       }
+      log('INFO', `Updated state.vscdb (deleted=${job.deleteKeys?.length || 0}, written=${Object.keys(dbValues).length})`);
 
       // If we don't have a keychainToken (e.g. legacy v2.5.5), verify from DB
       if (!job.keychainToken && !job.clearKeychain) {
@@ -151,35 +239,46 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
 
     result.ok = true;
     result.switchedAt = Date.now();
+    log('INFO', 'Token swap completed successfully');
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`Switchyard Helper Error: ${msg}`);
+    log('ERROR', `Switchyard Helper Error: ${msg}`);
     result.error = msg;
 
     // Rollback OS Keychain if we had a previous token
     if (previousKeychainToken) {
-      writeKeychainToken(previousKeychainToken);
+      writeKeychainToken(previousKeychainToken, undefined, wslOpts);
+      log('INFO', 'Rolled back OS keychain token');
+    }
+    if (previousWslToken && previousWslToken !== previousKeychainToken && wslOpts) {
+      writeKeychainToken(previousWslToken, undefined, { ...wslOpts, wslOnly: true });
+      log('INFO', 'Rolled back WSL standalone token');
     }
 
     // Rollback from backup if backup was created
     if (backupInfo && job.dbPath) {
       try {
         await restoreBackup(backupInfo, job.dbPath);
-        console.info(`Switchyard Helper: Successfully rolled back to backup ${backupInfo.id}`);
+        log('INFO', `Rolled back state.vscdb to backup ${backupInfo.id}`);
       } catch (rollbackErr) {
-        console.error('Switchyard Helper: Rollback failed:', rollbackErr);
+        log('ERROR', `Rollback failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
       }
     }
   } finally {
     // 7. Write result file
     try {
       if (job.resultFile) {
+        const resultDir = path.dirname(job.resultFile);
+        if (!fs.existsSync(resultDir)) {
+          fs.mkdirSync(resultDir, { recursive: true, mode: 0o700 });
+        }
         fs.writeFileSync(job.resultFile, JSON.stringify(result, null, 2), {
           mode: 0o600,
         });
+        log('INFO', `Wrote resultFile ok=${result.ok}`);
       }
     } catch (writeErr) {
-      console.error('Failed to write result file:', writeErr);
+      log('ERROR', `Failed to write result file: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
     }
 
     // 8. Delete job file (sensitive tokens)
@@ -193,22 +292,31 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
     if (job.relaunch?.exe) {
       try {
         const cleanEnv: Record<string, string | undefined> = { ...process.env };
-        delete cleanEnv.ELECTRON_RUN_AS_NODE;
-        delete cleanEnv.VSCODE_IPC_HOOK;
-        delete cleanEnv.VSCODE_IPC_HOOK_EXTHOST;
-        delete cleanEnv.VSCODE_IPC_HOOK_CLI;
-        delete cleanEnv.VSCODE_PID;
-        delete cleanEnv.VSCODE_CLI;
-        delete cleanEnv.VSCODE_CODE_CACHE_PATH;
+        for (const key of Object.keys(cleanEnv)) {
+          if (
+            key.startsWith('VSCODE_') ||
+            key.startsWith('ELECTRON_') ||
+            key.startsWith('ANTIGRAVITY_') ||
+            key.startsWith('SWITCHYARD_')
+          ) {
+            delete cleanEnv[key];
+          }
+        }
 
-        const child = spawn(job.relaunch.exe, job.relaunch.args || [], {
+        const relaunchArgs = job.relaunch.args || [];
+        log('INFO', `Relaunching IDE: exe=${job.relaunch.exe} args=${JSON.stringify(relaunchArgs)}`);
+        const child = spawn(job.relaunch.exe, relaunchArgs, {
           detached: true,
           stdio: 'ignore',
           env: cleanEnv as NodeJS.ProcessEnv,
         });
+        child.on('error', (spawnErr) => {
+          log('ERROR', `Relaunch spawn error: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`);
+        });
         child.unref();
+        log('INFO', `Spawned relaunch pid=${child.pid ?? 'unknown'}`);
       } catch (spawnErr) {
-        console.error('Switchyard Helper: Failed to relaunch IDE:', spawnErr);
+        log('ERROR', `Failed to relaunch IDE: ${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}`);
       }
     }
   }

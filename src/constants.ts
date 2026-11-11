@@ -17,16 +17,13 @@ export const KEYS = {
 
 export const KEYCHAIN_SERVICE = 'gemini';
 export const KEYCHAIN_ACCOUNT = 'antigravity';
-export const CAPTURE_STASH_SECRET_KEY = 'switchyard.captureStash';
 
 export const SECRET_PREFIX = 'switchyard.snapshot.';
 export const ACCOUNTS_STATE_KEY = 'switchyard.accounts';
 export const ACTIVE_ACCOUNT_STATE_KEY = 'switchyard.activeId';
-export const DEFAULT_BACKUP_RETENTION = 5;
 export const OUTPUT_CHANNEL_NAME = 'Switchyard';
 
 // Capture session constants
-export const CAPTURE_ROOT_DIR = 'switchyard-capture';
 export const CAPTURE_MARKER_FILE = 'capture.json';
 export const CAPTURE_CLOSE_REQUEST_FILE = 'close-request';
 export const CAPTURE_SESSION_STATE_KEY = 'switchyard.captureSession';

@@ -175,7 +175,7 @@ export function sparklinePoints(
   return points.length >= 2 ? points : undefined;
 }
 
-export function trendForGroup(
+function trendForGroup(
   history: QuotaSample[],
   group: QuotaGroupKey,
   now: number

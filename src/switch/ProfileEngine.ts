@@ -1,3 +1,4 @@
+import { getWorkspaceRelaunchArgs } from '../platform/ide';
 import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -118,9 +119,18 @@ export class ProfileEngine implements SwitchEngine {
     const extensionsDir = getSharedExtensionsDir(this.extensionUri);
 
     // 4. Resolve workspace folders to reopen
-    const currentFolders =
-      vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
-    const foldersToOpen = options?.folders ?? currentFolders;
+    let remoteName: string | undefined;
+    try {
+      remoteName = (vscode as any).env?.remoteName;
+    } catch {
+      // ignore when mocked in unit tests
+    }
+    const foldersToOpen = getWorkspaceRelaunchArgs({
+      overrideFolders: options?.folders,
+      workspaceFolders: vscode.workspace.workspaceFolders,
+      workspaceFile: vscode.workspace.workspaceFile,
+      remoteName,
+    });
 
     this.logger.info(
       `Launching profile window for ${account.email} [dir=${profileDir}, exe=${exe}]`

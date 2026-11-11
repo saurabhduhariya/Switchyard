@@ -141,6 +141,84 @@ describe('switch/helper/switch-helper', () => {
       expect(writtenResult.error).toMatch(/Verification failed/);
     });
 
+    it('updates google.google-antigravity memento in state.vscdb with targetEmail', async () => {
+      const initialAntigravity = JSON.stringify({
+        'antigravity-storage': {
+          'agy.onboarding.lastLoginUsername': 'old-user@example.com',
+        },
+      });
+      await writeKeys(dbPath, {
+        ['google.google-antigravity']: initialAntigravity,
+        [KEYS.oauth]: 'token-1',
+      });
+
+      const targetAuth = 'token-2';
+      const targetFingerprint = crypto
+        .createHash('sha256')
+        .update(targetAuth)
+        .digest('hex')
+        .slice(0, 12);
+      const jobPath = path.join(tmpDir, 'test-agy-job.json');
+      const resultFile = path.join(tmpDir, 'test-agy-result.json');
+
+      const job: SwitchJob = {
+        version: 1,
+        parentPid: 0,
+        dbPath,
+        targetEmail: 'new-user@example.com',
+        targetFingerprint,
+        values: {
+          [KEYS.oauth]: targetAuth,
+        },
+        backupDir,
+        relaunch: { exe: '', args: [] },
+        resultFile,
+      };
+
+      fs.writeFileSync(jobPath, JSON.stringify(job), { mode: 0o600 });
+      const result = await runHelper(jobPath);
+      expect(result.ok).toBe(true);
+
+      const verified = await readKeys(dbPath, ['google.google-antigravity']);
+      const parsed = JSON.parse(verified['google.google-antigravity']);
+      expect(parsed['antigravity-storage']['agy.onboarding.lastLoginUsername']).toBe('new-user@example.com');
+      expect(parsed['antigravity-storage']['jetski.onboarding.lastLoginUsername']).toBe('new-user@example.com');
+    });
+
+    it('writes step-by-step execution records to job.logFile when configured', async () => {
+      const targetAuth = 'token-logged';
+      const targetFingerprint = crypto
+        .createHash('sha256')
+        .update(targetAuth)
+        .digest('hex')
+        .slice(0, 12);
+      const jobPath = path.join(tmpDir, 'test-logged-job.json');
+      const resultFile = path.join(tmpDir, 'test-logged-result.json');
+      const logFile = path.join(tmpDir, 'logs', 'switch-helper.log');
+
+      const job: SwitchJob = {
+        version: 1,
+        parentPid: 0,
+        dbPath,
+        targetEmail: 'logged@example.com',
+        targetFingerprint,
+        values: { [KEYS.oauth]: targetAuth },
+        backupDir,
+        relaunch: { exe: '', args: [] },
+        resultFile,
+        logFile,
+      };
+
+      fs.writeFileSync(jobPath, JSON.stringify(job), { mode: 0o600 });
+      const result = await runHelper(jobPath);
+      expect(result.ok).toBe(true);
+      expect(fs.existsSync(logFile)).toBe(true);
+      const logContent = fs.readFileSync(logFile, 'utf8');
+      expect(logContent).toMatch(/Helper started/);
+      expect(logContent).toMatch(/Token swap completed successfully/);
+      expect(logContent).toMatch(/Wrote resultFile ok=true/);
+    });
+
     it('handles non-existent job file gracefully', async () => {
       const result = await runHelper('/non/existent/path/job.json');
       expect(result.ok).toBe(false);

@@ -372,3 +372,52 @@ describe('QuotaCollector.getQuotaResult (why a read failed)', () => {
     }
   });
 });
+
+describe('QuotaCollector capture endpoint scoping', () => {
+  it('rejects mismatched account emails and unverified endpoints during side-window capture', async () => {
+    const collector: any = new QuotaCollector();
+
+    collector.sendConnectRpc = async (_port: number, _token: string, method: string) => {
+      if (method === 'GetUserStatus') {
+        return { userStatus: { email: 'account1@example.com' } };
+      }
+      return { response: { groups: [{ buckets: [{ remainingFraction: 0.5 }] }] } };
+    };
+    expect(
+      await collector.probeEndpoint(1234, 't', undefined, {
+        expectedEmail: 'account2@example.com',
+        captureDir: '/tmp/switchyard-capture/cap-1',
+      })
+    ).toBe(false);
+
+    collector.sendConnectRpc = async (_port: number, _token: string, method: string) => {
+      if (method === 'GetUserStatus') {
+        return { userStatus: { userTier: { name: 'Free' } } };
+      }
+      return {};
+    };
+    expect(
+      await collector.probeEndpoint(1234, 't', '--user-data-dir=/other/dir', {
+        expectedEmail: 'account2@example.com',
+        captureDir: '/tmp/switchyard-capture/cap-1',
+      })
+    ).toBe(false);
+
+    expect(
+      await collector.probeEndpoint(1234, 't', '--user-data-dir=/tmp/switchyard-capture/cap-1', {
+        expectedEmail: 'account2@example.com',
+        captureDir: '/tmp/switchyard-capture/cap-1',
+      })
+    ).toBe(true);
+
+    collector.sendConnectRpc = async () => ({
+      userStatus: { email: 'Account2@Example.com' },
+    });
+    expect(
+      await collector.probeEndpoint(1234, 't', undefined, {
+        expectedEmail: 'account2@example.com',
+        captureDir: '/tmp/switchyard-capture/cap-1',
+      })
+    ).toBe(true);
+  });
+});

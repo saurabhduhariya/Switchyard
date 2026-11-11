@@ -174,12 +174,13 @@ export class CaptureWatcher {
       }
 
       if (!dbExists) {
-        this.setStatus('noDb', 'state.vscdb not created yet');
-        this.resetDebounce();
         if (result && !('unsupported' in result) && !('partial' in result)) {
           this.setStatus('full', 'auth tokens found');
           await this.handleDetection(result);
+          return;
         }
+        this.setStatus('noDb', 'state.vscdb not created yet');
+        this.resetDebounce();
         return;
       }
 
@@ -256,10 +257,23 @@ export class CaptureWatcher {
         result.snapshot?.values?.[KEYS.oauth]
       );
 
-    if (hasTokenWithoutEmail && this.noEmailCount < 6) {
+    // For Antigravity v2.6.0+, KEYS.agyUserStatus + email is complete live auth (it does not
+    // write legacy v2.5.5 KEYS.oauth / KEYS.userStatus). Only wait briefly if email came from
+    // raw keychain decoding before agyUserStatus / DB keys settled.
+    const hasLiveOrLegacyStatus = Boolean(
+      result.snapshot?.values?.[KEYS.agyUserStatus] ||
+      result.snapshot?.values?.[KEYS.oauth] ||
+      result.snapshot?.values?.[KEYS.userStatus]
+    );
+    const hasKeychainWithoutStatus =
+      Boolean(result.snapshot?.values?.[KEYS.keychainToken]) &&
+      !hasLiveOrLegacyStatus;
+
+    const statusWaitLimit = hasTokenWithoutEmail ? 6 : 2;
+    if ((hasTokenWithoutEmail || hasKeychainWithoutStatus) && this.noEmailCount < statusWaitLimit) {
       this.noEmailCount++;
       this.logger.debug(
-        `Keychain/OAuth token detected, waiting for agy --hub email resolution (${this.noEmailCount}/6)...`
+        `Waiting for Window 2 state.vscdb / email sync (${this.noEmailCount}/${statusWaitLimit})...`
       );
       return;
     }

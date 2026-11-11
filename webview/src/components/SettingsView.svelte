@@ -2,6 +2,7 @@
   import Icon from './Icon.svelte';
   import {
     getMode,
+    getAddAccountMethod,
     getMaskEmails,
     getConfirmBeforeSwitch,
     getBackupRetention,
@@ -15,6 +16,7 @@
   let { onBack }: Props = $props();
 
   let mode = $derived(getMode());
+  let addAccountMethod = $derived(getAddAccountMethod());
   let maskEmails = $derived(getMaskEmails());
   let confirmBeforeSwitch = $derived(getConfirmBeforeSwitch());
   let backupRetention = $derived(getBackupRetention());
@@ -22,6 +24,11 @@
   function setMode(newMode: 'tokenSwap' | 'profile') {
     if (newMode === mode) return;
     postToHost({ type: 'updateSetting', key: 'mode', value: newMode });
+  }
+
+  function setAddAccountMethod(newMethod: 'sideWindow' | 'signOutRestart') {
+    if (newMethod === addAccountMethod) return;
+    postToHost({ type: 'updateSetting', key: 'addAccountMethod', value: newMethod });
   }
 
   function toggleMaskEmails() {
@@ -114,6 +121,53 @@
           </div>
           <p class="mode-desc">
             Run multiple accounts side-by-side in separate windows. Zero window closing.
+          </p>
+        </button>
+      </div>
+    </section>
+
+    <!-- Add Account Method -->
+    <section class="settings-section">
+      <div class="section-header">
+        <Icon name="login" size={12} class="section-icon" />
+        <span class="section-title">ADD ACCOUNT METHOD</span>
+      </div>
+
+      <div class="mode-options">
+        <button
+          type="button"
+          class="mode-card {addAccountMethod === 'sideWindow' ? 'active' : ''}"
+          onclick={() => setAddAccountMethod('sideWindow')}
+        >
+          <div class="mode-card-header">
+            <div class="radio-circle">
+              {#if addAccountMethod === 'sideWindow'}
+                <div class="radio-dot"></div>
+              {/if}
+            </div>
+            <span class="mode-name">Side Window</span>
+            <span class="badge recommended">Recommended</span>
+          </div>
+          <p class="mode-desc">
+            Open a separate sign-in window so your current workspace stays on the active account.
+          </p>
+        </button>
+
+        <button
+          type="button"
+          class="mode-card {addAccountMethod === 'signOutRestart' ? 'active' : ''}"
+          onclick={() => setAddAccountMethod('signOutRestart')}
+        >
+          <div class="mode-card-header">
+            <div class="radio-circle">
+              {#if addAccountMethod === 'signOutRestart'}
+                <div class="radio-dot"></div>
+              {/if}
+            </div>
+            <span class="mode-name">Sign Out &amp; Restart</span>
+          </div>
+          <p class="mode-desc">
+            Sign out and relaunch the current window (useful inside WSL remote or restricted setups).
           </p>
         </button>
       </div>

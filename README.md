@@ -11,7 +11,7 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
   - **Token Swap (Default)**: Switches accounts in the current window via an atomic session swap and restart.
   - **Isolated Profiles**: Launches separate Antigravity windows side-by-side using isolated user data directories.
 - **Automatic Backups**: Creates a backup of your session database before every switch, with automatic rollback if a session fails to verify.
-- **In-Panel Settings**: Configure switching modes, email masking, and backup retention directly inside the sidebar panel.
+- **In-Panel Settings**: Configure switching modes, add-account method, email masking, and backup retention directly inside the sidebar panel.
 - **Privacy & Security**: Zero external network requests. Credentials are encrypted and stored in your operating system's native keychain.
 
 ## Usage
@@ -22,7 +22,7 @@ Open the Accounts panel from the Activity Bar. Switchyard automatically detects 
 ### 2. Add Additional Accounts
 Click **Add Another Account**. A separate Antigravity window opens on the sign-in page. Sign in with the new Google account there; Switchyard detects it, closes that window and shows **Save Account** in your main window. Your main window stays open and your current account stays active the whole time.
 
-The older flow (sign out and restart the IDE) is still available through the `switchyard.addAccountMethod` setting.
+The older flow (sign out and restart the IDE) is still available in the in-panel settings drawer or via the `switchyard.addAccountMethod` setting.
 
 ### 3. Switch Accounts
 Click **Switch** on any inactive account card to switch into that session.
@@ -66,6 +66,7 @@ Your main IDE window never closes or reloads during this process, and your activ
 | The side window will not open | Set `switchyard.executablePath`, or use the sign-out method. |
 | Account saved on Antigravity `<= 2.5.5` asks to update | Antigravity 2.6.0+ moved credentials from `state.vscdb` to the OS Keychain. Click **Update Account in Side Window** and sign in once to upgrade the saved snapshot. |
 | Keychain read/write fails on Linux | Ensure `libsecret` (`secret-tool`) or Python 3 `secretstorage` is installed (`sudo pacman -S libsecret` on Arch/Garuda, `sudo apt install libsecret-tools` on Debian/Ubuntu). |
+| Using Windows 11 with a WSL2 workspace | Switchyard runs on the Windows UI host (`"extensionKind": ["ui", "workspace"]`) and bridges quota/keychain state to WSL2 automatically. If sign-in via side window is restricted in your setup, switch **Add Account Method** to **Sign Out & Restart** in settings. |
 
 ## Extension Settings
 
@@ -115,4 +116,4 @@ This extension is an independent open-source project and is not affiliated with,
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).  
-Copyright © 2026 Saurabh Duhariya. All rights reserved.
+Copyright © 2026 saurabhduhariya. All rights reserved.

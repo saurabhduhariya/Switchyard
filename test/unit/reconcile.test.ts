@@ -18,7 +18,9 @@ vi.mock('vscode', () => {
 
 import * as vscode from 'vscode';
 import { AccountStore, MementoLike, SecretStorageLike } from '../../src/accounts/AccountStore';
+import { __setTestKeychainToken } from '../../src/platform/keychain';
 import { reconcilePendingSwitch } from '../../src/switch/reconcile';
+import { fingerprint } from '../../src/accounts/identity';
 import { Logger } from '../../src/util/logger';
 
 class MemoryMemento implements MementoLike {
@@ -124,5 +126,77 @@ describe('switch/reconcile', () => {
     // Verify pendingSwitch cleared and result file deleted
     expect(memento.get('switchyard.pendingSwitch')).toBeUndefined();
     expect(fs.existsSync(resultFile)).toBe(false);
+  });
+
+  it('warns on live email conflict even if fingerprint matches target metadata', async () => {
+    const livePayload = JSON.stringify({
+      id_token_email: 'old@example.com',
+      token: { access_token: 'acc', refresh_token: 'ref-shared' },
+    });
+    const fp = fingerprint(livePayload);
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-target', email: 'target@example.com', addedAt: Date.now(), fingerprint: fp },
+    ]);
+
+    const resultFile = path.join(tmpDir, 'mismatch-result.json');
+    fs.writeFileSync(resultFile, JSON.stringify({ ok: true, switchedAt: Date.now() }));
+    await memento.update('switchyard.pendingSwitch', {
+      targetId: 'acc-target',
+      targetEmail: 'target@example.com',
+      resultFile,
+      startedAt: Date.now() - 5000,
+    });
+
+    __setTestKeychainToken(livePayload);
+    try {
+      await reconcilePendingSwitch(memento, store, logger, undefined);
+      expect(await store.activeId()).toBeUndefined();
+      expect(vscode.window.showWarningMessage).toHaveBeenCalledWith(
+        expect.stringContaining('verification detected a mismatch'),
+        'Retry Switch',
+        'Dismiss'
+      );
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
+
+  it('does not hang when verification mismatch notification stays open without user click', async () => {
+    const livePayload = JSON.stringify({
+      id_token_email: 'old@example.com',
+      token: { access_token: 'acc', refresh_token: 'ref-shared' },
+    });
+    const fp = fingerprint(livePayload);
+    await memento.update('switchyard.accounts', [
+      { id: 'acc-target', email: 'target@example.com', addedAt: Date.now(), fingerprint: fp },
+    ]);
+
+    const resultFile = path.join(tmpDir, 'pending-toast-result.json');
+    fs.writeFileSync(resultFile, JSON.stringify({ ok: true, switchedAt: Date.now() }));
+    await memento.update('switchyard.pendingSwitch', {
+      targetId: 'acc-target',
+      targetEmail: 'target@example.com',
+      resultFile,
+      startedAt: Date.now() - 5000,
+    });
+
+    let resolveToast!: (val: string | undefined) => void;
+    vi.mocked(vscode.window.showWarningMessage).mockImplementationOnce(
+      () => new Promise<string | undefined>((r) => { resolveToast = r; }) as any
+    );
+
+    __setTestKeychainToken(livePayload);
+    try {
+      await reconcilePendingSwitch(memento, store, logger, undefined);
+      expect(memento.get('switchyard.pendingSwitch')).toBeUndefined();
+      expect(vscode.commands.executeCommand).not.toHaveBeenCalled();
+
+      resolveToast('Retry Switch');
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(vscode.commands.executeCommand).toHaveBeenCalledWith('switchyard.switchAccount', 'acc-target');
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { isAntigravity26OrNewer } from './platform/agyDaemon';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
@@ -11,6 +12,7 @@ import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
 import { listBackups, recoverCorruptedQuotas, restoreBackup } from './db/backup';
 import { readKeys } from './db/StateDb';
 import { findStateDb, getBackupsDir, getGlobalStorageDir } from './platform/paths';
+import { resolveWslContextFromVscode } from './platform/wsl';
 import { PanelProvider } from './ui/PanelProvider';
 import { StatusBar } from './ui/StatusBar';
 import { Logger } from './util/logger';
@@ -34,24 +36,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return;
   }
 
-  // 0b. Check if user is running an older Antigravity IDE version (<= 2.5.5) without the built-in agy extension
-  const agyExtension = vscode.extensions.getExtension('google.google-antigravity');
-  const dismissedOldIdeWarning = context.globalState.get<boolean>('switchyard.dismissedOldIdeNotice', false);
-  if (!agyExtension && !dismissedOldIdeWarning) {
-    logger.warn('Detected legacy Antigravity IDE (<= 2.5.5): google.google-antigravity extension not found.');
-    void vscode.window
-      .showWarningMessage(
-        'Switchyard: You are using an older version of Antigravity IDE (<= 2.5.5). Please update Antigravity IDE to the latest version (v2.6.0+) for full OS Keychain and agy daemon support.',
-        'Dismiss',
-        "Don't Show Again"
-      )
-      .then((choice) => {
-        if (choice === "Don't Show Again") {
-          void context.globalState.update('switchyard.dismissedOldIdeNotice', true);
-        }
-      });
-  }
-
   // 1. Locate state.vscdb
   const dbPath = findStateDb({ globalStorageUriPath: context.globalStorageUri.fsPath });
   if (dbPath) {
@@ -60,13 +44,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger.warn('Could not locate state.vscdb database in candidate locations.');
   }
 
+  // 1b. Check if user is running a legacy Antigravity IDE version (<= 2.5.5)
+  const agyExtension = vscode.extensions.getExtension('google.google-antigravity');
+  const is26Plus = Boolean(agyExtension) || isAntigravity26OrNewer(vscode.env?.appRoot);
+  const dismissedOldIdeWarning = context.globalState.get<boolean>('switchyard.dismissedOldIdeNotice', false);
+  if (!is26Plus && !dismissedOldIdeWarning && dbPath) {
+    void readKeys(dbPath, [KEYS.oauth, KEYS.legacyInit]).then((legacyVals) => {
+      if (legacyVals[KEYS.oauth] || legacyVals[KEYS.legacyInit]) {
+        logger.warn('Detected legacy Antigravity IDE (<= 2.5.5): auth stored in state.vscdb without agy daemon.');
+        void vscode.window
+          .showWarningMessage(
+            'Switchyard: You are using an older version of Antigravity IDE (<= 2.5.5). Please update Antigravity IDE to the latest version (v2.6.0+) for full OS Keychain and agy daemon support.',
+            'Dismiss',
+            "Don't Show Again"
+          )
+          .then((choice) => {
+            if (choice === "Don't Show Again") {
+              void context.globalState.update('switchyard.dismissedOldIdeNotice', true);
+            }
+          });
+      }
+    });
+  }
+
   // 2. Initialize Core Services
   const store = new AccountStore({
     secrets: context.secrets,
     state: context.globalState,
   });
 
-  const detector = dbPath ? new AuthDetector(dbPath) : undefined;
+  const wslCtx = resolveWslContextFromVscode(vscode);
+  const detector = new AuthDetector(dbPath, wslCtx);
 
   const mode = vscode.workspace
     .getConfiguration('switchyard')
@@ -105,8 +113,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 2e. Sweep stale capture sessions on startup
   void captureManager.sweepStaleSessions().then(() => captureManager.resume());
 
-  // 2f. Reconcile any pending switch from a previous IDE quit/restart before initializing views
-  await reconcilePendingSwitch(context.globalState, store, logger, dbPath);
+  // 3. Register Webview Provider & Status Bar early so startup never blocks sidebar rendering
+  context.subscriptions.push(
+    channel,
+    statusBar,
+    vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    { dispose: () => captureManager.dispose() }
+  );
+
+  // 2f. Reconcile any pending switch from a previous IDE quit/restart without blocking activation
+  void reconcilePendingSwitch(context.globalState, store, logger, dbPath).then(
+    () => {
+      void panelProvider.push();
+    },
+    (err) => {
+      logger.warn('Pending switch reconciliation failed:', err);
+    }
+  );
 
   // 2g. Auto-heal any corrupted Pro/Ultra quotas from previous switch race conditions
   if (dbPath) {
@@ -117,16 +142,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     });
   }
-
-  // 3. Register Webview Provider & Status Bar
-  context.subscriptions.push(
-    channel,
-    statusBar,
-    vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
-    { dispose: () => captureManager.dispose() }
-  );
 
   // 4. File Watcher on state.vscdb directory (debounced 500 ms)
   if (dbPath) {
@@ -289,11 +304,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // switchyard.openBackupsFolder: reveals the backup directory in system file explorer
     vscode.commands.registerCommand('switchyard.openBackupsFolder', async () => {
-      if (!dbPath) {
-        vscode.window.showErrorMessage('Switchyard: Cannot locate database path.');
-        return;
-      }
-      const backupDir = getBackupsDir(getGlobalStorageDir(dbPath));
+      const storageDir = dbPath
+        ? getGlobalStorageDir(dbPath)
+        : path.dirname(context.globalStorageUri.fsPath);
+      const backupDir = getBackupsDir(storageDir);
       if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
       }
@@ -387,22 +401,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // switchyard.importAccount: import account from a database file (e.g. spike/B.vscdb or backup)
+    // switchyard.importAccount: import account from a state.vscdb database or backup file
     vscode.commands.registerCommand('switchyard.importAccount', async (targetDbUri?: vscode.Uri) => {
       let chosenPath: string | undefined;
 
       if (targetDbUri?.fsPath) {
         chosenPath = targetDbUri.fsPath;
       } else {
-        const workspaceFolders = vscode.workspace.workspaceFolders;
-        let defaultUri: vscode.Uri | undefined;
-        const firstFolder = workspaceFolders?.[0];
-        if (firstFolder) {
-          const spikeB = path.join(firstFolder.uri.fsPath, 'spike', 'B.vscdb');
-          if (fs.existsSync(spikeB)) {
-            defaultUri = vscode.Uri.file(spikeB);
-          }
-        }
+        const backupsDir = dbPath ? getBackupsDir(getGlobalStorageDir(dbPath)) : undefined;
+        const defaultUri = backupsDir && fs.existsSync(backupsDir) ? vscode.Uri.file(backupsDir) : undefined;
 
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: true,

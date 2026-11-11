@@ -20,9 +20,15 @@ import {
 } from '../constants';
 import { logoutAgyDaemon, killAgyHubDaemon, ensureAgyHubDaemonRunning } from '../platform/agyDaemon';
 import { findExecutable, getSharedExtensionsDir } from '../platform/ide';
-import { clearKeychainToken, readKeychainToken, writeKeychainToken } from '../platform/keychain';
+import { isWsl, resolveWslContextFromVscode } from '../platform/wsl';
+import {
+  clearKeychainToken,
+  KeychainWslOptions,
+  readKeychainToken,
+  writeKeychainToken,
+} from '../platform/keychain';
 import { ProcessSpawner, spawnIsolatedWindow } from '../platform/launch';
-import { getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
+import { findStateDb, getCaptureDir, getCaptureRoot, getProfilesDir } from '../platform/paths';
 import { QuotaCollector } from '../quota/QuotaCollector';
 import { Logger } from '../util/logger';
 import { DEFAULT_CAPTURE_FLAGS, sanitizeCaptureLaunchArgs } from './launchArgs';
@@ -134,6 +140,17 @@ export class CaptureManager {
   private onStateChangeCallback?: (session: CaptureSessionData) => void;
   private lastDetectedSnapshots = new Map<string, Record<string, string>>();
   private lastDetectedQuotas = new Map<string, AccountQuotaSummary>();
+  private startingCapture = false;
+
+  private getEffectiveGlobalStorageDir(): string {
+    if (isWsl()) {
+      const dbPath = findStateDb({ globalStorageUriPath: this.globalStorageUri.fsPath });
+      if (dbPath) {
+        return path.dirname(dbPath);
+      }
+    }
+    return path.dirname(this.globalStorageUri.fsPath);
+  }
 
   constructor(options: CaptureManagerOptions) {
     this.store = options.store;
@@ -145,10 +162,10 @@ export class CaptureManager {
     this.executableFinder = options.executableFinder ?? findExecutable;
     this.processFinder = options.processFinder ?? findCaptureMainPids;
     this.detectedTtlMs = options.detectedTtlMs ?? CAPTURE_DETECTED_TTL_MS;
-    // On Windows every process lookup starts PowerShell (~0.5s), so poll less often and wait longer.
-    const isWindows = process.platform === 'win32';
-    this.processPollMs = options.processPollMs ?? (isWindows ? 1000 : 400);
-    this.closeWaitMs = options.closeWaitMs ?? (isWindows ? 8000 : CAPTURE_CLOSE_WAIT_MS);
+    // On Windows / WSL every process lookup starts PowerShell (~0.5s), so poll less often and wait longer.
+    const useWindowsTools = process.platform === 'win32' || isWsl();
+    this.processPollMs = options.processPollMs ?? (useWindowsTools ? 1000 : 400);
+    this.closeWaitMs = options.closeWaitMs ?? (useWindowsTools ? 8000 : CAPTURE_CLOSE_WAIT_MS);
     this.windowId = options.windowId ?? crypto.randomUUID();
     this.ownerStaleMs = options.ownerStaleMs ?? DEFAULT_OWNER_STALE_MS;
     this.launchArgsProvider = options.launchArgsProvider ?? (() => this.readLaunchArgsFromSettings());
@@ -228,7 +245,18 @@ export class CaptureManager {
   /**
    * Starts a new capture session by launching an isolated window.
    */
-  async startCapture(options?: StartCaptureOptions): Promise<{ ok: boolean; error?: string }> {
+  async startCapture(
+    options?: StartCaptureOptions
+  ): Promise<{ ok: boolean; alreadyInProgress?: boolean; error?: string }> {
+    if (this.startingCapture) {
+      this.logger.warn('Capture session launch already in progress (re-entrant click ignored)');
+      return {
+        ok: false,
+        alreadyInProgress: true,
+        error: 'A capture session is already in progress.',
+      };
+    }
+
     // Check for existing session
     const existing = this.rawSession();
     if (existing) {
@@ -237,6 +265,7 @@ export class CaptureManager {
         this.logger.warn(`Capture session already in progress (${owner})`);
         return {
           ok: false,
+          alreadyInProgress: owner === 'mine',
           error:
             owner === 'foreign-live'
               ? 'A sign-in window is already open from another Switchyard window. Finish or close it first.'
@@ -249,115 +278,123 @@ export class CaptureManager {
       }
     }
 
-    // Generate session ID
-    const sessionId = `capture-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    const globalStorageDir = path.dirname(this.globalStorageUri.fsPath);
-    const captureDir = getCaptureDir(globalStorageDir, sessionId);
-
-    // Create capture directory with restricted permissions
+    this.startingCapture = true;
     try {
-      fs.mkdirSync(captureDir, { recursive: true, mode: 0o700 });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to create capture directory: ${msg}`);
-      return { ok: false, error: `Failed to create capture directory: ${msg}` };
-    }
+      // Generate session ID
+      const sessionId = `capture-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+      const globalStorageDir = this.getEffectiveGlobalStorageDir();
+      const captureDir = getCaptureDir(globalStorageDir, sessionId);
 
-    // Write marker file
-    const markerPath = path.join(captureDir, CAPTURE_MARKER_FILE);
-    try {
-      fs.writeFileSync(
-        markerPath,
-        JSON.stringify({ sessionId, createdAt: new Date().toISOString() }, null, 2)
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to write marker file: ${msg}`);
-      return { ok: false, error: `Failed to write marker file: ${msg}` };
-    }
+      // Create capture directory with restricted permissions
+      try {
+        fs.mkdirSync(captureDir, { recursive: true, mode: 0o700 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Failed to create capture directory: ${msg}`);
+        return { ok: false, error: `Failed to create capture directory: ${msg}` };
+      }
 
-    // Resolve executable
-    let exe: string;
-    try {
-      const config = vscode.workspace.getConfiguration('switchyard');
-      const customPath = config.get<string>('executablePath');
-      exe = this.executableFinder(customPath);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Executable resolution failed: ${msg}`);
-      await this.cleanup(captureDir);
-      return { ok: false, error: msg };
-    }
+      // Write marker file
+      const markerPath = path.join(captureDir, CAPTURE_MARKER_FILE);
+      try {
+        fs.writeFileSync(
+          markerPath,
+          JSON.stringify({ sessionId, createdAt: new Date().toISOString() }, null, 2)
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Failed to write marker file: ${msg}`);
+        return { ok: false, error: `Failed to write marker file: ${msg}` };
+      }
 
-    const extensionsDir = getSharedExtensionsDir(this.extensionUri);
+      // Resolve executable
+      let exe: string;
+      try {
+        const config = vscode.workspace.getConfiguration('switchyard');
+        const customPath = config.get<string>('executablePath');
+        exe = this.executableFinder(customPath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Executable resolution failed: ${msg}`);
+        await this.cleanup(captureDir);
+        return { ok: false, error: msg };
+      }
 
-    // Create initial session data
-    const session: CaptureSessionData = {
-      sessionId,
-      dir: captureDir,
-      startedAt: Date.now(),
-      state: 'launching',
-      promoteToProfile: options?.promoteToProfile === true,
-    };
+      const extensionsDir = getSharedExtensionsDir(this.extensionUri);
 
-    // v2.6.0+: Stash current OS Keychain token to restore to Window 1 later
-    const currentToken = readKeychainToken();
-    if (currentToken) {
-      session.stashedKeychainToken = currentToken;
-      session.preCaptureFingerprint = fingerprint(currentToken);
-    }
+      // Emit 'launching' immediately before slow keychain/daemon calls so the sidebar disables
+      // duplicate clicks and shows immediate progress.
+      const session: CaptureSessionData = {
+        sessionId,
+        dir: captureDir,
+        startedAt: Date.now(),
+        state: 'launching',
+        promoteToProfile: options?.promoteToProfile === true,
+      };
+      await this.persistSession(session);
+      this.startHeartbeat();
+      this.notifyStateChange(session);
 
-    // Clear OS Keychain and terminate agy --hub so Window 2 opens on clean Sign-In page
-    clearKeychainToken();
-    try {
-      await logoutAgyDaemon();
-    } catch {
-      // ignore
-    }
-    killAgyHubDaemon();
-
-    await this.persistSession(session);
-    this.startHeartbeat();
-    this.notifyStateChange(session);
-
-    // Spawn isolated window (no folders, opens on sign-in page)
-    try {
-      const child = spawnIsolatedWindow({
-        exe,
-        userDataDir: captureDir,
-        extensionsDir,
-        extraArgs: this.launchArgsProvider(),
-        folders: [], // Empty folders array opens sign-in page
-        newWindow: true,
-        spawner: this.spawner,
-      });
-
-      if (child.pid) {
-        session.pid = child.pid;
+      // v2.6.0+: Stash current OS Keychain token to restore to Window 1 later
+      const wslOpts = this.getKeychainWslOptions();
+      const currentToken =
+        readKeychainToken() || (wslOpts ? readKeychainToken(wslOpts) : undefined);
+      if (currentToken) {
+        session.stashedKeychainToken = currentToken;
+        session.preCaptureFingerprint = fingerprint(currentToken);
         await this.persistSession(session);
       }
 
-      this.logger.info(`Launched capture window [sessionId=${sessionId}, pid=${child.pid}]`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to spawn capture window: ${msg}`);
-      this.restoreStashedKeychain(session);
-      session.state = 'failed';
-      session.error = msg;
+      // Clear OS Keychain and terminate agy --hub so Window 2 opens on clean Sign-In page
+      clearKeychainToken();
+      try {
+        await logoutAgyDaemon();
+      } catch {
+        // ignore
+      }
+      killAgyHubDaemon();
+
+      // Spawn isolated window (no folders, opens on sign-in page)
+      try {
+        const child = spawnIsolatedWindow({
+          exe,
+          userDataDir: captureDir,
+          extensionsDir,
+          extraArgs: this.launchArgsProvider(),
+          folders: [], // Empty folders array opens sign-in page
+          newWindow: true,
+          spawner: this.spawner,
+        });
+
+        if (child.pid) {
+          session.pid = child.pid;
+          await this.persistSession(session);
+        }
+
+        this.logger.info(`Launched capture window [sessionId=${sessionId}, pid=${child.pid}]`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(`Failed to spawn capture window: ${msg}`);
+        this.restoreStashedKeychain(session);
+        session.state = 'failed';
+        session.error = msg;
+        await this.persistSession(session);
+        this.notifyStateChange(session);
+        await this.cleanup(captureDir);
+        return { ok: false, error: msg };
+      }
+
+      // Transition to waitingForSignIn and start watching
+      session.state = 'waitingForSignIn';
       await this.persistSession(session);
       this.notifyStateChange(session);
-      await this.cleanup(captureDir);
-      return { ok: false, error: msg };
+
+      await this.startWatching(session);
+
+      return { ok: true };
+    } finally {
+      this.startingCapture = false;
     }
-
-    // Transition to waitingForSignIn and start watching
-    session.state = 'waitingForSignIn';
-    await this.persistSession(session);
-    this.notifyStateChange(session);
-
-    await this.startWatching(session);
-
-    return { ok: true };
   }
 
   /** Moves a session to 'detected', remembers the snapshot and starts the unsaved-account expiry. */
@@ -385,7 +422,10 @@ export class CaptureManager {
       return 'new';
     }
     try {
-      const match = (await this.store.list()).find((acc) => acc.email === email);
+      const normalized = email.trim().toLowerCase();
+      const match = (await this.store.list()).find(
+        (acc) => acc.email?.trim().toLowerCase() === normalized
+      );
       if (!match) {
         return 'new';
       }
@@ -445,7 +485,7 @@ export class CaptureManager {
    * then falls back to normal cleanup and the user signs in on first switch.
    */
   private async promoteToProfile(dir: string, accountId: string): Promise<boolean> {
-    const profilesRoot = getProfilesDir(path.dirname(this.globalStorageUri.fsPath));
+    const profilesRoot = getProfilesDir(this.getEffectiveGlobalStorageDir());
     const target = path.join(profilesRoot, accountId);
     try {
       if (fs.existsSync(path.join(target, 'User', 'globalStorage', 'state.vscdb'))) {
@@ -481,6 +521,19 @@ export class CaptureManager {
     return false;
   }
 
+  private getKeychainWslOptions(): KeychainWslOptions | undefined {
+    const wslCtx = resolveWslContextFromVscode(vscode);
+    if (!wslCtx.isWslRemote) {
+      return undefined;
+    }
+    return {
+      includeWsl: true,
+      preferWsl: true,
+      wslDistro: wslCtx.wslDistro,
+      wslRunningOnly: true,
+    };
+  }
+
   /**
    * Restores Account 1's stashed keychain token to OS Keychain and restarts agy --hub.
    */
@@ -490,7 +543,7 @@ export class CaptureManager {
     }
     try {
       this.logger.info('Restoring stashed primary keychain token for Window 1...');
-      writeKeychainToken(session.stashedKeychainToken);
+      writeKeychainToken(session.stashedKeychainToken, undefined, this.getKeychainWslOptions());
       killAgyHubDaemon();
       ensureAgyHubDaemonRunning();
     } catch (err) {
@@ -543,7 +596,10 @@ export class CaptureManager {
 
       // Grab the new account's live quota while Window 2's language server / agy daemon is still running!
       try {
-        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath);
+        const capturedQuota = await new QuotaCollector(this.logger).getQuotaSummary(dbPath, {
+          expectedEmail: identity.email,
+          captureDir: current.dir,
+        });
         if (capturedQuota) {
           this.lastDetectedQuotas.set(current.sessionId, capturedQuota);
         }
@@ -556,13 +612,33 @@ export class CaptureManager {
       await this.persistSession(current);
       this.notifyStateChange(current);
 
-      // Automatically close the side window
+      // Automatically close the side window so it flushes state.vscdb to disk
       await this.closeWindowAndWaitForFlush(current);
+
+      // Read flushed state.vscdb keys (oauthToken, userStatus, modelCredits, profileUrl) from Window 2
+      const mergedValues: Record<string, string> = {
+        ...(detectedSnapshot?.values ?? {}),
+      };
+      try {
+        if (fs.existsSync(dbPath)) {
+          const { readKeys } = await import('../db/StateDb');
+          const flushedDb = await readKeys(dbPath, [
+            KEYS.oauth,
+            KEYS.userStatus,
+            KEYS.modelCredits,
+            KEYS.profileUrl,
+            KEYS.legacyInit,
+          ]);
+          Object.assign(mergedValues, flushedDb);
+        }
+      } catch {
+        // best effort
+      }
 
       // Restore Account 1's stashed keychain token so Window 1 stays signed into Account 1
       this.restoreStashedKeychain(current);
 
-      await this.markDetected(current, identity, detectedSnapshot?.values);
+      await this.markDetected(current, identity, mergedValues);
     });
 
     this.watcher.start();
@@ -783,11 +859,13 @@ export class CaptureManager {
       };
 
       // If fromDb has userStatus/profileUrl that cached lacked, keep them.
-      if (fromDb[KEYS.userStatus] && !merged[KEYS.userStatus]) {
-        merged[KEYS.userStatus] = fromDb[KEYS.userStatus];
+      const flushedUserStatus = fromDb[KEYS.userStatus];
+      if (flushedUserStatus && !merged[KEYS.userStatus]) {
+        merged[KEYS.userStatus] = flushedUserStatus;
       }
-      if (fromDb[KEYS.profileUrl] && !merged[KEYS.profileUrl]) {
-        merged[KEYS.profileUrl] = fromDb[KEYS.profileUrl];
+      const flushedProfileUrl = fromDb[KEYS.profileUrl];
+      if (flushedProfileUrl && !merged[KEYS.profileUrl]) {
+        merged[KEYS.profileUrl] = flushedProfileUrl;
       }
 
       if (!hasToken(merged)) {
@@ -821,8 +899,9 @@ export class CaptureManager {
         if (identity.email) {
           let statusObj: Record<string, unknown> = {};
           try {
-            if (snapshot[KEYS.agyUserStatus]) {
-              statusObj = JSON.parse(snapshot[KEYS.agyUserStatus]);
+            const agyStatus = snapshot[KEYS.agyUserStatus];
+            if (agyStatus) {
+              statusObj = JSON.parse(agyStatus);
             }
           } catch {
             // Ignore malformed status JSON.
@@ -834,14 +913,20 @@ export class CaptureManager {
 
       this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
-      // Check if the account is already saved (by email OR by fingerprint).
+      // Check if the account is already saved (by email, or by fingerprint when email doesn't conflict).
       const existingAccounts = await this.store.list();
+      const detectedEmailNorm = identity.email?.toLowerCase().trim();
       const duplicate =
-        (identity.email
-          ? existingAccounts.find((acc) => acc.email.toLowerCase() === identity.email!.toLowerCase())
+        (detectedEmailNorm
+          ? existingAccounts.find((acc) => acc.email.toLowerCase().trim() === detectedEmailNorm)
           : undefined) ||
         (identity.fingerprint
-          ? existingAccounts.find((acc) => acc.fingerprint === identity.fingerprint)
+          ? existingAccounts.find((acc) => {
+              if (acc.fingerprint !== identity.fingerprint) return false;
+              if (!detectedEmailNorm) return true;
+              const accEmail = acc.email.toLowerCase().trim();
+              return !accEmail || accEmail.startsWith('unknown-') || accEmail === detectedEmailNorm;
+            })
           : undefined);
 
       let savedId: string;
@@ -1059,7 +1144,7 @@ export class CaptureManager {
    * Cleanup old capture directories on startup (sweeper).
    */
   async sweepStaleSessions(): Promise<void> {
-    const globalStorageDir = path.dirname(this.globalStorageUri.fsPath);
+    const globalStorageDir = this.getEffectiveGlobalStorageDir();
     const captureRoot = getCaptureRoot(globalStorageDir);
 
     if (!fs.existsSync(captureRoot)) {
