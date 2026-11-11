@@ -183,4 +183,45 @@ describe('accounts/identity', () => {
     const plan = extractPlanFromBuffer(msg);
     expect(plan).toBeUndefined();
   });
+
+  it('rejects asset filenames and synthetic @switchyard.local emails while extracting real emails', async () => {
+    const { isPlausibleEmail, extractEmailFromBuffer } = await import('../../src/accounts/identity');
+
+    expect(isPlausibleEmail('alice@example.com')).toBe(true);
+    expect(isPlausibleEmail('24je0690@iitism.ac.in')).toBe(true);
+    expect(isPlausibleEmail('avatar@2x.png')).toBe(false);
+    expect(isPlausibleEmail('icon@3x.svg')).toBe(false);
+    expect(isPlausibleEmail('bundle@1.0.js')).toBe(false);
+    expect(isPlausibleEmail('unknown-deadbe@switchyard.local')).toBe(false);
+    expect(isPlausibleEmail('user@localhost')).toBe(false);
+
+    const mixedBuf = Buffer.from(
+      'asset=avatar@2x.png fallback=unknown-123456@switchyard.local real=real.user@example.com',
+      'utf8'
+    );
+    expect(extractEmailFromBuffer(mixedBuf)).toBe('real.user@example.com');
+  });
+
+  it('detects signedOut sentinels and distinguishes real OAuth credentials', async () => {
+    const { hasSignedOutSentinel, hasRecognizableOAuthCredential } = await import(
+      '../../src/accounts/identity'
+    );
+
+    const signedOutProto = Buffer.concat([
+      Buffer.from('authStateWithContextSentinelKey', 'utf8'),
+      Buffer.from('{"state":"signedOut"}', 'utf8'),
+    ]).toString('base64');
+
+    expect(hasSignedOutSentinel('{"state":"signedOut"}')).toBe(true);
+    expect(hasSignedOutSentinel(signedOutProto)).toBe(true);
+    expect(hasSignedOutSentinel('{"accessToken":"ya29.abc","email":"real@example.com"}')).toBe(false);
+
+    expect(hasRecognizableOAuthCredential(signedOutProto)).toBe(false);
+    expect(hasRecognizableOAuthCredential('')).toBe(false);
+    expect(hasRecognizableOAuthCredential('random-unauthenticated-string')).toBe(false);
+    expect(hasRecognizableOAuthCredential('ya29.a0AfH6SMC_valid_token')).toBe(true);
+    expect(hasRecognizableOAuthCredential(JSON.stringify({ refreshToken: '1//0g_valid_refresh' }))).toBe(
+      true
+    );
+  });
 });
