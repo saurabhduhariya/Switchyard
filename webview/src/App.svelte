@@ -119,7 +119,17 @@
     </div>
 
     {#if !isLoading() && getAccounts().length > 0}
-      <Footer disabled={isUnsupported()} />
+      <Footer
+        disabled={
+          isUnsupported() ||
+          Boolean(
+            getCaptureSession() &&
+              ['launching', 'waitingForSignIn', 'finishing', 'saving', 'detected'].includes(
+                getCaptureSession()!.state
+              )
+          )
+        }
+      />
     {/if}
   {/if}
 </main>
