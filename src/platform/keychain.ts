@@ -2,8 +2,14 @@ import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { hasSignedOutSentinel } from '../accounts/identity';
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE } from '../constants';
-import { getWslWindowsUserHomes, isWsl } from './wsl';
+import {
+  getWslLinuxUserHomesOnWindows,
+  getWslWindowsUserHomes,
+  isWsl,
+  type WslLinuxUserHome,
+} from './wsl';
 
 const WIN32_CRED_CSHARP = `
 using System;
@@ -93,58 +99,94 @@ export interface DecodedKeyringToken {
   json?: Record<string, unknown>;
 }
 
+const TRIVIAL_NON_TOKEN_LITERALS = new Set(['null', 'undefined', 'false', 'true', '{}', '[]', 'signedout']);
+
 /**
  * Decodes a zalando/go-keyring payload ("go-keyring-base64:<base64>" or raw JSON).
+ * Rejects empty placeholders, signed-out sentinels, and JSON objects with no OAuth tokens.
  */
 export function decodeKeyringValue(raw: string): DecodedKeyringToken | undefined {
   if (!raw || typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
-  if (!trimmed) return undefined;
+  if (!trimmed || TRIVIAL_NON_TOKEN_LITERALS.has(trimmed.toLowerCase())) {
+    return undefined;
+  }
+  if (hasSignedOutSentinel(trimmed)) {
+    return undefined;
+  }
 
   let jsonStr = trimmed;
+  let isGoKeyring = false;
   if (trimmed.startsWith('go-keyring-base64:')) {
+    isGoKeyring = true;
     const b64 = trimmed.slice('go-keyring-base64:'.length).trim();
+    if (!b64) return undefined;
     try {
-      jsonStr = Buffer.from(b64, 'base64').toString('utf8');
+      const decodedBuf = Buffer.from(b64, 'base64');
+      if (decodedBuf.length === 0) return undefined;
+      jsonStr = decodedBuf.toString('utf8').trim();
+      if (!jsonStr || TRIVIAL_NON_TOKEN_LITERALS.has(jsonStr.toLowerCase())) {
+        return undefined;
+      }
+      if (hasSignedOutSentinel(jsonStr)) {
+        return undefined;
+      }
     } catch {
       return { raw: trimmed };
     }
   }
 
   try {
-    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
-    if (parsed && typeof parsed === 'object') {
-      const tokenObj =
-        (typeof parsed.token === 'object' && parsed.token !== null
-          ? (parsed.token as Record<string, unknown>)
-          : parsed);
-
-      return {
-        raw: trimmed,
-        accessToken:
-          typeof tokenObj.access_token === 'string'
-            ? tokenObj.access_token
-            : typeof tokenObj.accessToken === 'string'
-              ? tokenObj.accessToken
-              : undefined,
-        refreshToken:
-          typeof tokenObj.refresh_token === 'string'
-            ? tokenObj.refresh_token
-            : typeof tokenObj.refreshToken === 'string'
-              ? tokenObj.refreshToken
-              : undefined,
-        idToken:
-          typeof tokenObj.id_token === 'string'
-            ? tokenObj.id_token
-            : typeof tokenObj.idToken === 'string'
-              ? tokenObj.idToken
-              : undefined,
-        expiry: typeof tokenObj.expiry === 'string' ? tokenObj.expiry : undefined,
-        json: parsed,
-      };
+    const parsed: unknown = JSON.parse(jsonStr);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return undefined;
     }
+    const obj = parsed as Record<string, unknown>;
+    const tokenObj =
+      typeof obj.token === 'object' && obj.token !== null
+        ? (obj.token as Record<string, unknown>)
+        : obj;
+
+    const accessToken =
+      typeof tokenObj.access_token === 'string' && tokenObj.access_token.trim()
+        ? tokenObj.access_token
+        : typeof tokenObj.accessToken === 'string' && tokenObj.accessToken.trim()
+          ? tokenObj.accessToken
+          : undefined;
+    const refreshToken =
+      typeof tokenObj.refresh_token === 'string' && tokenObj.refresh_token.trim()
+        ? tokenObj.refresh_token
+        : typeof tokenObj.refreshToken === 'string' && tokenObj.refreshToken.trim()
+          ? tokenObj.refreshToken
+          : undefined;
+    const idToken =
+      typeof tokenObj.id_token === 'string' && tokenObj.id_token.trim()
+        ? tokenObj.id_token
+        : typeof tokenObj.idToken === 'string' && tokenObj.idToken.trim()
+          ? tokenObj.idToken
+          : undefined;
+    const expiry = typeof tokenObj.expiry === 'string' ? tokenObj.expiry : undefined;
+
+    if (
+      String(obj.state || '').toLowerCase() === 'signedout' ||
+      (!accessToken && !refreshToken && !idToken)
+    ) {
+      return undefined;
+    }
+
+    return {
+      raw: trimmed,
+      accessToken,
+      refreshToken,
+      idToken,
+      expiry,
+      json: obj,
+    };
   } catch {
-    // Not JSON; still return raw string
+    // Non-JSON payload (e.g. go-keyring-base64 protobuf bytes)
+    if (!isGoKeyring && TRIVIAL_NON_TOKEN_LITERALS.has(jsonStr.toLowerCase())) {
+      return undefined;
+    }
   }
 
   return { raw: trimmed };
@@ -156,36 +198,130 @@ export function __setTestKeychainToken(token?: string): void {
   inMemoryTestKeychain = token;
 }
 
+export interface KeychainWslOptions {
+  /** Also read/write/clear WSL distro standalone token files when running on Windows. */
+  includeWsl?: boolean;
+  /** Prefer WSL standalone token over Windows Credential Manager for WSL Remote windows. */
+  preferWsl?: boolean;
+  /** Target WSL distribution name (e.g. "Ubuntu-24.04"). */
+  wslDistro?: string;
+  /** Restrict WSL enumeration on Windows to currently running distributions only. */
+  wslRunningOnly?: boolean;
+  /** Restrict standalone lookup to WSL paths only. */
+  wslOnly?: boolean;
+}
+
+function joinWinUncPath(baseUnc: string, ...segments: string[]): string {
+  const cleanBase = baseUnc.replace(/[\\/]+$/, '');
+  return [cleanBase, ...segments].join('\\');
+}
+
+function getWslTokenTargetsOnWindows(options?: KeychainWslOptions): Array<{
+  distro: string;
+  tokenPath: string;
+}> {
+  if (process.platform !== 'win32') return [];
+  if (!options?.includeWsl && !options?.preferWsl && !options?.wslOnly) return [];
+  const homes: WslLinuxUserHome[] = getWslLinuxUserHomesOnWindows({
+    runningOnly: options.wslRunningOnly,
+    targetDistro: options.wslDistro,
+  });
+  return homes.map((h) => ({
+    distro: h.distro,
+    tokenPath: joinWinUncPath(h.uncHome, '.gemini', 'jetski-standalone-oauth-token'),
+  }));
+}
+
+function writeWslStandaloneViaCli(distro: string, payload: string): boolean {
+  try {
+    child_process.execFileSync(
+      'wsl.exe',
+      [
+        '-d',
+        distro,
+        '-e',
+        'sh',
+        '-c',
+        'umask 077 && mkdir -p "$HOME/.gemini" && cat > "$HOME/.gemini/jetski-standalone-oauth-token"',
+      ],
+      {
+        input: payload,
+        stdio: ['pipe', 'ignore', 'ignore'],
+        windowsHide: true,
+        timeout: 4000,
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearWslStandaloneViaCli(distro: string): boolean {
+  try {
+    child_process.execFileSync(
+      'wsl.exe',
+      ['-d', distro, '-e', 'sh', '-c', 'rm -f "$HOME/.gemini/jetski-standalone-oauth-token"'],
+      {
+        stdio: ['ignore', 'ignore', 'ignore'],
+        windowsHide: true,
+        timeout: 4000,
+      }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns candidate paths for jetski-standalone-oauth-token across candidate user homes.
  */
-export function getStandaloneTokenPaths(): string[] {
+export function getStandaloneTokenPaths(options?: KeychainWslOptions): string[] {
   const paths: string[] = [];
-  const primaryHome = os.homedir();
-  const primaryToken = path.join(primaryHome, '.gemini', 'jetski-standalone-oauth-token');
-  paths.push(primaryToken);
 
-  if (process.env.GEMINI_CLI_HOME) {
-    const cliToken = path.join(process.env.GEMINI_CLI_HOME, 'jetski-standalone-oauth-token');
-    if (!paths.includes(cliToken)) {
-      paths.push(cliToken);
+  if (!options?.wslOnly) {
+    const primaryHome = os.homedir();
+    const primaryToken = path.join(primaryHome, '.gemini', 'jetski-standalone-oauth-token');
+    paths.push(primaryToken);
+
+    if (process.env.GEMINI_CLI_HOME) {
+      const cliToken = path.join(process.env.GEMINI_CLI_HOME, 'jetski-standalone-oauth-token');
+      if (!paths.includes(cliToken)) {
+        paths.push(cliToken);
+      }
     }
+
+    if (isWsl()) {
+      for (const winHome of getWslWindowsUserHomes()) {
+        const winToken = path.join(winHome, '.gemini', 'jetski-standalone-oauth-token');
+        if (!paths.includes(winToken)) {
+          paths.push(winToken);
+        }
+      }
+    }
+  } else if (isWsl()) {
+    paths.push(path.join(os.homedir(), '.gemini', 'jetski-standalone-oauth-token'));
   }
 
-  if (isWsl()) {
-    for (const winHome of getWslWindowsUserHomes()) {
-      const winToken = path.join(winHome, '.gemini', 'jetski-standalone-oauth-token');
-      if (!paths.includes(winToken)) {
-        paths.push(winToken);
-      }
+  for (const target of getWslTokenTargetsOnWindows(options)) {
+    if (!paths.includes(target.tokenPath)) {
+      paths.push(target.tokenPath);
     }
   }
 
   return paths;
 }
 
-function readStandaloneToken(): string | undefined {
-  for (const tokenPath of getStandaloneTokenPaths()) {
+/**
+ * Reads jetski-standalone-oauth-token from WSL user home(s) only (on Windows UNC or inside WSL Linux).
+ */
+export function readWslStandaloneToken(options?: KeychainWslOptions): string | undefined {
+  return readStandaloneToken({ ...options, includeWsl: true, wslOnly: true });
+}
+
+function readStandaloneToken(options?: KeychainWslOptions): string | undefined {
+  for (const tokenPath of getStandaloneTokenPaths(options)) {
     try {
       if (fs.existsSync(tokenPath)) {
         const content = fs.readFileSync(tokenPath, 'utf8').trim();
@@ -200,7 +336,11 @@ function readStandaloneToken(): string | undefined {
   return undefined;
 }
 
-function writeStandaloneToken(rawSecret: string, targetEmail?: string): void {
+function writeStandaloneToken(
+  rawSecret: string,
+  targetEmail?: string,
+  options?: KeychainWslOptions
+): void {
   let jsonStr = rawSecret.trim();
   if (jsonStr.startsWith('go-keyring-base64:')) {
     try {
@@ -239,27 +379,41 @@ function writeStandaloneToken(rawSecret: string, targetEmail?: string): void {
   }
 
   const payloadToWrite = formattedJson || jsonStr;
-  for (const tokenPath of getStandaloneTokenPaths()) {
+  const wslTargets = getWslTokenTargetsOnWindows(options);
+  const wslPathToDistro = new Map(wslTargets.map((t) => [t.tokenPath, t.distro]));
+
+  for (const tokenPath of getStandaloneTokenPaths(options)) {
     try {
-      const dir = path.dirname(tokenPath);
-      if (!fs.existsSync(dir)) {
+      const dir = tokenPath.includes('\\') && !tokenPath.includes('/')
+        ? tokenPath.slice(0, tokenPath.lastIndexOf('\\'))
+        : path.dirname(tokenPath);
+      if (dir && !fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
       fs.writeFileSync(tokenPath, payloadToWrite, { mode: 0o600 });
     } catch {
-      // ignore write errors to inaccessible dirs
+      const wslDistro = wslPathToDistro.get(tokenPath);
+      if (wslDistro) {
+        writeWslStandaloneViaCli(wslDistro, payloadToWrite);
+      }
     }
   }
 }
 
-function clearStandaloneToken(): void {
-  for (const tokenPath of getStandaloneTokenPaths()) {
+function clearStandaloneToken(options?: KeychainWslOptions): void {
+  const wslTargets = getWslTokenTargetsOnWindows(options);
+  const wslPathToDistro = new Map(wslTargets.map((t) => [t.tokenPath, t.distro]));
+
+  for (const tokenPath of getStandaloneTokenPaths(options)) {
     try {
       if (fs.existsSync(tokenPath)) {
         fs.rmSync(tokenPath, { force: true });
       }
     } catch {
-      // ignore
+      const wslDistro = wslPathToDistro.get(tokenPath);
+      if (wslDistro) {
+        clearWslStandaloneViaCli(wslDistro);
+      }
     }
   }
 }
@@ -347,12 +501,19 @@ ${WIN32_CRED_CSHARP}
 /**
  * Reads the active Antigravity credential from the OS Keychain (service: gemini, username: antigravity).
  */
-export function readKeychainToken(): string | undefined {
+export function readKeychainToken(options?: KeychainWslOptions): string | undefined {
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_KEYCHAIN) {
     return inMemoryTestKeychain;
   }
   try {
     if (process.platform === 'linux') {
+      // When WSL remote context explicitly prefers WSL's file-based standalone token, check it before Windows CredMan.
+      if (isWsl() && options?.preferWsl) {
+        const wslToken = readStandaloneToken({ wslOnly: true });
+        if (wslToken) return wslToken;
+        return undefined;
+      }
+
       // If running inside WSL, check Windows Credential Manager first via powershell.exe
       if (isWsl()) {
         const winToken = readWindowsCredential();
@@ -398,7 +559,7 @@ sys.exit(1)
       }
 
       // 3. Fallback: jetski-standalone-oauth-token file (standard on headless Linux / agy hub)
-      const standalone = readStandaloneToken();
+      const standalone = readStandaloneToken(options);
       if (standalone) return standalone;
 
       return undefined;
@@ -415,18 +576,25 @@ sys.exit(1)
       } catch {
         // ignore
       }
-      return readStandaloneToken();
+      return readStandaloneToken(options);
     }
 
     if (process.platform === 'win32') {
+      if (options?.preferWsl) {
+        const wslTargets = getWslTokenTargetsOnWindows({ ...options, wslOnly: true });
+        if (wslTargets.length > 0) {
+          // WSL `agy` always uses file-based token storage and never reads Windows Credential Manager.
+          return readWslStandaloneToken(options);
+        }
+      }
       const winToken = readWindowsCredential();
       if (winToken) return winToken;
-      return readStandaloneToken();
+      return readStandaloneToken(options);
     }
   } catch {
-    return readStandaloneToken();
+    return readStandaloneToken(options);
   }
-  return readStandaloneToken();
+  return readStandaloneToken(options);
 }
 
 function hasLinuxSessionBus(): boolean {
@@ -512,17 +680,21 @@ for item in col.search_items({'service': '${KEYCHAIN_SERVICE}', 'username': '${K
  * Writes the raw credential (e.g. "go-keyring-base64:...") into the OS Keychain
  * under service="gemini", username="antigravity" and to jetski-standalone-oauth-token.
  */
-export function writeKeychainToken(rawSecret: string, targetEmail?: string): boolean {
+export function writeKeychainToken(
+  rawSecret: string,
+  targetEmail?: string,
+  options?: KeychainWslOptions
+): boolean {
   if (!rawSecret || !rawSecret.trim()) return false;
   const secret = rawSecret.trim();
-
-  // Always sync to jetski-standalone-oauth-token across candidate user homes
-  writeStandaloneToken(secret, targetEmail);
 
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_KEYCHAIN) {
     inMemoryTestKeychain = secret;
     return true;
   }
+
+  // Always sync to jetski-standalone-oauth-token across candidate user homes
+  writeStandaloneToken(secret, targetEmail, options);
 
   try {
     if (process.platform === 'linux') {
@@ -539,7 +711,7 @@ export function writeKeychainToken(rawSecret: string, targetEmail?: string): boo
       if (storeLinuxSecretService(secret)) {
         return true;
       }
-      return Boolean(readStandaloneToken());
+      return Boolean(readStandaloneToken(options));
     }
 
     if (process.platform === 'darwin') {
@@ -552,6 +724,9 @@ export function writeKeychainToken(rawSecret: string, targetEmail?: string): boo
     }
 
     if (process.platform === 'win32') {
+      if (options?.wslOnly) {
+        return Boolean(readWslStandaloneToken(options));
+      }
       return writeWindowsCredential(secret);
     }
   } catch {
@@ -564,13 +739,13 @@ export function writeKeychainToken(rawSecret: string, targetEmail?: string): boo
  * Deletes the active credential from the OS Keychain (service: gemini, username: antigravity)
  * and removes jetski-standalone-oauth-token.
  */
-export function clearKeychainToken(): boolean {
-  clearStandaloneToken();
-
+export function clearKeychainToken(options?: KeychainWslOptions): boolean {
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_KEYCHAIN) {
     inMemoryTestKeychain = undefined;
     return true;
   }
+
+  clearStandaloneToken(options);
 
   try {
     if (process.platform === 'linux') {

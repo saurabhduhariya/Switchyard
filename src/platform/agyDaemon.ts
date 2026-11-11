@@ -5,7 +5,23 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { extractEmailFromBuffer, extractPlanFromBuffer, formatPlanFromTier } from '../accounts/identity';
-import { getWslWindowsUserHomes, isWsl } from './wsl';
+import {
+  getWslDistrosOnWindows,
+  getWslLinuxUserHomesOnWindows,
+  getWslWindowsUserHomes,
+  isWsl,
+} from './wsl';
+
+export interface AgyDaemonWslOptions {
+  /** Include WSL distribution daemon dirs, caches, and processes when running on Windows. */
+  includeWsl?: boolean;
+  /** Prefer/restrict probing to WSL daemon endpoints and caches (for WSL Remote windows). */
+  preferWsl?: boolean;
+  /** Target WSL distribution name (e.g. "Ubuntu-24.04"). */
+  wslDistro?: string;
+  /** Restrict WSL enumeration on Windows to currently running distributions only. */
+  wslRunningOnly?: boolean;
+}
 
 export interface AgyHubEndpoint {
   port: number;
@@ -22,33 +38,59 @@ export interface AgyLiveAuthStatus {
   rawStatus: Record<string, unknown>;
 }
 
+function joinWinUnc(baseUnc: string, ...segments: string[]): string {
+  return [baseUnc.replace(/[\\/]+$/, ''), ...segments].join('\\');
+}
+
+function getWslDaemonDirsOnWindows(options?: AgyDaemonWslOptions): string[] {
+  if (process.platform !== 'win32' || (!options?.includeWsl && !options?.preferWsl)) {
+    return [];
+  }
+  const dirs: string[] = [];
+  const homes = getWslLinuxUserHomesOnWindows({
+    runningOnly: options.wslRunningOnly,
+    targetDistro: options.wslDistro,
+  });
+  for (const h of homes) {
+    dirs.push(
+      joinWinUnc(h.uncHome, '.gemini', 'antigravity', 'daemon'),
+      joinWinUnc(h.uncHome, '.gemini', 'daemon')
+    );
+  }
+  return dirs;
+}
+
 /**
  * Returns candidate daemon directories where agy hub writes hub_<port>.json.
  */
-export function getAgyDaemonDirs(): string[] {
+function getAgyDaemonDirs(options?: AgyDaemonWslOptions): string[] {
   const home = os.homedir();
   const geminiHome = process.env.GEMINI_CLI_HOME || path.join(home, '.gemini');
-  const dirs = [
+  const localDirs = [
     path.join(geminiHome, 'antigravity', 'daemon'),
     path.join(home, '.gemini', 'antigravity', 'daemon'),
     path.join(home, '.gemini', 'daemon'),
   ];
   if (isWsl()) {
     for (const winHome of getWslWindowsUserHomes()) {
-      dirs.push(
+      localDirs.push(
         path.join(winHome, '.gemini', 'antigravity', 'daemon'),
         path.join(winHome, '.gemini', 'daemon')
       );
     }
   }
-  return dirs;
+  const wslDirs = getWslDaemonDirsOnWindows(options);
+  if (options?.preferWsl) {
+    return wslDirs.length > 0 ? wslDirs : localDirs;
+  }
+  return [...localDirs, ...wslDirs];
 }
 
 /**
  * Sends a Connect-RPC HTTP/1.1 POST to /exa.language_server_pb.LanguageServerService/<method>
  * over loopback 127.0.0.1.
  */
-export function sendAgyConnectRpc<T>(
+function sendAgyConnectRpc<T>(
   port: number,
   token: string,
   method: string,
@@ -118,7 +160,7 @@ export function sendAgyConnectRpc<T>(
   });
 }
 
-export async function probeQuotaEndpoint(port: number, token: string): Promise<boolean> {
+async function probeQuotaEndpoint(port: number, token: string): Promise<boolean> {
   try {
     const qRes = await sendAgyConnectRpc<Record<string, any>>(
       port,
@@ -161,28 +203,19 @@ async function probeEndpoint(port: number, token: string): Promise<boolean> {
   return false;
 }
 
-/**
- * Discovers the active agy hub or language server endpoint from:
- * 1. ~/.gemini/antigravity/daemon/hub_<port>.json (plus any ports owned by its PID)
- * 2. Running agy / language_server processes and their listening TCP ports
- */
-export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefined> {
-  if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
-    return undefined;
-  }
-
-  const candidatePids = new Set<string>();
-  const candidateTokens = new Set<string>();
-
-  // 1. Inspect ~/.gemini/antigravity/daemon/hub_<port>.json (newest first)
-  for (const dir of getAgyDaemonDirs()) {
+async function probeHubDaemonDirectories(
+  dirs: string[],
+  candidatePids: Set<string>,
+  candidateTokens: Set<string>
+): Promise<AgyHubEndpoint | undefined> {
+  for (const dir of dirs) {
     if (!fs.existsSync(dir)) continue;
     try {
       const files = fs
         .readdirSync(dir)
         .filter((f) => f.endsWith('.json'))
         .map((f) => {
-          const full = path.join(dir, f);
+          const full = dir.includes('\\') && !dir.includes('/') ? `${dir}\\${f}` : path.join(dir, f);
           const stat = fs.statSync(full);
           return { file: f, full, mtime: stat.mtimeMs };
         })
@@ -236,6 +269,160 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
     } catch {
       // Ignore directory read errors.
     }
+  }
+  return undefined;
+}
+
+async function probeUnixProcessOutput(
+  psOut: string,
+  ssOut: string,
+  candidatePids: Set<string>,
+  candidateTokens: Set<string>
+): Promise<AgyHubEndpoint | undefined> {
+  const lines = psOut
+    .split('\n')
+    .filter((l) => l.includes('agy') || l.includes('language_server'));
+
+  const processEntries: Array<{ pid: string; ports: number[] }> = [];
+
+  for (const line of [...lines].reverse()) {
+    const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
+    if (!pidMatch?.[1]) continue;
+    const pid = pidMatch[1];
+    candidatePids.add(pid);
+
+    const tokenMatch = line.match(/(?:--csrf_token|csrf-token|token)[=\s]+([A-Za-z0-9_-]+)/i);
+    if (tokenMatch?.[1]) {
+      candidateTokens.add(tokenMatch[1]);
+    }
+
+    const ports: number[] = [];
+    for (const m of line.matchAll(/(?:--hub-port|hub_port|extension_server_port|server_port|port)[=\s]+(\d+)/gi)) {
+      if (m[1]) ports.push(parseInt(m[1], 10));
+    }
+
+    if (ssOut) {
+      const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
+      for (const m of ssOut.matchAll(regex)) {
+        if (m[1]) {
+          const p = parseInt(m[1], 10);
+          if (!ports.includes(p)) ports.push(p);
+        }
+      }
+    }
+
+    processEntries.push({ pid, ports });
+  }
+
+  const allTokensToTry = [...candidateTokens, ''];
+
+  // Pass 1: prefer endpoints that serve live quota/userStatus
+  for (const entry of processEntries) {
+    for (const port of entry.ports) {
+      for (const tok of allTokensToTry) {
+        if (await probeQuotaEndpoint(port, tok)) {
+          return { port, token: tok, pid: Number(entry.pid) };
+        }
+      }
+    }
+  }
+
+  // Pass 2: accept AuthGetStatus endpoints
+  for (const entry of processEntries) {
+    for (const port of entry.ports) {
+      for (const tok of allTokensToTry) {
+        if (await probeEndpoint(port, tok)) {
+          return { port, token: tok, pid: Number(entry.pid) };
+        }
+      }
+    }
+  }
+
+  // Also check any ports belonging to PIDs found in hub_<port>.json.
+  if (ssOut && candidatePids.size > 0) {
+    for (const pid of candidatePids) {
+      const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
+      for (const m of ssOut.matchAll(regex)) {
+        if (!m[1]) continue;
+        const port = parseInt(m[1], 10);
+        for (const tok of allTokensToTry) {
+          if (await probeQuotaEndpoint(port, tok)) {
+            return { port, token: tok, pid: Number(pid) };
+          }
+        }
+        for (const tok of allTokensToTry) {
+          if (await probeEndpoint(port, tok)) {
+            return { port, token: tok, pid: Number(pid) };
+          }
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function discoverWslAgyHubEndpointOnWindows(
+  options?: AgyDaemonWslOptions
+): Promise<AgyHubEndpoint | undefined> {
+  if (process.platform !== 'win32') return undefined;
+
+  const wslPids = new Set<string>();
+  const wslTokens = new Set<string>();
+
+  const wslDirs = getWslDaemonDirsOnWindows(options);
+  const fromHub = await probeHubDaemonDirectories(wslDirs, wslPids, wslTokens);
+  if (fromHub) return fromHub;
+
+  const distros = getWslDistrosOnWindows({
+    runningOnly: options?.wslRunningOnly ?? true,
+    targetDistro: options?.wslDistro,
+  });
+  for (const distro of distros) {
+    try {
+      const out = child_process.execFileSync(
+        'wsl.exe',
+        ['-d', distro, '-e', 'sh', '-c', 'ps aux; echo "===SS==="; ss -tlpn 2>/dev/null || true'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, timeout: 3500 }
+      );
+      const [psOut = '', ssOut = ''] = out.split('===SS===');
+      const found = await probeUnixProcessOutput(psOut, ssOut, wslPids, wslTokens);
+      if (found) return found;
+    } catch {
+      // Ignore unreachable or stopped WSL distros.
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Discovers the active agy hub or language server endpoint from:
+ * 1. ~/.gemini/antigravity/daemon/hub_<port>.json (plus any ports owned by its PID)
+ * 2. Running agy / language_server processes and their listening TCP ports
+ */
+export async function discoverAgyHubEndpoint(
+  options?: AgyDaemonWslOptions
+): Promise<AgyHubEndpoint | undefined> {
+  if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
+    return undefined;
+  }
+
+  if (process.platform === 'win32' && options?.preferWsl) {
+    return discoverWslAgyHubEndpointOnWindows({ ...options, includeWsl: true });
+  }
+
+  const candidatePids = new Set<string>();
+  const candidateTokens = new Set<string>();
+
+  // 1. Inspect local ~/.gemini/antigravity/daemon/hub_<port>.json (newest first)
+  const localEndpoint = await probeHubDaemonDirectories(
+    getAgyDaemonDirs({ includeWsl: false, preferWsl: false }),
+    candidatePids,
+    candidateTokens
+  );
+  if (localEndpoint) {
+    return localEndpoint;
   }
 
   // 2. Scan running processes for `agy` or `language_server`.
@@ -332,9 +519,6 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'ignore'],
       });
-      const lines = psOut
-        .split('\n')
-        .filter((l) => l.includes('agy') || l.includes('language_server'));
 
       let ssOut = '';
       if (process.platform === 'linux') {
@@ -348,84 +532,15 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
         }
       }
 
-      const processEntries: Array<{ pid: string; ports: number[] }> = [];
-
-      for (const line of [...lines].reverse()) {
-        const pidMatch = line.trim().match(/^\S+\s+(\d+)/);
-        if (!pidMatch?.[1]) continue;
-        const pid = pidMatch[1];
-        candidatePids.add(pid);
-
-        const tokenMatch = line.match(/(?:--csrf_token|csrf-token|token)[=\s]+([A-Za-z0-9_-]+)/i);
-        if (tokenMatch?.[1]) {
-          candidateTokens.add(tokenMatch[1]);
-        }
-
-        const ports: number[] = [];
-        for (const m of line.matchAll(/(?:--hub-port|hub_port|extension_server_port|server_port|port)[=\s]+(\d+)/gi)) {
-          if (m[1]) ports.push(parseInt(m[1], 10));
-        }
-
-        if (ssOut) {
-          const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
-          for (const m of ssOut.matchAll(regex)) {
-            if (m[1]) {
-              const p = parseInt(m[1], 10);
-              if (!ports.includes(p)) ports.push(p);
-            }
-          }
-        }
-
-        processEntries.push({ pid, ports });
-      }
-
-      const allTokensToTry = [...candidateTokens, ''];
-
-      // Pass 1: prefer endpoints that serve live quota/userStatus
-      for (const entry of processEntries) {
-        for (const port of entry.ports) {
-          for (const tok of allTokensToTry) {
-            if (await probeQuotaEndpoint(port, tok)) {
-              return { port, token: tok, pid: Number(entry.pid) };
-            }
-          }
-        }
-      }
-
-      // Pass 2: accept AuthGetStatus endpoints
-      for (const entry of processEntries) {
-        for (const port of entry.ports) {
-          for (const tok of allTokensToTry) {
-            if (await probeEndpoint(port, tok)) {
-              return { port, token: tok, pid: Number(entry.pid) };
-            }
-          }
-        }
-      }
-
-      // Also check any ports belonging to PIDs found in hub_<port>.json.
-      if (ssOut && candidatePids.size > 0) {
-        for (const pid of candidatePids) {
-          const regex = new RegExp(`(?:127\\.0\\.0\\.1|\\[::1\\]|\\*|0\\.0\\.0\\.0):(\\d+).*?pid=${pid}\\b`, 'g');
-          for (const m of ssOut.matchAll(regex)) {
-            if (!m[1]) continue;
-            const port = parseInt(m[1], 10);
-            for (const tok of allTokensToTry) {
-              if (await probeQuotaEndpoint(port, tok)) {
-                return { port, token: tok, pid: Number(pid) };
-              }
-            }
-            for (const tok of allTokensToTry) {
-              if (await probeEndpoint(port, tok)) {
-                return { port, token: tok, pid: Number(pid) };
-              }
-            }
-          }
-        }
-      }
+      const found = await probeUnixProcessOutput(psOut, ssOut, candidatePids, candidateTokens);
+      if (found) return found;
     }
   } catch {
     // Ignore process discovery errors.
+  }
+
+  if (process.platform === 'win32' && options?.includeWsl) {
+    return discoverWslAgyHubEndpointOnWindows(options);
   }
 
   return undefined;
@@ -435,7 +550,9 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
  * Queries AuthGetStatus and GetUserStatus from the running agy hub daemon,
  * and falls back to scanning ~/.gemini/antigravity files if needed.
  */
-export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | undefined> {
+export async function queryAgyLiveAuthStatus(
+  options?: AgyDaemonWslOptions
+): Promise<AgyLiveAuthStatus | undefined> {
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
     return undefined;
   }
@@ -444,9 +561,10 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
   let name: string | undefined;
   let plan: string | undefined;
   let authenticated = false;
+  let rpcRespondedSignedOut = false;
   const combinedRaw: Record<string, unknown> = {};
 
-  const endpoint = await discoverAgyHubEndpoint();
+  const endpoint = await discoverAgyHubEndpoint(options);
   if (endpoint) {
     // 1. Call AuthGetStatus.
     try {
@@ -473,6 +591,15 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
           statusObj.status === 'AUTHENTICATED'
         ) {
           authenticated = true;
+        } else if (
+          statusObj.authenticated === false ||
+          statusObj.isLoggedIn === false ||
+          statusObj.loggedIn === false ||
+          statusObj.hasToken === false ||
+          statusObj.state === 'UNAUTHENTICATED' ||
+          statusObj.status === 'UNAUTHENTICATED'
+        ) {
+          rpcRespondedSignedOut = true;
         }
         if (typeof statusObj.name === 'string') {
           name = statusObj.name;
@@ -506,6 +633,7 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
           if (extracted) {
             email = extracted;
             authenticated = true;
+            rpcRespondedSignedOut = false;
           }
         }
         if (!plan) {
@@ -515,17 +643,38 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
     } catch {
       // Ignore errors from GetUserStatus.
     }
+
+    if (authenticated || email) {
+      rpcRespondedSignedOut = false;
+    }
   }
 
-  // 3. Fallback: scan ~/.gemini/antigravity for cached user info / email if RPC didn't return email.
-  if (!email) {
-    const home = os.homedir();
-    const candidateFiles = [
-      path.join(home, '.gemini', 'antigravity', 'user_status.json'),
-      path.join(home, '.gemini', 'antigravity', 'auth.json'),
-      path.join(home, '.gemini', 'antigravity', 'accounts.json'),
-      path.join(home, '.gemini', 'google_accounts.json'),
-    ];
+  // 3. Fallback: scan ~/.gemini/antigravity only (not Gemini CLI's ~/.gemini/google_accounts.json)
+  // when RPC did not explicitly report an unauthenticated state.
+  if (!email && !rpcRespondedSignedOut) {
+    const wslHomes =
+      process.platform === 'win32' && (options?.includeWsl || options?.preferWsl)
+        ? getWslLinuxUserHomesOnWindows({
+            runningOnly: options.wslRunningOnly,
+            targetDistro: options.wslDistro,
+          })
+        : [];
+    const candidateFiles: string[] = [];
+    if (!(process.platform === 'win32' && options?.preferWsl && wslHomes.length > 0)) {
+      const home = os.homedir();
+      candidateFiles.push(
+        path.join(home, '.gemini', 'antigravity', 'user_status.json'),
+        path.join(home, '.gemini', 'antigravity', 'auth.json'),
+        path.join(home, '.gemini', 'antigravity', 'accounts.json')
+      );
+    }
+    for (const wh of wslHomes) {
+      candidateFiles.push(
+        joinWinUnc(wh.uncHome, '.gemini', 'antigravity', 'user_status.json'),
+        joinWinUnc(wh.uncHome, '.gemini', 'antigravity', 'auth.json'),
+        joinWinUnc(wh.uncHome, '.gemini', 'antigravity', 'accounts.json')
+      );
+    }
     for (const file of candidateFiles) {
       if (!fs.existsSync(file)) continue;
       try {
@@ -543,7 +692,7 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
     }
   }
 
-  if (!authenticated && !email && !plan && Object.keys(combinedRaw).length === 0) {
+  if (!authenticated && !email && !plan && !rpcRespondedSignedOut) {
     return undefined;
   }
 
@@ -559,12 +708,12 @@ export async function queryAgyLiveAuthStatus(): Promise<AgyLiveAuthStatus | unde
 /**
  * Logs out the running agy hub daemon via ConnectRPC AuthLogout.
  */
-export async function logoutAgyDaemon(): Promise<boolean> {
+export async function logoutAgyDaemon(options?: AgyDaemonWslOptions): Promise<boolean> {
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
     return true;
   }
 
-  const endpoint = await discoverAgyHubEndpoint();
+  const endpoint = await discoverAgyHubEndpoint(options);
   if (!endpoint) return false;
   try {
     await sendAgyConnectRpc(endpoint.port, endpoint.token, 'AuthLogout', {});
@@ -574,22 +723,22 @@ export async function logoutAgyDaemon(): Promise<boolean> {
   }
 }
 
-/**
- * Terminates all running agy hub daemon processes and cleans up hub_<port>.json files
- * so that Antigravity spawns a fresh agy hub reading the new OS Keychain credentials.
- */
-export function killAgyHubDaemon(): void {
-  if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
-    return;
-  }
+const AGY_CACHE_FILES = [
+  'user_status.json',
+  'auth.json',
+  'accounts.json',
+  'quota.json',
+  'user_status_cache.json',
+  'agyhub_summaries_proto.pb',
+] as const;
 
-  // 1. Delete hub_*.json files and kill their recorded PIDs.
-  for (const dir of getAgyDaemonDirs()) {
-    if (!fs.existsSync(dir)) continue;
-    try {
-      for (const file of fs.readdirSync(dir)) {
-        if (!/^hub_\d+\.json$/i.test(file)) continue;
-        const full = path.join(dir, file);
+function cleanupDaemonDir(dir: string, killRecordedPid: boolean): void {
+  if (!fs.existsSync(dir)) return;
+  try {
+    for (const file of fs.readdirSync(dir)) {
+      if (!/^hub_\d+\.json$/i.test(file)) continue;
+      const full = dir.includes('\\') && !dir.includes('/') ? `${dir}\\${file}` : path.join(dir, file);
+      if (killRecordedPid) {
         try {
           const parsed = JSON.parse(fs.readFileSync(full, 'utf8')) as { pid?: number };
           if (typeof parsed.pid === 'number' && parsed.pid > 0) {
@@ -602,21 +751,36 @@ export function killAgyHubDaemon(): void {
         } catch {
           // Ignore malformed JSON files.
         }
-        try {
-          fs.rmSync(full, { force: true });
-        } catch {
-          // Ignore file cleanup errors.
-        }
       }
-    } catch {
-      // Ignore directory read errors.
+      try {
+        fs.rmSync(full, { force: true });
+      } catch {
+        // Ignore file cleanup errors.
+      }
     }
+  } catch {
+    // Ignore directory read errors.
+  }
+}
+
+/**
+ * Terminates all running agy hub daemon processes and cleans up hub_<port>.json files
+ * so that Antigravity spawns a fresh agy hub reading the new OS Keychain credentials.
+ */
+export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
+  if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_DAEMON) {
+    return;
+  }
+
+  // 1. Delete local hub_*.json files and kill their recorded PIDs.
+  for (const dir of getAgyDaemonDirs({ includeWsl: false, preferWsl: false })) {
+    cleanupDaemonDir(dir, !dir.startsWith('/mnt/'));
   }
 
   // Also remove cached user_status.json so agy hub fetches fresh identity on restart
   const homes = [os.homedir(), ...(isWsl() ? getWslWindowsUserHomes() : [])];
   for (const h of homes) {
-    for (const cachedFile of ['user_status.json', 'auth.json', 'accounts.json', 'quota.json', 'user_status_cache.json', 'agyhub_summaries_proto.pb']) {
+    for (const cachedFile of AGY_CACHE_FILES) {
       try {
         fs.rmSync(path.join(h, '.gemini', 'antigravity', cachedFile), { force: true });
         fs.rmSync(path.join(h, '.gemini', cachedFile), { force: true });
@@ -648,6 +812,50 @@ export function killAgyHubDaemon(): void {
       });
     } catch {
       // pkill exits 1 when no process matched; ignore.
+    }
+  }
+
+  // 3. When requested from Windows UI host (e.g. switch-helper), also terminate WSL agy --hub & clear WSL caches.
+  if (process.platform === 'win32' && options?.includeWsl) {
+    for (const wslDir of getWslDaemonDirsOnWindows(options)) {
+      // Never pass Linux PIDs from WSL hub_*.json to Windows process.kill().
+      cleanupDaemonDir(wslDir, false);
+    }
+    for (const wh of getWslLinuxUserHomesOnWindows({
+      runningOnly: options.wslRunningOnly,
+      targetDistro: options.wslDistro,
+    })) {
+      for (const cachedFile of AGY_CACHE_FILES) {
+        try {
+          fs.rmSync(joinWinUnc(wh.uncHome, '.gemini', 'antigravity', cachedFile), { force: true });
+          fs.rmSync(joinWinUnc(wh.uncHome, '.gemini', cachedFile), { force: true });
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const wslDistros = getWslDistrosOnWindows({
+      runningOnly: options.wslRunningOnly,
+      targetDistro: options.wslDistro,
+    });
+    for (const distro of wslDistros) {
+      try {
+        child_process.execFileSync(
+          'wsl.exe',
+          [
+            '-d',
+            distro,
+            '-e',
+            'sh',
+            '-c',
+            "pkill -9 -f 'agy.*(--hub| hub)' 2>/dev/null || true; rm -f \"$HOME/.gemini/antigravity/daemon/hub_\"*.json \"$HOME/.gemini/antigravity/user_status.json\" \"$HOME/.gemini/antigravity/agyhub_summaries_proto.pb\" 2>/dev/null || true",
+          ],
+          { stdio: 'ignore', windowsHide: true, timeout: 4000 }
+        );
+      } catch {
+        // ignore stopped/unreachable distros
+      }
     }
   }
 }

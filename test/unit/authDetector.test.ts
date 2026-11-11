@@ -86,4 +86,140 @@ describe('accounts/AuthDetector', () => {
 
     expect('unsupported' in result).toBe(true);
   });
+
+  it('returns unsupported for Antigravity 2.6 signedOut sentinel and empty state sync keys', async () => {
+    const fs = await import('node:fs');
+    const initSqlJs = (await import('sql.js')).default;
+    const { KEYS } = await import('../../src/constants');
+    const { __setTestKeychainToken } = await import('../../src/platform/keychain');
+
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);');
+
+    const sentinelProto = Buffer.concat([
+      Buffer.from('authStateWithContextSentinelKey', 'utf8'),
+      Buffer.from('{"state":"signedOut","context":{}}', 'utf8'),
+    ]).toString('base64');
+
+    db.run('INSERT INTO ItemTable (key, value) VALUES (?, ?)', [KEYS.oauth, sentinelProto]);
+    db.run('INSERT INTO ItemTable (key, value) VALUES (?, ?)', [KEYS.userStatus, '']);
+    db.run('INSERT INTO ItemTable (key, value) VALUES (?, ?)', [KEYS.modelCredits, '']);
+
+    const dbPath = path.join(tempDir, 'signed-out-sentinel.vscdb');
+    fs.writeFileSync(dbPath, Buffer.from(db.export()));
+    db.close();
+
+    __setTestKeychainToken('');
+    try {
+      const detector = new AuthDetector(dbPath);
+      const result = await detector.detectActive();
+      expect('unsupported' in result).toBe(true);
+      if ('unsupported' in result) {
+        expect(result.reason).toContain('No auth tokens found');
+      }
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
+
+  it('returns unsupported for empty values and unauthenticated legacyInit metadata', async () => {
+    const fs = await import('node:fs');
+    const initSqlJs = (await import('sql.js')).default;
+    const { KEYS } = await import('../../src/constants');
+    const { __setTestKeychainToken } = await import('../../src/platform/keychain');
+
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);');
+    db.run('INSERT INTO ItemTable (key, value) VALUES (?, ?)', [KEYS.oauth, '']);
+    db.run('INSERT INTO ItemTable (key, value) VALUES (?, ?)', [
+      KEYS.legacyInit,
+      JSON.stringify({ onboardingComplete: true, lastSeenVersion: '2.6.0' }),
+    ]);
+
+    const dbPath = path.join(tempDir, 'non-auth-legacy-init.vscdb');
+    fs.writeFileSync(dbPath, Buffer.from(db.export()));
+    db.close();
+
+    __setTestKeychainToken('');
+    try {
+      const detector = new AuthDetector(dbPath);
+      const result = await detector.detectActive();
+      expect('unsupported' in result).toBe(true);
+      if ('unsupported' in result) {
+        expect(result.reason).toContain('No auth tokens found');
+      }
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
+
+  it('returns unsupported when OS Keychain contains empty or signedOut JSON payloads', async () => {
+    const fs = await import('node:fs');
+    const initSqlJs = (await import('sql.js')).default;
+    const { __setTestKeychainToken } = await import('../../src/platform/keychain');
+
+    const SQL = await initSqlJs();
+    const db = new SQL.Database();
+    db.run('CREATE TABLE ItemTable (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB);');
+    const dbPath = path.join(tempDir, 'empty-keychain.vscdb');
+    fs.writeFileSync(dbPath, Buffer.from(db.export()));
+    db.close();
+
+    try {
+      for (const badPayload of ['{}', '{"state":"signedOut"}', 'go-keyring-base64:', 'signedout']) {
+        __setTestKeychainToken(badPayload);
+        const detector = new AuthDetector(dbPath);
+        const result = await detector.detectActive();
+        expect('unsupported' in result).toBe(true);
+        if ('unsupported' in result) {
+          expect(result.reason).toContain('No auth tokens found');
+        }
+      }
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
+
+  it('returns unsupported (not partial) for a capture DB with only state-sync preference keys', async () => {
+    const { __setTestKeychainToken } = await import('../../src/platform/keychain');
+    const captureDbPath = path.join(tempDir, 'switchyard-capture', 'cap-1', 'User', 'globalStorage', 'state.vscdb');
+    await writeSyntheticDb(captureDbPath, {
+      'antigravityUnifiedStateSync.agentPreferences': 'CgJVUw==',
+      'antigravityUnifiedStateSync.modelPreferences': 'CgJVUw==',
+      'antigravityUnifiedStateSync.browserPreferences': 'CgJVUw==',
+    });
+
+    __setTestKeychainToken('');
+    try {
+      const detector = new AuthDetector(captureDbPath);
+      const result = await detector.detectActive();
+      expect('unsupported' in result).toBe(true);
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
+
+  it('still returns partial for non-capture DBs with state-sync preference keys, and for capture DBs with profileUrl', async () => {
+    const { __setTestKeychainToken } = await import('../../src/platform/keychain');
+    await writeSyntheticDb(dbPath, {
+      'antigravityUnifiedStateSync.agentPreferences': 'CgJVUw==',
+    });
+    const captureDbPath = path.join(tempDir, 'switchyard-capture', 'cap-2', 'User', 'globalStorage', 'state.vscdb');
+    await writeSyntheticDb(captureDbPath, {
+      [KEYS.profileUrl]: 'https://example.com/avatar.png',
+    });
+
+    __setTestKeychainToken('');
+    try {
+      const regularResult = await new AuthDetector(dbPath).detectActive();
+      expect('partial' in regularResult && regularResult.partial).toBe(true);
+
+      const captureResult = await new AuthDetector(captureDbPath).detectActive();
+      expect('partial' in captureResult && captureResult.partial).toBe(true);
+    } finally {
+      __setTestKeychainToken(undefined);
+    }
+  });
 });
