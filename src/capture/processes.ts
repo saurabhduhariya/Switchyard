@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { isWsl, toWindowsPath } from '../platform/wsl';
 
 /**
  * Finds the main Electron process(es) of a capture window by its --user-data-dir.
@@ -17,8 +18,10 @@ export function findCaptureMainPids(dir: string): Promise<number[]> {
       resolve(pids);
     };
 
-    if (process.platform === 'win32') {
-      const escaped = dir.replace(/\\/g, '/').replace(/'/g, "''").toLowerCase();
+    const runningOnWsl = isWsl();
+    if (process.platform === 'win32' || runningOnWsl) {
+      const targetDir = runningOnWsl ? toWindowsPath(dir) : dir;
+      const escaped = targetDir.replace(/\\/g, '/').replace(/'/g, "''").toLowerCase();
       const script =
         // The flag is built from two pieces so this script's own command line never
         // contains the literal "--user-data-dir" and cannot match itself.
@@ -29,8 +32,9 @@ export function findCaptureMainPids(dir: string): Promise<number[]> {
         `  $cmd = $_.CommandLine.Replace('\\', '/').ToLower(); ` +
         `  $cmd.Contains($flag) -and $cmd.Contains($target) -and -not $cmd.Contains('--type=') ` +
         `} | ForEach-Object { $_.ProcessId }`;
+      const psBin = process.platform === 'win32' ? 'powershell' : 'powershell.exe';
       execFile(
-        'powershell',
+        psBin,
         ['-NoProfile', '-NonInteractive', '-Command', script],
         { timeout: 8000, windowsHide: true },
         (err, stdout) => (err ? resolve([]) : done(String(stdout)))
@@ -53,31 +57,29 @@ export function findCaptureMainPids(dir: string): Promise<number[]> {
   });
 }
 
-/**
- * Politely asks a process to close (lets Electron flush its state to disk).
- * Windows: taskkill without /F posts WM_CLOSE. Unix: SIGTERM.
- */
-export function requestGracefulClose(pid: number): void {
+function terminateProcess(pid: number, force: boolean): void {
   try {
-    if (process.platform === 'win32') {
-      execFile('taskkill', ['/PID', String(pid), '/T'], { windowsHide: true }, () => undefined);
+    if (process.platform === 'win32' || isWsl()) {
+      const taskkillBin = process.platform === 'win32' ? 'taskkill' : 'taskkill.exe';
+      const args = ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])];
+      execFile(taskkillBin, args, { windowsHide: true }, () => undefined);
     } else {
-      process.kill(pid, 'SIGTERM');
+      process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
     }
   } catch {
     // already gone
   }
 }
 
+/**
+ * Politely asks a process to close (lets Electron flush its state to disk).
+ * Windows / WSL: taskkill without /F posts WM_CLOSE. Unix: SIGTERM.
+ */
+export function requestGracefulClose(pid: number): void {
+  terminateProcess(pid, false);
+}
+
 /** Last resort: hard-kill the process tree. */
 export function forceKill(pid: number): void {
-  try {
-    if (process.platform === 'win32') {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => undefined);
-    } else {
-      process.kill(pid, 'SIGKILL');
-    }
-  } catch {
-    // already gone
-  }
+  terminateProcess(pid, true);
 }

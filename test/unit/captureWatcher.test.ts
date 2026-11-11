@@ -210,4 +210,47 @@ describe('capture/CaptureWatcher', () => {
     await (watcher as any).poll();
     expect(cb).not.toHaveBeenCalled();
   });
+
+  it('auto-detects Antigravity v2.6.0+ keychain + agyUserStatus even before state.vscdb exists on disk', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const watcher = new CaptureWatcher(dbPath, logger, 'old-fp');
+    const cb = vi.fn();
+    watcher.onDetection(cb);
+
+    const identity = { email: 'new26@example.com', fingerprint: 'new-fp' };
+    const snapshot = {
+      values: {
+        'agy.keychainToken': 'go-keyring-base64:dG9r',
+        'agy.userStatusJson': JSON.stringify({ email: 'new26@example.com', authenticated: true }),
+      },
+      capturedAt: Date.now(),
+    };
+    mockDetectActive.mockResolvedValue({ identity, snapshot });
+
+    await (watcher as any).poll();
+    expect(cb).not.toHaveBeenCalled();
+
+    await (watcher as any).poll();
+    expect(cb).toHaveBeenCalledWith(identity, snapshot);
+  });
+
+  it('progresses debounce counter even before state.vscdb exists when token arrives without email', async () => {
+    fs.rmSync(dbPath, { force: true });
+    const watcher = new CaptureWatcher(dbPath, logger, 'old-fp');
+    const cb = vi.fn();
+    watcher.onDetection(cb);
+
+    mockDetectActive.mockResolvedValue({
+      identity: { fingerprint: 'pending-fp' },
+      snapshot: {
+        values: { 'agy.keychainToken': 'go-keyring-base64:dG9r' },
+        capturedAt: Date.now(),
+      },
+    });
+
+    await (watcher as any).poll();
+    await (watcher as any).poll();
+    expect((watcher as any).noEmailCount).toBe(2);
+    expect(cb).not.toHaveBeenCalled();
+  });
 });

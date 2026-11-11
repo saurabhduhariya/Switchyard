@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as child_process from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { isWsl, toWindowsPath, getWslWindowsUserHomes, __resetWslCacheForTest, resolveActiveWslDistro } from '../../src/platform/wsl';
 import { isAntigravity26OrNewer } from '../../src/platform/agyDaemon';
@@ -23,6 +24,7 @@ vi.mock('node:child_process', async (importOriginal) => {
   return {
     ...actual,
     execFileSync: vi.fn(actual.execFileSync),
+    execFile: vi.fn(actual.execFile),
   };
 });
 
@@ -151,7 +153,8 @@ describe('WSL2 Platform Interoperability', () => {
       Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
       process.env.WSL_DISTRO_NAME = 'Ubuntu';
 
-      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.existsSync).mockImplementation((p) => p === '/mnt/c/Users/Saurabh');
+      vi.mocked(fs.readdirSync).mockReturnValue([]);
       vi.mocked(child_process.execFileSync).mockImplementation((cmd, args) => {
         if (cmd === 'cmd.exe') {
           return 'C:\\Users\\Saurabh\r\n' as unknown as Buffer;
@@ -269,7 +272,7 @@ describe('WSL2 Platform Interoperability', () => {
 
   describe('resolveActiveWslDistro()', () => {
     it('returns undefined during normal vitest runs', () => {
-      
+      delete process.env.SWITCHYARD_TEST_WSL;
       expect(resolveActiveWslDistro()).toBeUndefined();
     });
 
@@ -325,6 +328,149 @@ describe('WSL2 Platform Interoperability', () => {
       });
 
       expect(args).toEqual(['--folder-uri', 'vscode-remote://wsl+Ubuntu-24.04/home/user/test']);
+    });
+
+    it('preserves WSL remote context for /mnt/c/... workspace folders and workspaceFile', () => {
+      const origFlag = process.env.SWITCHYARD_TEST_WSL;
+      const origDistro = process.env.WSL_DISTRO_NAME;
+      process.env.SWITCHYARD_TEST_WSL = '1';
+      process.env.WSL_DISTRO_NAME = 'Ubuntu-24.04';
+      vi.mocked(fs.existsSync).mockImplementation((p) => String(p) === '/proc/version');
+      vi.mocked(fs.readFileSync).mockImplementation((p) => {
+        if (String(p) === '/proc/version') return 'Linux version 6.6.0-microsoft-standard-WSL2';
+        return '';
+      });
+
+      try {
+        const folderArgs = getWorkspaceRelaunchArgs({
+          remoteName: 'wsl',
+          workspaceFolders: [
+            {
+              uri: {
+                scheme: 'file',
+                fsPath: '/mnt/c/Users/Hp/OneDrive/Documents/Switchyard/Switchyard',
+              },
+            },
+          ],
+        });
+        expect(folderArgs).toEqual([
+          '--remote',
+          'wsl+Ubuntu-24.04',
+          '--folder-uri',
+          'vscode-remote://wsl+Ubuntu-24.04/mnt/c/Users/Hp/OneDrive/Documents/Switchyard/Switchyard',
+        ]);
+
+        const fileArgs = getWorkspaceRelaunchArgs({
+          remoteName: 'wsl',
+          workspaceFile: {
+            scheme: 'file',
+            fsPath: '/mnt/c/Users/Hp/my workspace/app.code-workspace',
+          },
+        });
+        expect(fileArgs).toEqual([
+          '--remote',
+          'wsl+Ubuntu-24.04',
+          '--file-uri',
+          'vscode-remote://wsl+Ubuntu-24.04/mnt/c/Users/Hp/my%20workspace/app.code-workspace',
+        ]);
+
+        const overrideArgs = getWorkspaceRelaunchArgs({
+          remoteName: 'wsl',
+          overrideFolders: ['/mnt/c/work/repo'],
+        });
+        expect(overrideArgs).toEqual([
+          '--remote',
+          'wsl+Ubuntu-24.04',
+          '--folder-uri',
+          'vscode-remote://wsl+Ubuntu-24.04/mnt/c/work/repo',
+        ]);
+      } finally {
+        if (origFlag !== undefined) process.env.SWITCHYARD_TEST_WSL = origFlag;
+        else delete process.env.SWITCHYARD_TEST_WSL;
+        if (origDistro !== undefined) process.env.WSL_DISTRO_NAME = origDistro;
+        else delete process.env.WSL_DISTRO_NAME;
+      }
+    });
+
+    it('getSharedExtensionsDir prefers Windows extensions dir over WSL server dir when running in WSL', async () => {
+      const origFlag = process.env.SWITCHYARD_TEST_WSL;
+      process.env.SWITCHYARD_TEST_WSL = '1';
+      __resetWslCacheForTest();
+
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'switchyard-wsl-ext-'));
+      const winHome = path.join(tmpRoot, 'winhome');
+      const winExtDir = path.join(winHome, '.antigravity-ide', 'extensions');
+      const winSwitchyardExt = path.join(winExtDir, 'saurabhduhariya.ag-switchyard-0.3.0-universal');
+      const serverExtDir = path.join(tmpRoot, 'wslhome', '.antigravity-ide-server', 'extensions');
+      const serverSwitchyardExt = path.join(serverExtDir, 'saurabhduhariya.ag-switchyard-0.3.0-universal');
+      fs.mkdirSync(winSwitchyardExt, { recursive: true });
+      fs.mkdirSync(serverSwitchyardExt, { recursive: true });
+
+      const realFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+      vi.mocked(fs.existsSync).mockImplementation(realFs.existsSync);
+      vi.mocked(fs.readdirSync).mockImplementation(realFs.readdirSync);
+
+      vi.mocked(child_process.execFileSync).mockImplementation((cmd, args) => {
+        if (cmd === 'cmd.exe' && Array.isArray(args) && args.includes('echo %USERPROFILE%')) {
+          return 'C:\\Users\\TestWin' as unknown as Buffer;
+        }
+        if (cmd === 'wslpath' && Array.isArray(args) && args[0] === '-u') {
+          return winHome as unknown as Buffer;
+        }
+        throw new Error('unexpected command');
+      });
+
+      try {
+        const { getSharedExtensionsDir } = await import('../../src/platform/ide');
+        const resolved = getSharedExtensionsDir({ fsPath: serverSwitchyardExt });
+        expect(resolved).toBe(winExtDir);
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        if (origFlag !== undefined) process.env.SWITCHYARD_TEST_WSL = origFlag;
+        else delete process.env.SWITCHYARD_TEST_WSL;
+        __resetWslCacheForTest();
+      }
+    });
+
+    it('findCaptureMainPids and requestGracefulClose use Windows tooling when running in WSL', async () => {
+      const origFlag = process.env.SWITCHYARD_TEST_WSL;
+      process.env.SWITCHYARD_TEST_WSL = '1';
+      __resetWslCacheForTest();
+
+      vi.mocked(child_process.execFileSync).mockImplementation((cmd, args) => {
+        if (cmd === 'wslpath' && Array.isArray(args) && args[0] === '-w') {
+          return 'C:\\Users\\Hp\\AppData\\Roaming\\Antigravity IDE\\User\\switchyard-capture\\cap-1' as unknown as Buffer;
+        }
+        throw new Error('unexpected command');
+      });
+
+      const calls: Array<{ cmd: string; args: string[] }> = [];
+      vi.mocked(child_process.execFile).mockImplementation(((cmd: string, args: string[], _opts: any, cb?: any) => {
+        calls.push({ cmd, args });
+        const callback = typeof _opts === 'function' ? _opts : cb;
+        if (cmd.startsWith('powershell')) {
+          callback?.(null, '8812\r\n', '');
+        } else {
+          callback?.(null, '', '');
+        }
+        return {} as child_process.ChildProcess;
+      }) as any);
+
+      try {
+        const { findCaptureMainPids, requestGracefulClose } = await import('../../src/capture/processes');
+        const pids = await findCaptureMainPids('/mnt/c/Users/Hp/AppData/Roaming/Antigravity IDE/User/switchyard-capture/cap-1');
+        expect(pids).toEqual([8812]);
+        expect(calls[0]?.cmd).toBe('powershell.exe');
+        expect(calls[0]?.args.join(' ')).toContain('c:/users/hp/appdata/roaming/antigravity ide/user/switchyard-capture/cap-1');
+
+        requestGracefulClose(8812);
+        expect(calls[1]?.cmd).toBe('taskkill.exe');
+        expect(calls[1]?.args).toEqual(['/PID', '8812', '/T']);
+      } finally {
+        if (origFlag !== undefined) process.env.SWITCHYARD_TEST_WSL = origFlag;
+        else delete process.env.SWITCHYARD_TEST_WSL;
+        __resetWslCacheForTest();
+      }
     });
   });
 });

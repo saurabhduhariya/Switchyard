@@ -759,5 +759,24 @@ describe('capture/CaptureManager', () => {
       expect(calls.length).toBeLessThan(40);
       manager.dispose();
     }, 15000);
+
+    it('ignores rapid double startCapture calls with alreadyInProgress=true', async () => {
+      const fakeSpawner = vi.fn().mockReturnValue({ pid: 4242, unref: vi.fn() });
+      const manager = new CaptureManager({
+        store,
+        logger,
+        globalStorageUri,
+        memento,
+        spawner: fakeSpawner as any,
+        executableFinder: () => '/mock/antigravity',
+      });
+
+      const [r1, r2] = await Promise.all([manager.startCapture(), manager.startCapture()]);
+      expect(r1.ok).toBe(true);
+      expect(r2.ok).toBe(false);
+      expect(r2.alreadyInProgress).toBe(true);
+      expect(fakeSpawner).toHaveBeenCalledTimes(1);
+      manager.dispose();
+    });
   });
 });
