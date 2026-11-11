@@ -54,7 +54,21 @@ export class AuthDetector {
    * v2.5.5 fallback: Reads from state.vscdb.
    */
   async detectActive(): Promise<DetectionResult> {
-    // 1. v2.6.0+ Primary Detection: OS Keychain + agy --hub daemon
+    const targetKeys = [
+      KEYS.oauth,
+      KEYS.userStatus,
+      KEYS.modelCredits,
+      KEYS.profileUrl,
+      KEYS.legacyInit,
+    ];
+
+    const dbValues = this.dbPath ? await readKeys(this.dbPath, targetKeys) : {};
+    const hasLegacyAuth = Boolean(
+      dbValues[KEYS.oauth] || dbValues[KEYS.legacyInit] || dbValues[KEYS.userStatus]
+    );
+    const isCaptureDb = Boolean(this.dbPath && this.dbPath.includes('switchyard-capture'));
+
+    // 1. Check OS Keychain + agy --hub daemon (v2.6.0+)
     const rawKeychain = readKeychainToken();
     const decodedKeyring = rawKeychain ? decodeKeyringValue(rawKeychain) : undefined;
     const hasKeychainToken = Boolean(
@@ -63,76 +77,90 @@ export class AuthDetector {
 
     if (hasKeychainToken && rawKeychain) {
       const liveStatus = await queryAgyLiveAuthStatus();
-      // If agy --hub explicitly says unauthenticated and has no email while keychain is stale, wait or use keychain
-      const values: Record<string, string> = {
+      const keychainValues: Record<string, string> = {
         [KEYS.keychainToken]: rawKeychain,
       };
-
       if (liveStatus && (liveStatus.email || liveStatus.plan || liveStatus.authenticated)) {
-        values[KEYS.agyUserStatus] = JSON.stringify(liveStatus);
+        keychainValues[KEYS.agyUserStatus] = JSON.stringify(liveStatus);
       }
 
-      if (this.dbPath) {
-        const extra = await readKeys(this.dbPath, [KEYS.profileUrl]);
-        if (extra && extra[KEYS.profileUrl]) {
-          values[KEYS.profileUrl] = extra[KEYS.profileUrl];
-        }
-      }
-
-      const identity = parseSnapshot(values);
-      return {
-        identity,
-        snapshot: {
-          values,
-          capturedAt: Date.now(),
-        },
-      };
-    }
-
-    // 2. v2.5.5 Legacy Detection: state.vscdb
-    if (this.dbPath) {
-      const targetKeys = [
-        KEYS.oauth,
-        KEYS.userStatus,
-        KEYS.modelCredits,
-        KEYS.profileUrl,
-        KEYS.legacyInit,
-      ];
-
-      const values = await readKeys(this.dbPath, targetKeys);
-      const hasLegacyAuth = Boolean(values[KEYS.oauth] || values[KEYS.legacyInit] || values[KEYS.userStatus]);
-
+      // If state.vscdb also has auth keys, merge them if they belong to the same account
+      // (or if state.vscdb is the active IDE window and keychain was out of sync, prefer state.vscdb's identity)
       if (hasLegacyAuth) {
-        const identity = parseSnapshot(values);
+        const dbIdentity = parseSnapshot(dbValues);
+        const kcIdentity = parseSnapshot(keychainValues);
+
+        const emailsConflict =
+          Boolean(dbIdentity.email && kcIdentity.email) &&
+          dbIdentity.email!.toLowerCase().trim() !== kcIdentity.email!.toLowerCase().trim();
+
+        if (emailsConflict && !isCaptureDb) {
+          // The IDE window (Antigravity Settings) is signed into dbValues; do not mix with a conflicting keychain token
+          return {
+            identity: dbIdentity,
+            snapshot: {
+              values: dbValues,
+              capturedAt: Date.now(),
+            },
+          };
+        }
+
+        const mergedValues: Record<string, string> = {
+          ...dbValues,
+          ...keychainValues,
+        };
+        const identity = parseSnapshot(mergedValues);
         return {
           identity,
           snapshot: {
-            values,
+            values: mergedValues,
             capturedAt: Date.now(),
           },
         };
       }
 
-      // No auth tokens in state.vscdb — check if the user is signed in
-      // via the OS secret store (profileUrl or state sync keys present).
-      const hasProfileUrl = Boolean(values[KEYS.profileUrl]);
+      if (dbValues[KEYS.profileUrl]) {
+        keychainValues[KEYS.profileUrl] = dbValues[KEYS.profileUrl];
+      }
 
-      if (hasProfileUrl) {
+      const identity = parseSnapshot(keychainValues);
+      return {
+        identity,
+        snapshot: {
+          values: keychainValues,
+          capturedAt: Date.now(),
+        },
+      };
+    }
+
+    // 2. state.vscdb Detection
+    if (this.dbPath) {
+      if (hasLegacyAuth) {
+        const identity = parseSnapshot(dbValues);
         return {
-          partial: true,
-          profileUrl: values[KEYS.profileUrl],
-          availableValues: values,
+          identity,
+          snapshot: {
+            values: dbValues,
+            capturedAt: Date.now(),
+          },
         };
       }
 
-      // Last resort: check for active state sync preference keys
+      const hasProfileUrl = Boolean(dbValues[KEYS.profileUrl]);
+      if (hasProfileUrl) {
+        return {
+          partial: true,
+          profileUrl: dbValues[KEYS.profileUrl],
+          availableValues: dbValues,
+        };
+      }
+
       const syncValues = await readKeys(this.dbPath, STATE_SYNC_SIGNAL_KEYS);
       const hasSyncKeys = Object.keys(syncValues).length > 0;
-
       if (hasSyncKeys) {
         return {
           partial: true,
-          availableValues: { ...values, ...syncValues },
+          availableValues: { ...dbValues, ...syncValues },
         };
       }
     }

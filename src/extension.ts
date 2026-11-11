@@ -111,8 +111,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // 2e. Sweep stale capture sessions on startup
   void captureManager.sweepStaleSessions().then(() => captureManager.resume());
 
-  // 2f. Reconcile any pending switch from a previous IDE quit/restart before initializing views
-  await reconcilePendingSwitch(context.globalState, store, logger, dbPath);
+  // 3. Register Webview Provider & Status Bar early so startup never blocks sidebar rendering
+  context.subscriptions.push(
+    channel,
+    statusBar,
+    vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    { dispose: () => captureManager.dispose() }
+  );
+
+  // 2f. Reconcile any pending switch from a previous IDE quit/restart without blocking activation
+  void reconcilePendingSwitch(context.globalState, store, logger, dbPath).then(
+    () => {
+      void panelProvider.push();
+    },
+    (err) => {
+      logger.warn('Pending switch reconciliation failed:', err);
+    }
+  );
 
   // 2g. Auto-heal any corrupted Pro/Ultra quotas from previous switch race conditions
   if (dbPath) {
@@ -123,16 +140,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     });
   }
-
-  // 3. Register Webview Provider & Status Bar
-  context.subscriptions.push(
-    channel,
-    statusBar,
-    vscode.window.registerWebviewViewProvider(PanelProvider.viewType, panelProvider, {
-      webviewOptions: { retainContextWhenHidden: true },
-    }),
-    { dispose: () => captureManager.dispose() }
-  );
 
   // 4. File Watcher on state.vscdb directory (debounced 500 ms)
   if (dbPath) {
