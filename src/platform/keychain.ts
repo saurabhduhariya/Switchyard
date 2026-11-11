@@ -1,6 +1,9 @@
 import * as child_process from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE } from '../constants';
-import { isWsl } from './wsl';
+import { getWslWindowsUserHomes, isWsl } from './wsl';
 
 const WIN32_CRED_CSHARP = `
 using System;
@@ -153,6 +156,114 @@ export function __setTestKeychainToken(token?: string): void {
   inMemoryTestKeychain = token;
 }
 
+/**
+ * Returns candidate paths for jetski-standalone-oauth-token across candidate user homes.
+ */
+export function getStandaloneTokenPaths(): string[] {
+  const paths: string[] = [];
+  const primaryHome = os.homedir();
+  const primaryToken = path.join(primaryHome, '.gemini', 'jetski-standalone-oauth-token');
+  paths.push(primaryToken);
+
+  if (process.env.GEMINI_CLI_HOME) {
+    const cliToken = path.join(process.env.GEMINI_CLI_HOME, 'jetski-standalone-oauth-token');
+    if (!paths.includes(cliToken)) {
+      paths.push(cliToken);
+    }
+  }
+
+  if (isWsl()) {
+    for (const winHome of getWslWindowsUserHomes()) {
+      const winToken = path.join(winHome, '.gemini', 'jetski-standalone-oauth-token');
+      if (!paths.includes(winToken)) {
+        paths.push(winToken);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function readStandaloneToken(): string | undefined {
+  for (const tokenPath of getStandaloneTokenPaths()) {
+    try {
+      if (fs.existsSync(tokenPath)) {
+        const content = fs.readFileSync(tokenPath, 'utf8').trim();
+        if (content) {
+          return content;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
+function writeStandaloneToken(rawSecret: string, targetEmail?: string): void {
+  let jsonStr = rawSecret.trim();
+  if (jsonStr.startsWith('go-keyring-base64:')) {
+    try {
+      jsonStr = Buffer.from(jsonStr.slice('go-keyring-base64:'.length).trim(), 'base64').toString('utf8');
+    } catch {
+      // keep jsonStr
+    }
+  }
+
+  let formattedJson: string | undefined;
+  try {
+    const parsed = JSON.parse(jsonStr) as Record<string, any>;
+    if (parsed && typeof parsed === 'object') {
+      if (targetEmail && !parsed.id_token_email) {
+        parsed.id_token_email = targetEmail;
+      }
+      if (!parsed.token && (parsed.access_token || parsed.accessToken || parsed.refreshToken || parsed.refresh_token)) {
+        const wrapped = {
+          token: {
+            access_token: parsed.access_token || parsed.accessToken,
+            token_type: parsed.token_type || parsed.tokenType || 'Bearer',
+            refresh_token: parsed.refresh_token || parsed.refreshToken,
+            expiry: parsed.expiry,
+            expires_in: parsed.expires_in || parsed.expiresIn || 3599,
+          },
+          auth_method: 'consumer',
+          id_token_email: targetEmail,
+        };
+        formattedJson = JSON.stringify(wrapped, null, 2);
+      } else {
+        formattedJson = JSON.stringify(parsed, null, 2);
+      }
+    }
+  } catch {
+    formattedJson = jsonStr;
+  }
+
+  const payloadToWrite = formattedJson || jsonStr;
+  for (const tokenPath of getStandaloneTokenPaths()) {
+    try {
+      const dir = path.dirname(tokenPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(tokenPath, payloadToWrite, { mode: 0o600 });
+    } catch {
+      // ignore write errors to inaccessible dirs
+    }
+  }
+}
+
+function clearStandaloneToken(): void {
+  for (const tokenPath of getStandaloneTokenPaths()) {
+    try {
+      if (fs.existsSync(tokenPath)) {
+        fs.rmSync(tokenPath, { force: true });
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function readWindowsCredential(): string | undefined {
   try {
     const target = `${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`;
@@ -173,7 +284,7 @@ exit 1
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true,
-        timeout: 4000,
+        timeout: 15000,
       }
     );
     return out.trim() || undefined;
@@ -203,7 +314,7 @@ if (-not [WinCred]::WriteSecret('${target}', '${KEYCHAIN_ACCOUNT}', $secret)) {
         encoding: 'utf8',
         stdio: ['pipe', 'ignore', 'ignore'],
         windowsHide: true,
-        timeout: 4000,
+        timeout: 15000,
       }
     );
     return true;
@@ -225,7 +336,7 @@ ${WIN32_CRED_CSHARP}
     child_process.execFileSync(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', psScript],
-      { stdio: 'ignore', windowsHide: true, timeout: 4000 }
+      { stdio: 'ignore', windowsHide: true, timeout: 15000 }
     );
     return true;
   } catch {
@@ -283,36 +394,130 @@ sys.exit(1)
         });
         if (out && out.trim()) return out.trim();
       } catch {
-        return undefined;
+        // ignore
       }
+
+      // 3. Fallback: jetski-standalone-oauth-token file (standard on headless Linux / agy hub)
+      const standalone = readStandaloneToken();
+      if (standalone) return standalone;
+
       return undefined;
     }
 
     if (process.platform === 'darwin') {
-      const out = child_process.execFileSync(
-        'security',
-        ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w'],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
-      );
-      return out.trim() || undefined;
+      try {
+        const out = child_process.execFileSync(
+          'security',
+          ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT, '-w'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
+        );
+        if (out && out.trim()) return out.trim();
+      } catch {
+        // ignore
+      }
+      return readStandaloneToken();
     }
 
     if (process.platform === 'win32') {
-      return readWindowsCredential();
+      const winToken = readWindowsCredential();
+      if (winToken) return winToken;
+      return readStandaloneToken();
     }
   } catch {
-    return undefined;
+    return readStandaloneToken();
   }
-  return undefined;
+  return readStandaloneToken();
+}
+
+function hasLinuxSessionBus(): boolean {
+  if (process.env.DBUS_SESSION_BUS_ADDRESS) return true;
+  try {
+    const uid = typeof process.getuid === 'function' ? process.getuid() : 1000;
+    return fs.existsSync(`/run/user/${uid}/bus`);
+  } catch {
+    return false;
+  }
+}
+
+function storeLinuxSecretService(secret: string): boolean {
+  try {
+    child_process.execFileSync(
+      'secret-tool',
+      [
+        'store',
+        `--label=${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`,
+        'service',
+        KEYCHAIN_SERVICE,
+        'username',
+        KEYCHAIN_ACCOUNT,
+      ],
+      {
+        input: secret,
+        encoding: 'utf8',
+        stdio: ['pipe', 'ignore', 'ignore'],
+        timeout: 3000,
+      }
+    );
+    return true;
+  } catch {
+    // Fallback to python3 secretstorage
+  }
+
+  const pyScript = `
+import sys, secretstorage
+secret = sys.stdin.read().encode('utf-8')
+bus = secretstorage.dbus_init()
+col = secretstorage.get_default_collection(bus)
+col.create_item('${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}', {'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}, secret, replace=True)
+`;
+  try {
+    child_process.execFileSync('python3', ['-c', pyScript], {
+      input: secret,
+      encoding: 'utf8',
+      stdio: ['pipe', 'ignore', 'ignore'],
+      timeout: 3000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearLinuxSecretService(): boolean {
+  try {
+    child_process.execFileSync(
+      'secret-tool',
+      ['clear', 'service', KEYCHAIN_SERVICE, 'username', KEYCHAIN_ACCOUNT],
+      { stdio: 'ignore', timeout: 3000 }
+    );
+    return true;
+  } catch {
+    const pyScript = `
+import secretstorage
+bus = secretstorage.dbus_init()
+col = secretstorage.get_default_collection(bus)
+for item in col.search_items({'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}):
+    item.delete()
+`;
+    try {
+      child_process.execFileSync('python3', ['-c', pyScript], { stdio: 'ignore', timeout: 3000 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 /**
  * Writes the raw credential (e.g. "go-keyring-base64:...") into the OS Keychain
- * under service="gemini", username="antigravity".
+ * under service="gemini", username="antigravity" and to jetski-standalone-oauth-token.
  */
-export function writeKeychainToken(rawSecret: string): boolean {
+export function writeKeychainToken(rawSecret: string, targetEmail?: string): boolean {
   if (!rawSecret || !rawSecret.trim()) return false;
   const secret = rawSecret.trim();
+
+  // Always sync to jetski-standalone-oauth-token across candidate user homes
+  writeStandaloneToken(secret, targetEmail);
 
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_KEYCHAIN) {
     inMemoryTestKeychain = secret;
@@ -321,52 +526,20 @@ export function writeKeychainToken(rawSecret: string): boolean {
 
   try {
     if (process.platform === 'linux') {
-      let wroteWin = false;
       if (isWsl()) {
-        wroteWin = writeWindowsCredential(secret);
-      }
-
-      try {
-        child_process.execFileSync(
-          'secret-tool',
-          [
-            'store',
-            `--label=${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}`,
-            'service',
-            KEYCHAIN_SERVICE,
-            'username',
-            KEYCHAIN_ACCOUNT,
-          ],
-          {
-            input: secret,
-            encoding: 'utf8',
-            stdio: ['pipe', 'ignore', 'ignore'],
-            timeout: 3000,
-          }
-        );
-        return true;
-      } catch {
-        // Fallback to python3 secretstorage
-      }
-
-      const pyScript = `
-import sys, secretstorage
-secret = sys.stdin.read().encode('utf-8')
-bus = secretstorage.dbus_init()
-col = secretstorage.get_default_collection(bus)
-col.create_item('${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}', {'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}, secret, replace=True)
-`;
-      try {
-        child_process.execFileSync('python3', ['-c', pyScript], {
-          input: secret,
-          encoding: 'utf8',
-          stdio: ['pipe', 'ignore', 'ignore'],
-          timeout: 3000,
-        });
-        return true;
-      } catch {
+        // Windows host Credential Manager is authoritative for Windows Antigravity IDE;
+        // do not let a missing/present Linux keyring mask a Windows write failure.
+        const wroteWin = writeWindowsCredential(secret);
+        if (hasLinuxSessionBus()) {
+          storeLinuxSecretService(secret);
+        }
         return wroteWin;
       }
+
+      if (storeLinuxSecretService(secret)) {
+        return true;
+      }
+      return Boolean(readStandaloneToken());
     }
 
     if (process.platform === 'darwin') {
@@ -388,9 +561,12 @@ col.create_item('${KEYCHAIN_SERVICE}:${KEYCHAIN_ACCOUNT}', {'service': '${KEYCHA
 }
 
 /**
- * Deletes the active credential from the OS Keychain (service: gemini, username: antigravity).
+ * Deletes the active credential from the OS Keychain (service: gemini, username: antigravity)
+ * and removes jetski-standalone-oauth-token.
  */
 export function clearKeychainToken(): boolean {
+  clearStandaloneToken();
+
   if (process.env.VITEST && !process.env.SWITCHYARD_LIVE_KEYCHAIN) {
     inMemoryTestKeychain = undefined;
     return true;
@@ -399,31 +575,15 @@ export function clearKeychainToken(): boolean {
   try {
     if (process.platform === 'linux') {
       if (isWsl()) {
-        deleteWindowsCredential();
+        const clearedWin = deleteWindowsCredential();
+        if (hasLinuxSessionBus()) {
+          clearLinuxSecretService();
+        }
+        return clearedWin;
       }
 
-      try {
-        child_process.execFileSync(
-          'secret-tool',
-          ['clear', 'service', KEYCHAIN_SERVICE, 'username', KEYCHAIN_ACCOUNT],
-          { stdio: 'ignore', timeout: 3000 }
-        );
-        return true;
-      } catch {
-        const pyScript = `
-import secretstorage
-bus = secretstorage.dbus_init()
-col = secretstorage.get_default_collection(bus)
-for item in col.search_items({'service': '${KEYCHAIN_SERVICE}', 'username': '${KEYCHAIN_ACCOUNT}'}):
-    item.delete()
-`;
-        try {
-          child_process.execFileSync('python3', ['-c', pyScript], { stdio: 'ignore', timeout: 3000 });
-          return true;
-        } catch {
-          return true;
-        }
-      }
+      clearLinuxSecretService();
+      return true;
     }
 
     if (process.platform === 'darwin') {

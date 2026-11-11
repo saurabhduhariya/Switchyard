@@ -240,7 +240,7 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
 
   // 2. Scan running processes for `agy` or `language_server`.
   try {
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' || isWsl()) {
       const psScript = `
         $procs = Get-CimInstance Win32_Process | Where-Object {
           $_.Name -like '*language_server*' -or $_.Name -like '*agy*'
@@ -256,12 +256,15 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
 
       let netstatOut = '';
       try {
-        netstatOut = child_process.execSync('netstat -ano -p tcp', {
-          encoding: 'utf8',
-          stdio: ['pipe', 'pipe', 'ignore'],
-          windowsHide: true,
-          timeout: 3000,
-        });
+        netstatOut = child_process.execSync(
+          process.platform === 'win32' ? 'netstat -ano -p tcp' : 'netstat.exe -ano -p tcp',
+          {
+            encoding: 'utf8',
+            stdio: ['pipe', 'pipe', 'ignore'],
+            windowsHide: true,
+            timeout: 3000,
+          }
+        );
       } catch {
         // Ignore netstat errors.
       }
@@ -290,7 +293,7 @@ export async function discoverAgyHubEndpoint(): Promise<AgyHubEndpoint | undefin
           for (const line of netstatOut.split('\n')) {
             if (!line.includes('LISTENING')) continue;
             const parts = line.trim().split(/\s+/);
-            if (parts.length >= 5 && parts[parts.length - 1] === pid) {
+            if (parts.length >= 5 && parts[parts.length - 1] === pid && parts[1]) {
               const portMatch = parts[1].match(/:(\d+)$/);
               if (portMatch?.[1]) {
                 const p = parseInt(portMatch[1], 10);
@@ -610,27 +613,42 @@ export function killAgyHubDaemon(): void {
     }
   }
 
-  // 2. Kill any lingering `agy hub` process.
-  try {
-    if (process.platform === 'win32') {
+  // Also remove cached user_status.json so agy hub fetches fresh identity on restart
+  const homes = [os.homedir(), ...(isWsl() ? getWslWindowsUserHomes() : [])];
+  for (const h of homes) {
+    for (const cachedFile of ['user_status.json', 'auth.json', 'accounts.json', 'quota.json', 'user_status_cache.json', 'agyhub_summaries_proto.pb']) {
+      try {
+        fs.rmSync(path.join(h, '.gemini', 'antigravity', cachedFile), { force: true });
+        fs.rmSync(path.join(h, '.gemini', cachedFile), { force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // 2. Kill any lingering agy hub process on Windows and/or Linux.
+  if (process.platform === 'win32' || isWsl()) {
+    try {
+      const psKill = "Get-CimInstance Win32_Process -Filter \"Name like '%agy%'\" | Where-Object { $_.CommandLine -like '*--hub*' -or $_.CommandLine -like '* hub*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+      const b64 = Buffer.from(psKill, 'utf16le').toString('base64');
       child_process.execFileSync(
         'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*agy*' -and ($_.CommandLine -like '*--hub*' -or $_.CommandLine -like '* hub*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-        ],
-        { stdio: 'ignore', windowsHide: true, timeout: 3000 }
+        ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64],
+        { stdio: 'ignore', windowsHide: true, timeout: 5000 }
       );
-    } else {
-      child_process.execFileSync('pkill', ['-f', 'agy.*(?:--hub| hub)'], {
+    } catch {
+      // ignore
+    }
+  }
+  if (process.platform !== 'win32') {
+    try {
+      child_process.execFileSync('pkill', ['-9', '-f', 'agy.*(?:--hub| hub)'], {
         stdio: 'ignore',
         timeout: 2000,
       });
+    } catch {
+      // pkill exits 1 when no process matched; ignore.
     }
-  } catch {
-    // pkill exits 1 when no process matched; ignore.
   }
 }
 
@@ -656,6 +674,19 @@ export function ensureAgyHubDaemonRunning(): void {
     path.join(programFiles, 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
     path.join(programFiles, 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
   ];
+  if (isWsl()) {
+    for (const winHome of getWslWindowsUserHomes()) {
+      candidates.push(
+        path.join(winHome, '.gemini', 'bin', 'agy.exe'),
+        path.join(winHome, 'AppData', 'Local', 'Programs', 'Antigravity IDE', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe'),
+        path.join(winHome, 'AppData', 'Local', 'Programs', 'Antigravity', 'resources', 'app', 'extensions', 'agy', 'bin', 'agy.exe')
+      );
+    }
+    candidates.push(
+      '/mnt/c/Program Files/Antigravity IDE/resources/app/extensions/agy/bin/agy.exe',
+      '/mnt/c/Program Files/Antigravity/resources/app/extensions/agy/bin/agy.exe'
+    );
+  }
 
   for (const bin of candidates) {
     if (fs.existsSync(bin)) {
