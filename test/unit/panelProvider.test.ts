@@ -744,6 +744,63 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       expect(lastState().trends).toBeUndefined();
     });
   });
+
+  describe('capture & auto-save improvements', () => {
+    it('does not fall back to signOutAndRestart when capture is alreadyInProgress', async () => {
+      const engine = {
+        mode: 'tokenSwap' as const,
+        switchTo: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+        signOutAndRestart: vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const })),
+      };
+      const capture = {
+        startCapture: vi.fn(async () => ({
+          ok: false,
+          alreadyInProgress: true,
+          error: 'A capture session is already in progress.',
+        })),
+        dismiss: vi.fn(async () => undefined),
+        reopenWindow: vi.fn(async () => ({ ok: true })),
+        getCurrentSession: vi.fn(() => ({ sessionId: 's1', state: 'waitingForSignIn' })),
+      };
+      panelProvider.setSwitchEngine(engine as any);
+      panelProvider.setCaptureManager(capture as any);
+
+      vi.mocked(vscode.window.showErrorMessage).mockClear();
+      await panelProvider.handleAddNewAccount();
+      expect(vscode.window.showErrorMessage).not.toHaveBeenCalled();
+      expect(engine.signOutAndRestart).not.toHaveBeenCalled();
+      expect(capture.reopenWindow).toHaveBeenCalledOnce();
+    });
+
+    it('auto-saves and activates newly detected unsaved account when addingAccount guide is active', async () => {
+      await state.update('switchyard.addingAccount', {
+        previousId: 'old-acc',
+        previousEmail: 'old@example.com',
+        startedAt: Date.now(),
+      });
+      const fakeDetector = {
+        detectActive: vi.fn(async () => ({
+          identity: { email: 'fresh@example.com', fingerprint: 'fp-fresh', plan: 'Free' },
+          snapshot: {
+            values: {
+              '__switchyard_keychain_oauth_token': 'go-keyring-base64:Zm9v',
+              '__switchyard_agy_userStatus': JSON.stringify({ email: 'fresh@example.com', plan: 'Free' }),
+            },
+            capturedAt: Date.now(),
+          },
+        })),
+      };
+      const localPanel = new PanelProvider(fakeContext, store, fakeDetector as any, logger, statusBar);
+      localPanel.resolveWebviewView(fakeWebviewView);
+
+      await localPanel.detectAndRefresh(true);
+
+      const saved = await store.getByEmail('fresh@example.com');
+      expect(saved).toBeDefined();
+      expect(await store.activeId()).toBe(saved!.id);
+      expect(state.get('switchyard.addingAccount')).toBeUndefined();
+    });
+  });
 });
 
 
