@@ -33,6 +33,8 @@ The following test scenarios represent the mandatory manual verification checkli
 | **18** | Two main windows: add account in both | To verify | To verify | To verify | **TO VERIFY** | Second window is told a sign-in is already open; first window's card is unaffected |
 | **19** | Reload main window mid sign-in | To verify | To verify | To verify | **TO VERIFY** | Card comes back and the flow can finish |
 | **20** | Failed sign-in -> "Use sign-out method" | To verify | To verify | To verify | **TO VERIFY** | Old flow starts for the current mode |
+| **21** | Support dialog (Accounts footer **Support** and Settings **Support Switchyard ❤️**) | To verify | To verify | To verify | **TO VERIFY** | QR scans in GPay / PhonePe / Paytm with correct payee name, note "Support Switchyard" and an empty amount; **Copy UPI ID** copies; Esc, × and backdrop click close it and return focus; readable in Dark and Light themes |
+| **22** | Accounts footer at narrow sidebar widths | To verify | To verify | To verify | **TO VERIFY** | Import and Support stay on one row; labels shorten below ~445 px instead of wrapping |
 
 ---
 

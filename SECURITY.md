@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.3.x   | :white_check_mark: |
-| < 0.3.0 | :x:                |
+| 0.4.x   | :white_check_mark: |
+| < 0.4.0 | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -71,6 +71,7 @@ This extension handles **highly sensitive authentication credentials**. Understa
 - ❌ No crash reports
 - ❌ No network requests of any kind
 - ❌ No third-party service integrations
+- ❌ No payment data: the optional **Support Switchyard** dialog only shows a QR code generated locally from the public UPI ID in `src/shared/support.ts`. Payment happens in the supporter's own UPI app; Switchyard never sees, verifies or stores it.
 
 ### Security Boundaries
 
@@ -147,7 +148,7 @@ For a complete threat analysis, see [`docs/security-review.md`](docs/security-re
    ✅ **Mitigation:** Strict CSP with nonce-based script loading, no remote resources.
 
 7. **Supply Chain Attack**  
-   ✅ **Mitigation:** Only one runtime dependency (`sql.js`), npm audit in CI, lockfile committed.
+   ✅ **Mitigation:** Only one runtime dependency (`sql.js`), npm audit in CI, lockfiles committed. The webview bundles its build-time libraries (Svelte, and `uqr` for the support QR code) into `dist/webview/main.js`; nothing is loaded at runtime.
 
 **Residual Risks:**
 
@@ -302,4 +303,4 @@ If you're contributing code:
 ---
 
 **Last Updated:** November 12, 2026  
-**Version:** 0.3.1
+**Version:** 0.4.0

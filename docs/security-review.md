@@ -420,3 +420,20 @@ return {
 
 **Reviewer:** Development Team  
 **Date:** October 2, 2026
+
+---
+
+## 11. Addendum — v0.4.0 Support Switchyard (UPI)
+
+**Date:** November 12, 2026
+
+| Area | Finding |
+|------|---------|
+| **Network** | None added. The QR code is generated in the webview by `uqr` (bundled at build time). The CSP is unchanged (`default-src 'none'`, no `connect-src`), and the built `main.js` contains no new URLs. |
+| **Data** | Only the public `upiId` and `payeeName` from `src/shared/support.ts` are shown. Nothing about supporters is collected, stored or sent; there is no payment verification. |
+| **Input** | Config values are validated before use (UPI ID pattern, no control characters, length limits); query values are percent-encoded. Malformed or placeholder values show a notice instead of a QR code. |
+| **Clipboard** | **Copy UPI ID** writes only the configured UPI ID via `navigator.clipboard.writeText`; failures show a manual-copy hint. |
+| **Scope** | No changes to token swapping, keychain, session handling or quota code. |
+| **Dependency** | `uqr@0.1.3` (MIT, no dependencies) added to `webview/` devDependencies; it ships only inside the bundle. |
+
+**Residual risk:** a fork could republish the extension with a different UPI ID. Users should install from the official `saurabhduhariya` publisher listing.

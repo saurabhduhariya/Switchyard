@@ -111,7 +111,7 @@ The following commands are available from the Command Palette (`Ctrl+Shift+P` / 
 
 ## Support Switchyard
 
-Switchyard is free and open source, and supporting it is entirely voluntary. Indian users can contribute through UPI: open **Settings → Support Switchyard ❤️** in the sidebar, scan the QR code with any UPI app and enter whatever amount you like.
+Switchyard is free and open source, and supporting it is entirely voluntary. Indian users can contribute through UPI: click **❤️ Support Switchyard** at the bottom of the Accounts panel (or **Support Switchyard ❤️** in Settings), scan the QR code with any UPI app and enter whatever amount you like.
 
 The QR code is generated locally, so this adds no network requests. Payment goes straight from your UPI app to the maintainer. Switchyard does not see, verify or store payments, and supporting the project does not unlock any additional features.
 

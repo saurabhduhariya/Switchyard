@@ -9,8 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-12
+
 ### Added
-- **Support Switchyard (UPI)**: optional **Support Switchyard ❤️** link in the settings footer opens a dialog with a locally generated UPI QR code (no amount set, INR), the UPI ID with a copy button, and the payee name. No network requests; payments are never verified or recorded.
+- **Support Switchyard (UPI)**: an optional **Support Switchyard** link in the Accounts footer and **Support Switchyard ❤️** link in Settings open a dialog with a UPI QR code (no preset amount, INR), the payee name, and a **Copy UPI ID** button.
+  - Generated locally offline with the bundled [`uqr`](https://github.com/unjs/uqr) library (MIT, zero dependencies) — no network requests, no payment verification or tracking, and no gated features.
+
+### Changed
+- **Accounts footer**: **Import from Backup / File** and **Support Switchyard** now share one row, split by a divider. In narrow sidebars the labels shorten to **Import** and **Support** instead of wrapping.
 
 ## [0.3.1] - 2026-11-12
 
