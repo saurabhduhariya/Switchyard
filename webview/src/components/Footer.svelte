@@ -2,12 +2,16 @@
   import { postToHost } from '../lib/vscode';
   import { getAccounts } from '../stores/app.svelte';
   import Icon from './Icon.svelte';
+  import SupportDialog from './SupportDialog.svelte';
 
   interface Props {
     disabled?: boolean;
   }
 
   let { disabled = false }: Props = $props();
+
+  let supportOpen = $state(false);
+  let supportTrigger: HTMLButtonElement | undefined = $state();
 
   function handleAdd() {
     if (disabled) return;
@@ -29,11 +33,36 @@
     <span>{getAccounts().length > 0 ? 'Add Another Account' : 'Add Account'}</span>
   </button>
 
-  <button class="import-btn" onclick={handleImport} aria-label="Import account from file or backup">
-    <Icon name="import" size={12} class="import-icon" />
-    <span>Import from Backup / File</span>
-  </button>
+  <div class="footer-links">
+    <button
+      type="button"
+      class="link-btn"
+      onclick={handleImport}
+      aria-label="Import account from file or backup"
+      title="Import from Backup / File"
+    >
+      <Icon name="import" size={12} class="import-icon" />
+      <span class="label-long">Import from Backup / File</span>
+      <span class="label-short">Import</span>
+    </button>
+    <span class="divider" aria-hidden="true"></span>
+    <button
+      bind:this={supportTrigger}
+      type="button"
+      class="link-btn"
+      onclick={() => (supportOpen = true)}
+      aria-haspopup="dialog"
+      aria-label="Support Switchyard"
+      title="Support Switchyard"
+    >
+      <span class="heart" aria-hidden="true">❤️</span>
+      <span class="label-long">Support Switchyard</span>
+      <span class="label-short">Support</span>
+    </button>
+  </div>
 </footer>
+
+<SupportDialog open={supportOpen} onClose={() => (supportOpen = false)} returnFocusTo={supportTrigger} />
 
 <style>
   .footer {
@@ -44,13 +73,56 @@
     border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
   }
 
-  .import-btn {
-    display: flex;
+  /*
+   * Secondary actions: two equal halves split by a thin divider. They never
+   * wrap; in narrow sidebars the labels switch to short forms instead.
+   */
+  .footer-links {
+    container-type: inline-size;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 4px;
+  }
+
+  .divider {
+    width: 1px;
+    height: 14px;
+    background: var(--vscode-widget-border, rgba(255, 255, 255, 0.15));
+  }
+
+  .heart {
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .label-long,
+  .label-short {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .label-short {
+    display: none;
+  }
+
+  @container (max-width: 420px) {
+    .label-long {
+      display: none;
+    }
+    .label-short {
+      display: inline;
+    }
+  }
+
+  .link-btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
+    min-width: 0;
     width: 100%;
-    padding: 5px 12px;
+    padding: 4px 6px;
     border: none;
     border-radius: 4px;
     background: transparent;
@@ -58,11 +130,13 @@
     cursor: pointer;
     font-family: inherit;
     font-size: 11px;
-    transition: color 0.12s;
+    white-space: nowrap;
+    transition: color 0.12s, background 0.12s;
   }
 
-  .import-btn:hover {
+  .link-btn:hover {
     color: var(--vscode-foreground, #ccc);
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
   }
 
   .add-btn {

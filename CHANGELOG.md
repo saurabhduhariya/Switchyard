@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Support Switchyard (UPI)**: optional **Support Switchyard ❤️** link in the settings footer opens a dialog with a locally generated UPI QR code (no amount set, INR), the UPI ID with a copy button, and the payee name. No network requests; payments are never verified or recorded.
+
 ## [0.3.1] - 2026-11-12
 
 ### Fixed

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
+  import SupportDialog from './SupportDialog.svelte';
   import {
     getMode,
     getAddAccountMethod,
@@ -20,6 +21,9 @@
   let maskEmails = $derived(getMaskEmails());
   let confirmBeforeSwitch = $derived(getConfirmBeforeSwitch());
   let backupRetention = $derived(getBackupRetention());
+
+  let supportOpen = $state(false);
+  let supportTrigger: HTMLButtonElement | undefined = $state();
 
   function setMode(newMode: 'tokenSwap' | 'profile') {
     if (newMode === mode) return;
@@ -286,9 +290,20 @@
         <Icon name="settings" size={12} />
         <span>Open Advanced VS Code Settings</span>
       </button>
+      <button
+        bind:this={supportTrigger}
+        type="button"
+        class="support-link"
+        onclick={() => (supportOpen = true)}
+        aria-haspopup="dialog"
+      >
+        Support Switchyard ❤️
+      </button>
     </div>
   </div>
 </div>
+
+<SupportDialog open={supportOpen} onClose={() => (supportOpen = false)} returnFocusTo={supportTrigger} />
 
 <style>
   .settings-view {
@@ -679,5 +694,22 @@
 
   .editor-settings-link:hover {
     text-decoration: underline;
+  }
+
+  .support-link {
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--vscode-descriptionForeground);
+    font-family: inherit;
+    font-size: 10.5px;
+    cursor: pointer;
+    padding: 3px 6px;
+    transition: color 0.1s ease, background 0.1s ease;
+  }
+
+  .support-link:hover {
+    color: var(--vscode-foreground);
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
   }
 </style>

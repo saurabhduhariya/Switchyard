@@ -109,6 +109,12 @@ The following commands are available from the Command Palette (`Ctrl+Shift+P` / 
 - **OS Keychain Encryption**: Sensitive tokens are stored in VS Code's `SecretStorage` API (backed by Windows Credential Manager, macOS Keychain, or Linux Secret Service).
 - **Redacted Logging**: All tokens and authorization keys are redacted before anything is logged to output channels.
 
+## Support Switchyard
+
+Switchyard is free and open source, and supporting it is entirely voluntary. Indian users can contribute through UPI: open **Settings → Support Switchyard ❤️** in the sidebar, scan the QR code with any UPI app and enter whatever amount you like.
+
+The QR code is generated locally, so this adds no network requests. Payment goes straight from your UPI app to the maintainer. Switchyard does not see, verify or store payments, and supporting the project does not unlock any additional features.
+
 ## Disclaimer
 
 This extension is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Google. Users are responsible for complying with the applicable Google and Antigravity terms of service for their accounts.
