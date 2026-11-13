@@ -155,6 +155,28 @@
     box-sizing: border-box;
   }
 
+  /* Refresh icons spin while a refresh is in progress (see startRefresh in the store). */
+  :global(.spin-box) {
+    display: inline-flex;
+  }
+
+  :global(.spin-box.spinning) {
+    animation: sy-spin 0.9s linear infinite;
+  }
+
+  @keyframes -global-sy-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    :global(.spin-box.spinning) {
+      animation: none;
+      opacity: 0.5;
+    }
+  }
+
   :global(:focus-visible) {
     outline: 1px solid var(--vscode-focusBorder, #007fd4);
     outline-offset: 1px;

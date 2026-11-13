@@ -2,7 +2,7 @@
   import type { AccountMeta } from '../../../src/shared/messages';
   import Avatar from './Avatar.svelte';
   import QuotaBoxes from './QuotaBoxes.svelte';
-  import OverflowMenu from './OverflowMenu.svelte';
+  import OverflowMenu, { type MenuItem } from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
   import { accountDisplayName } from '../../../src/shared/accountName';
   import { formatCompactAge } from '../lib/formatQuota';
@@ -20,6 +20,7 @@
   let { account, hideEmail, disabled = false }: Props = $props();
 
   let menuOpen = $state(false);
+  let menuBtn: HTMLButtonElement | undefined = $state();
   let renaming = $state(false);
   let renameValue = $state('');
   let renameInput: HTMLInputElement | undefined = $state();
@@ -84,6 +85,9 @@
   }
 
   function handleCardKeydown(e: KeyboardEvent) {
+    // Only when the card itself has focus: keys typed in the rename box or pressed
+    // on the card's own buttons must not switch or remove the account.
+    if (e.target !== e.currentTarget) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handleSwitch();
@@ -98,13 +102,18 @@
     }
   }
 
-  let menuItems = $derived([
-    { label: account.pinned ? 'Unpin from Top' : 'Pin to Top', icon: 'pin' as const, action: handleTogglePin },
-    { label: 'Re-authenticate', icon: 'refresh' as const, action: handleReauth },
-    { label: 'Rename', icon: 'edit' as const, action: startRename },
-    { label: 'Reveal Profile Folder', icon: 'folder' as const, action: handleReveal },
-    { label: 'Copy Settings into Profile', icon: 'copy' as const, action: handleCopySettings },
-    { label: 'Remove', icon: 'trash' as const, danger: true, action: handleRemove },
+  // Profile-folder actions only exist in profile mode; token swap has no per-account folder.
+  let menuItems = $derived<MenuItem[]>([
+    { label: 'Rename', icon: 'edit', action: startRename },
+    { label: account.pinned ? 'Unpin' : 'Pin to top', icon: 'pin', action: handleTogglePin },
+    ...(getMode() === 'profile'
+      ? ([
+          { label: 'Reveal profile folder', icon: 'folder', separator: true, action: handleReveal },
+          { label: 'Copy settings into profile', icon: 'copy', action: handleCopySettings },
+        ] satisfies MenuItem[])
+      : []),
+    { label: 'Sign in again…', icon: 'login', separator: true, action: handleReauth },
+    { label: 'Remove', icon: 'trash', danger: true, action: handleRemove },
   ]);
 </script>
 
@@ -171,9 +180,13 @@
       </button>
       <button
         class="icon-btn"
+        bind:this={menuBtn}
         onclick={() => (menuOpen = !menuOpen)}
+        onkeydown={(e) => e.stopPropagation()}
         title="More actions"
         aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
       >
         <Icon name="dots" size={14} />
       </button>
@@ -200,8 +213,8 @@
     emptyText="No quota yet. Switch to this account to load it."
   />
 
-  {#if menuOpen}
-    <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
+  {#if menuOpen && menuBtn}
+    <OverflowMenu items={menuItems} anchor={menuBtn} onclose={() => (menuOpen = false)} />
   {/if}
 </div>
 

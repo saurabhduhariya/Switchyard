@@ -171,6 +171,34 @@ export function getCaptureSession(): CaptureSessionState | undefined {
   return captureSession;
 }
 
+// ── Refresh feedback ──
+// The refresh icons spin from the click until the host sends fresh state.
+let refreshing = $state(false);
+let refreshStartedAt = 0;
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+const MIN_SPIN_MS = 600;
+const MAX_SPIN_MS = 15_000;
+
+export function isRefreshing(): boolean {
+  return refreshing;
+}
+
+export function startRefresh(): void {
+  refreshing = true;
+  refreshStartedAt = Date.now();
+  clearTimeout(refreshTimer);
+  // Never spin forever if the host does not answer.
+  refreshTimer = setTimeout(() => (refreshing = false), MAX_SPIN_MS);
+}
+
+function finishRefresh(): void {
+  if (!refreshing) return;
+  clearTimeout(refreshTimer);
+  // Keep spinning briefly so a fast refresh is still visible.
+  const left = MIN_SPIN_MS - (Date.now() - refreshStartedAt);
+  refreshTimer = setTimeout(() => (refreshing = false), Math.max(0, left));
+}
+
 // ── Message Handler ──
 
 export function handleMessage(data: ToWebview): void {
@@ -189,6 +217,7 @@ export function handleMessage(data: ToWebview): void {
       suggestion = data.suggestion;
       trends = data.trends ?? {};
       quotaError = data.quotaError;
+      finishRefresh();
       busy = false;
       busyMessage = '';
       loading = false;
@@ -207,6 +236,7 @@ export function handleMessage(data: ToWebview): void {
       break;
 
     case 'error':
+      finishRefresh();
       error = data.message;
       busy = false;
       busyMessage = '';

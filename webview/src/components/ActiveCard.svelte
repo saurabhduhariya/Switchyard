@@ -3,12 +3,12 @@
   import Avatar from './Avatar.svelte';
   import QuotaBoxes from './QuotaBoxes.svelte';
   import QuotaErrorNotice from './QuotaErrorNotice.svelte';
-  import OverflowMenu from './OverflowMenu.svelte';
+  import OverflowMenu, { type MenuItem } from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
   import { accountDisplayName } from '../../../src/shared/accountName';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
-  import { getMode, getQuotaError, getTrend } from '../stores/app.svelte';
+  import { getMode, getQuotaError, getTrend, isRefreshing, startRefresh } from '../stores/app.svelte';
   import { shortTierName } from '../lib/tier';
   import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
@@ -21,6 +21,7 @@
   let { account, hideEmail }: Props = $props();
 
   let menuOpen = $state(false);
+  let menuBtn: HTMLButtonElement | undefined = $state();
   let renaming = $state(false);
   let renameValue = $state('');
   let renameInput: HTMLInputElement | undefined = $state();
@@ -51,6 +52,8 @@
   }
 
   function handleRefresh() {
+    if (isRefreshing()) return;
+    startRefresh();
     postToHost({ type: 'refreshQuota', accountId: account.id });
   }
 
@@ -75,13 +78,18 @@
     if (e.key === 'Escape') cancelRename();
   }
 
-  let menuItems = $derived([
-    { label: 'Refresh Quota', icon: 'refresh' as const, action: handleRefresh },
-    { label: account.pinned ? 'Unpin from Top' : 'Pin to Top', icon: 'pin' as const, action: handleTogglePin },
-    { label: 'Re-authenticate', icon: 'refresh' as const, action: handleReauth },
-    { label: 'Rename', icon: 'edit' as const, action: startRename },
-    { label: 'Reveal Profile Folder', icon: 'folder' as const, action: handleReveal },
-    { label: 'Copy Settings into Profile', icon: 'copy' as const, action: handleCopySettings },
+  // Profile-folder actions only exist in profile mode; token swap has no per-account folder.
+  let menuItems = $derived<MenuItem[]>([
+    { label: 'Refresh quota', icon: 'refresh', action: handleRefresh },
+    { label: 'Rename', icon: 'edit', action: startRename },
+    { label: account.pinned ? 'Unpin' : 'Pin to top', icon: 'pin', action: handleTogglePin },
+    ...(getMode() === 'profile'
+      ? ([
+          { label: 'Reveal profile folder', icon: 'folder', separator: true, action: handleReveal },
+          { label: 'Copy settings into profile', icon: 'copy', action: handleCopySettings },
+        ] satisfies MenuItem[])
+      : []),
+    { label: 'Sign in again…', icon: 'login', separator: true, action: handleReauth },
   ]);
 </script>
 
@@ -131,14 +139,24 @@
       <button class="icon-btn reveal" onclick={startRename} title="Rename account" aria-label="Rename">
         <Icon name="edit" size={13} />
       </button>
-      <button class="icon-btn reveal" onclick={handleRefresh} title="Refresh quota" aria-label="Refresh quota">
-        <Icon name="refresh" size={13} />
+      <button
+        class="icon-btn reveal"
+        class:busy={isRefreshing()}
+        onclick={handleRefresh}
+        title={isRefreshing() ? 'Refreshing…' : 'Refresh quota'}
+        aria-label={isRefreshing() ? 'Refreshing quota' : 'Refresh quota'}
+        aria-busy={isRefreshing()}
+      >
+        <span class="spin-box" class:spinning={isRefreshing()}><Icon name="refresh" size={13} /></span>
       </button>
       <button
         class="icon-btn"
+        bind:this={menuBtn}
         onclick={() => (menuOpen = !menuOpen)}
         title="More actions"
         aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
       >
         <Icon name="dots" size={14} />
       </button>
@@ -159,8 +177,8 @@
     />
   {/if}
 
-  {#if menuOpen}
-    <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
+  {#if menuOpen && menuBtn}
+    <OverflowMenu items={menuItems} anchor={menuBtn} onclose={() => (menuOpen = false)} />
   {/if}
 </div>
 
@@ -212,7 +230,8 @@
   }
 
   .active-card:hover .icon-btn.reveal,
-  .active-card:focus-within .icon-btn.reveal {
+  .active-card:focus-within .icon-btn.reveal,
+  .icon-btn.reveal.busy {
     display: flex;
   }
 

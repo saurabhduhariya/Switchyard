@@ -1,12 +1,16 @@
 <script lang="ts">
   import { postToHost } from '../lib/vscode';
-  import { isCompactView, setCompactView, setView } from '../stores/app.svelte';
-  import OverflowMenu from './OverflowMenu.svelte';
+  import { isCompactView, isRefreshing, setCompactView, setView, startRefresh } from '../stores/app.svelte';
+  import OverflowMenu, { type MenuItem } from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
 
   let menuOpen = $state(false);
+  let menuBtn: HTMLButtonElement | undefined = $state();
 
+  // Re-detects the signed-in account and re-reads its quota.
   function handleRefresh() {
+    if (isRefreshing()) return;
+    startRefresh();
     postToHost({ type: 'ready' });
   }
 
@@ -22,10 +26,9 @@
     setView('settings');
   }
 
-  let menuItems = [
-    { label: 'Settings', icon: 'settings' as const, action: handleSettings },
-    { label: 'Open Backups Folder', icon: 'folder' as const, action: handleOpenBackups },
-    { label: 'Restore Backup…', icon: 'restore' as const, action: handleRestoreBackup },
+  const menuItems: MenuItem[] = [
+    { label: 'Open backups folder', icon: 'folder', action: handleOpenBackups },
+    { label: 'Restore backup…', icon: 'restore', action: handleRestoreBackup },
   ];
 </script>
 
@@ -37,10 +40,11 @@
     <button
       class="icon-btn"
       onclick={handleRefresh}
-      aria-label="Refresh accounts"
-      title="Refresh"
+      aria-label={isRefreshing() ? 'Refreshing accounts' : 'Refresh accounts'}
+      aria-busy={isRefreshing()}
+      title={isRefreshing() ? 'Refreshing…' : 'Refresh'}
     >
-      <Icon name="refresh" size={14} />
+      <span class="spin-box" class:spinning={isRefreshing()}><Icon name="refresh" size={14} /></span>
     </button>
     <button
       class="icon-btn"
@@ -61,6 +65,7 @@
     </button>
     <button
       class="icon-btn"
+      bind:this={menuBtn}
       onclick={() => (menuOpen = !menuOpen)}
       aria-label="More options"
       title="More options"
@@ -71,8 +76,8 @@
     </button>
   </div>
 
-  {#if menuOpen}
-    <OverflowMenu items={menuItems} onclose={() => (menuOpen = false)} />
+  {#if menuOpen && menuBtn}
+    <OverflowMenu items={menuItems} anchor={menuBtn} onclose={() => (menuOpen = false)} />
   {/if}
 </header>
 

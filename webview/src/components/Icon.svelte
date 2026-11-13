@@ -86,23 +86,17 @@
       fill="none"
     />
   {:else if name === 'refresh'}
+    <!-- Single clockwise arrow (a nearly full circle with one arrowhead) -->
     <path
-      d="M2.5 8a5.5 5.5 0 0 1 9.4-3.9M13.5 8a5.5 5.5 0 0 1-9.4 3.9"
-      stroke="currentColor"
-      stroke-width="1.3"
-      stroke-linecap="round"
-      fill="none"
-    />
-    <polyline
-      points="12 1.5 12 4.5 15 4.5"
+      d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.55 0 3 .62 4.1 1.65L13.5 5.5"
       stroke="currentColor"
       stroke-width="1.3"
       stroke-linecap="round"
       stroke-linejoin="round"
       fill="none"
     />
-    <polyline
-      points="4 14.5 4 11.5 1 11.5"
+    <path
+      d="M13.5 2.5v3h-3"
       stroke="currentColor"
       stroke-width="1.3"
       stroke-linecap="round"

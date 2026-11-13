@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Tier and last-checked time are plain muted text instead of pills; the time turns amber only when stale.
   - Rename, refresh and remove icons appear on hover or keyboard focus (all remain in the ⋮ menu).
   - **Hide email addresses** replaces email masking: when on, emails are left off the cards, status bar and **Switch Account…** picker entirely, and accounts are shown by their label (or "Unlabelled account"). The `switchyard.maskEmails` setting key is unchanged, so existing choices carry over.
+  - **⋮ menus** open next to the button that opened them (they used to appear at the top of the panel), support arrow keys, and group items with dividers. **Reveal profile folder** and **Copy settings into profile** are shown only in profile mode, where they work; in token-swap mode they did nothing. **Re-authenticate** is renamed **Sign in again…**.
+  - **Refresh** has a clearer single-arrow icon and spins until fresh data arrives.
   - Redesigned **Settings**, and replaced the sun-like settings icon with a gear.
 - **Accounts footer**: **Import from Backup / File** and **Support Switchyard** now share one row, split by a divider. In narrow sidebars the labels shorten to **Import** and **Support** instead of wrapping.
 
