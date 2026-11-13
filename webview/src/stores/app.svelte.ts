@@ -38,12 +38,14 @@ let trends = $state<Record<string, QuotaTrend>>({});
 let quotaError = $state<QuotaErrorState | undefined>(undefined);
 
 // Compact view is a per-user display preference, kept in the webview's own state.
+// Defaults to compact (inactive accounts as one short row with two bars); a saved
+// choice from the header toggle always wins.
 function loadCompactView(): boolean {
   try {
     const saved = getVsCodeApi()?.getState() as { compactView?: boolean } | undefined;
-    return saved?.compactView === true;
+    return saved?.compactView !== false;
   } catch {
-    return false;
+    return true;
   }
 }
 let compactView = $state(loadCompactView());

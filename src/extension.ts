@@ -9,6 +9,7 @@ import { CaptureManager } from './capture/CaptureManager';
 import { QuotaResetNotifier } from './quota/QuotaResetNotifier';
 import { isCompanionMode, setupCompanionMode, createCompanionStatusBar } from './capture/companion';
 import { KEYS, OUTPUT_CHANNEL_NAME } from './constants';
+import { accountDisplayName } from './shared/accountName';
 import { listBackups, recoverCorruptedQuotas, restoreBackup } from './db/backup';
 import { readKeys } from './db/StateDb';
 import { findStateDb, getBackupsDir, getGlobalStorageDir } from './platform/paths';
@@ -329,16 +330,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      const maskEmails = vscode.workspace.getConfiguration('switchyard').get<boolean>('maskEmails', false);
+      // Setting key kept as `maskEmails` so existing choices carry over; it now hides emails.
+      const hideEmails = vscode.workspace.getConfiguration('switchyard').get<boolean>('maskEmails', false);
 
       const items = accounts.map((acc) => {
-        const displayEmail = maskEmails
-          ? acc.email.replace(/([a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]*(@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/, '$1****$2')
-          : acc.email;
+        const title = hideEmails ? accountDisplayName(acc, true) : acc.email;
         const isActive = acc.id === activeId;
         return {
-          label: isActive ? `$(check) ${displayEmail}` : displayEmail,
-          description: acc.label || (acc.plan ? `(${acc.plan})` : ''),
+          label: isActive ? `$(check) ${title}` : title,
+          description: hideEmails
+            ? acc.plan
+              ? `(${acc.plan})`
+              : ''
+            : acc.label || (acc.plan ? `(${acc.plan})` : ''),
           detail: isActive ? 'Currently active' : undefined,
           id: acc.id,
         };

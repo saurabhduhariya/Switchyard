@@ -6,9 +6,9 @@
     QuotaTrendSeries,
   } from '../../../src/shared/messages';
   import { estimateQuotaSummary, hasEstimates } from '../../../src/shared/quotaEstimate';
-  import { formatCountdown, formatPercentage } from '../lib/formatQuota';
+  import { formatCountdown, formatPercentage, formatPercentShort } from '../lib/formatQuota';
   import { barWidth, quotaTone, windowsForTier } from '../lib/tier';
-  import { describeTrend, formatTrendText } from '../lib/trend';
+  import { describeTrend, formatTrendShort } from '../lib/trend';
   import Sparkline from './Sparkline.svelte';
 
   interface Props {
@@ -77,6 +77,14 @@
   let windows = $derived(windowsForTier(tierName || quota?.tierName));
   let showFiveHour = $derived(windows.fiveHour);
   let showWeekly = $derived(windows.weekly);
+  // Shown as a tooltip instead of an extra line of text under the boxes.
+  let planNote = $derived(
+    showWeekly && !showFiveHour
+      ? 'Weekly quota only on this plan'
+      : showFiveHour && !showWeekly
+        ? '5-hour quota only on this plan'
+        : undefined
+  );
 
   let geminiWeekly = $derived(getBucketNumber(quota?.gemini?.weekly, quota?.gemini?.weeklyRemaining));
   let geminiWeeklyReset = $derived(
@@ -103,7 +111,7 @@
   {#if series}
     <div class="trend-row" title={describeTrend(series, group)}>
       <Sparkline points={series.points} label={describeTrend(series, group)} />
-      <span class="trend-text">{formatTrendText(series)}</span>
+      <span class="trend-text">{formatTrendShort(series)}</span>
     </div>
   {/if}
 {/snippet}
@@ -117,8 +125,12 @@
         class="metric-val"
         class:dash={pct === undefined}
         class:est
-        title={est ? 'Estimated: the reset time passed since this was last checked' : undefined}
-        >{est ? '~' : ''}{formatPercentage(pct)}</span
+        title={est
+          ? 'Estimated: the reset time passed since this was last checked'
+          : pct === undefined
+            ? undefined
+            : `${formatPercentage(pct)} remaining`}
+        >{est ? '~' : ''}{formatPercentShort(pct)}</span
       >
       {#if tone === 'low'}
         <span class="low-chip">Low</span>
@@ -145,9 +157,9 @@
 {:else if compact}
   <div class="compact-grid">
     {#each [{ name: 'Gemini', weekly: geminiWeekly, five: gemini5h, est: quota?.gemini?.weekly?.estimated === true }, { name: 'Claude + GPT', weekly: claudeWeekly, five: claude5h, est: quota?.claudeGpt?.weekly?.estimated === true }] as g (g.name)}
-      <div class="compact-item" title="{g.name}: weekly {formatPercentage(g.weekly)}{showFiveHour ? `, 5h ${formatPercentage(g.five)}` : ''}">
+      <div class="compact-item" title="{g.name}: weekly {formatPercentage(g.weekly)}{showFiveHour ? `, 5h ${formatPercentage(g.five)}` : ''}{planNote ? `. ${planNote}` : ''}">
         <span class="compact-name">{g.name}</span>
-        <span class="compact-val">{g.est ? '~' : ''}{formatPercentage(g.weekly)}</span>
+        <span class="compact-val">{g.est ? '~' : ''}{formatPercentShort(g.weekly)}</span>
         <div class="bar thin" aria-hidden="true">
           <div class="bar-fill tone-{quotaTone(g.weekly)}" style:width="{barWidth(g.weekly)}%"></div>
         </div>
@@ -155,7 +167,7 @@
     {/each}
   </div>
 {:else}
-  <div class="quota-grid">
+  <div class="quota-grid" title={planNote}>
     <!-- Gemini -->
     <div class="quota-box">
       <div class="box-title">Gemini</div>
@@ -180,11 +192,6 @@
       {/if}
     </div>
   </div>
-  {#if showWeekly && !showFiveHour}
-    <div class="plan-note">Weekly quota only on this plan</div>
-  {:else if showFiveHour && !showWeekly}
-    <div class="plan-note">5-hour quota only on this plan</div>
-  {/if}
   {#if anyEstimated}
     <div class="plan-note" role="note">
       ~ Estimated: the reset passed since this account was last checked. Switch to it for exact numbers.
@@ -193,37 +200,52 @@
 {/if}
 
 <style>
+  /*
+   * Two flat columns inside the account card, split by a single hairline.
+   * No borders or backgrounds of their own, so the card doesn't hold boxes
+   * inside boxes.
+   */
   .quota-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
-    margin-top: 10px;
+    gap: 0;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
   }
 
-  /* Narrow sidebars: stack the two boxes instead of squeezing them */
+  .quota-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .quota-box + .quota-box {
+    padding-left: 12px;
+    margin-left: 12px;
+    border-left: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+  }
+
+  /* Narrow sidebars: stack the two columns instead of squeezing them */
   @media (max-width: 320px) {
     .quota-grid {
       grid-template-columns: 1fr;
     }
-  }
-
-  .quota-box {
-    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e), #000 20%);
-    border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
-    border-radius: 6px;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    min-width: 0;
+    .quota-box + .quota-box {
+      padding-left: 0;
+      margin-left: 0;
+      border-left: none;
+      padding-top: 10px;
+      margin-top: 10px;
+      border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+    }
   }
 
   .box-title {
-    font-size: 13px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: 600;
     color: var(--vscode-foreground, #e0e0e0);
-    letter-spacing: -0.2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -297,8 +319,9 @@
     transition: width 0.3s ease;
   }
 
+  /* Healthy quota is neutral; colour is kept for amber (≤30%) and red (≤10%). */
   .tone-good {
-    background: var(--vscode-testing-iconPassed, #73c991);
+    background: color-mix(in srgb, var(--vscode-foreground, #ccc), transparent 45%);
   }
 
   .tone-warn {

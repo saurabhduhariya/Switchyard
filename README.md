@@ -11,7 +11,7 @@ Switchyard is a sidebar extension for Google Antigravity IDE that lets you manag
   - **Token Swap (Default)**: Switches accounts in the current window via an atomic session swap and restart.
   - **Isolated Profiles**: Launches separate Antigravity windows side-by-side using isolated user data directories.
 - **Automatic Backups**: Creates a backup of your session database before every switch, with automatic rollback if a session fails to verify.
-- **In-Panel Settings**: Configure switching modes, add-account method, email masking, and backup retention directly inside the sidebar panel.
+- **In-Panel Settings**: Configure switching modes, add-account method, hiding email addresses, and backup retention directly inside the sidebar panel.
 - **Privacy & Security**: Zero external network requests. Credentials are encrypted and stored in your operating system's native keychain.
 
 ## Usage
@@ -81,7 +81,7 @@ This extension contributes the following settings (`switchyard.*`):
 | `switchyard.captureWindowArgs` | `["--skip-welcome", ...]` | Extra flags for the sign-in window. Allowed: `--skip-welcome`, `--skip-release-notes`, `--skip-add-to-recently-opened`, `--disable-telemetry`, `--disable-workspace-trust`. Machine scope. |
 | `switchyard.captureWindowDisabledExtensions` | `[]` | Extension IDs to disable inside the sign-in window only (Switchyard itself cannot be disabled there). Machine scope. |
 | `switchyard.confirmBeforeSwitch` | `true` | Ask for confirmation before restarting the IDE during a switch. |
-| `switchyard.maskEmails` | `false` | Mask email addresses in the panel and status bar (e.g., `s****@gmail.com`). |
+| `switchyard.maskEmails` | `false` | Hide email addresses in the panel, status bar and account picker; accounts are shown by their label (or "Unlabelled account"). |
 | `switchyard.backupRetention` | `5` | Number of database backups to keep. |
 | `switchyard.executablePath` | `""` | Custom path to the Antigravity executable binary (detected automatically if blank). |
 

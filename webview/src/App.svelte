@@ -102,7 +102,7 @@
 
           {#if getActiveAccount()}
             <li>
-              <ActiveCard account={getActiveAccount()!} masked={getMaskEmails()} />
+              <ActiveCard account={getActiveAccount()!} hideEmail={getMaskEmails()} />
             </li>
           {/if}
 
@@ -110,7 +110,7 @@
             <li class="section-label">Other Accounts · {getOtherAccounts().length}</li>
             {#each getOtherAccounts() as account (account.id)}
               <li>
-                <AccountCard {account} masked={getMaskEmails()} disabled={isUnsupported()} />
+                <AccountCard {account} hideEmail={getMaskEmails()} disabled={isUnsupported()} />
               </li>
             {/each}
           {/if}

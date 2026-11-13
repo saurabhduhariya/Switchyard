@@ -51,7 +51,7 @@
   }
 
   .tone-good {
-    color: var(--vscode-testing-iconPassed, #73c991);
+    color: var(--vscode-descriptionForeground, #8c8c8c);
   }
 
   .tone-warn {

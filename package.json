@@ -160,7 +160,7 @@
         "switchyard.maskEmails": {
           "type": "boolean",
           "default": false,
-          "description": "Mask email addresses in the accounts panel and status bar (e.g. u***@domain.com)."
+          "description": "Hide email addresses in the accounts panel, status bar and account picker. Accounts are shown by their label instead."
         },
         "switchyard.executablePath": {
           "type": "string",

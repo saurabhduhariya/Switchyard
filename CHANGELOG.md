@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Generated locally offline with the bundled [`uqr`](https://github.com/unjs/uqr) library (MIT, zero dependencies) — no network requests, no payment verification or tracking, and no gated features.
 
 ### Changed
+- **Accounts panel redesign**:
+  - The active account is marked once (green left bar and avatar dot) instead of a green border plus an **ACTIVE** badge.
+  - Quota columns sit flat inside the card, split by a hairline, instead of in nested boxes.
+  - Percentages are rounded (`75%`); the exact value is in the tooltip. A partly used quota never shows as 100%.
+  - Healthy quota bars are neutral; amber (≤30%) and red (≤10%) now stand out.
+  - Trend captions are short (`−49% · 24h`, `Steady · 24h`); the full sentence is in the tooltip.
+  - Inactive accounts default to the compact layout (header toggle still switches to detailed), with **Switch** on the right of the name row.
+  - Tier and last-checked time are plain muted text instead of pills; the time turns amber only when stale.
+  - Rename, refresh and remove icons appear on hover or keyboard focus (all remain in the ⋮ menu).
+  - **Hide email addresses** replaces email masking: when on, emails are left off the cards, status bar and **Switch Account…** picker entirely, and accounts are shown by their label (or "Unlabelled account"). The `switchyard.maskEmails` setting key is unchanged, so existing choices carry over.
+  - Redesigned **Settings**, and replaced the sun-like settings icon with a gear.
 - **Accounts footer**: **Import from Backup / File** and **Support Switchyard** now share one row, split by a divider. In narrow sidebars the labels shorten to **Import** and **Support** instead of wrapping.
 
 ## [0.3.1] - 2026-11-12

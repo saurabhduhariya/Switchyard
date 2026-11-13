@@ -176,14 +176,15 @@
       fill="none"
     />
   {:else if name === 'settings'}
-    <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.2" fill="none" />
+    <!-- 8-tooth gear outline (teeth between r=5 and r=6.6) with a centre hole -->
     <path
-      d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"
+      d="M6.79 3.15L7.12 1.46L8.88 1.46L9.21 3.15A5 5 0 0 1 10.58 3.72L12 2.75L13.25 4L12.28 5.42A5 5 0 0 1 12.85 6.79L14.54 7.12L14.54 8.88L12.85 9.21A5 5 0 0 1 12.28 10.58L13.25 12L12 13.25L10.58 12.28A5 5 0 0 1 9.21 12.85L8.88 14.54L7.12 14.54L6.79 12.85A5 5 0 0 1 5.42 12.28L4 13.25L2.75 12L3.72 10.58A5 5 0 0 1 3.15 9.21L1.46 8.88L1.46 7.12L3.15 6.79A5 5 0 0 1 3.72 5.42L2.75 4L4 2.75L5.42 3.72A5 5 0 0 1 6.79 3.15Z"
       stroke="currentColor"
-      stroke-width="1.3"
-      stroke-linecap="round"
+      stroke-width="1.2"
+      stroke-linejoin="round"
       fill="none"
     />
+    <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2" fill="none" />
   {:else if name === 'copy'}
     <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25" fill="none" />
     <path

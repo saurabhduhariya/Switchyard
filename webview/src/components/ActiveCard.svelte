@@ -5,27 +5,27 @@
   import QuotaErrorNotice from './QuotaErrorNotice.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
-  import { maskEmail } from '../lib/maskEmail';
+  import { accountDisplayName } from '../../../src/shared/accountName';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode, getQuotaError, getTrend } from '../stores/app.svelte';
-  import { isStarterTier, shortTierName } from '../lib/tier';
+  import { shortTierName } from '../lib/tier';
   import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
   interface Props {
     account: AccountMeta;
-    masked: boolean;
+    /** Leave the email address off the card entirely. */
+    hideEmail: boolean;
   }
 
-  let { account, masked }: Props = $props();
+  let { account, hideEmail }: Props = $props();
 
   let menuOpen = $state(false);
   let renaming = $state(false);
   let renameValue = $state('');
   let renameInput: HTMLInputElement | undefined = $state();
 
-  let displayEmail = $derived(masked ? maskEmail(account.email) : account.email);
-  let username = $derived(account.label || account.email.split('@')[0]);
+  let username = $derived(accountDisplayName(account, hideEmail));
   let tierName = $derived(account.plan || account.quota?.tierName || 'Antigravity Quota');
   let age = $derived(account.quota ? formatCompactAge(account.quota.updatedAt, true) : 'Live');
 
@@ -110,16 +110,28 @@
             </span>
           {/if}
         </div>
-        <div class="email" title={account.email}>{displayEmail}</div>
+        {#if !hideEmail}
+          <div class="email" title={account.email}>{account.email}</div>
+        {/if}
+        <div class="meta">
+          <span class="sr-only">Active account.</span>
+          {#if getMode() === 'profile'}
+            <span>This window</span>
+            <span class="sep" aria-hidden="true">·</span>
+          {/if}
+          <span class="meta-item" title="Tier: {tierName}">{shortTierName(tierName)}</span>
+          <span class="sep" aria-hidden="true">·</span>
+          <span class="meta-item" title="Last updated">{age}</span>
+        </div>
       {/if}
     </div>
 
-    <!-- Header Actions -->
+    <!-- Rename and Refresh show on hover/focus; both are also in the ⋮ menu. -->
     <div class="header-actions">
-      <button class="icon-btn" onclick={startRename} title="Rename account" aria-label="Rename">
+      <button class="icon-btn reveal" onclick={startRename} title="Rename account" aria-label="Rename">
         <Icon name="edit" size={13} />
       </button>
-      <button class="icon-btn" onclick={handleRefresh} title="Refresh quota" aria-label="Refresh quota">
+      <button class="icon-btn reveal" onclick={handleRefresh} title="Refresh quota" aria-label="Refresh quota">
         <Icon name="refresh" size={13} />
       </button>
       <button
@@ -131,19 +143,6 @@
         <Icon name="dots" size={14} />
       </button>
     </div>
-  </div>
-
-  <!-- Middle Action & Badges Row -->
-  <div class="badges-row">
-    <span class="active-badge">{getMode() === 'profile' ? 'THIS WINDOW' : 'ACTIVE'}</span>
-    <span class="tier-pill" title="Tier: {tierName}">
-      <Icon name="sparkle" size={10} class="pill-icon" />
-      <span>{shortTierName(tierName)}</span>
-    </span>
-    <span class="time-pill" title="Last updated">
-      <Icon name="clock" size={10} class="pill-icon" />
-      <span>{age}</span>
-    </span>
   </div>
 
   <!-- Quota Cards -->
@@ -166,14 +165,62 @@
 </div>
 
 <style>
+  /* "Active" is shown once: the green left bar (plus the avatar's dot). */
   .active-card {
+    container-type: inline-size;
     padding: 12px;
     border-radius: 8px;
     background: var(--vscode-editor-background, #1e1e1e);
-    border: 1px solid var(--vscode-testing-iconPassed, #4ec9b0);
+    border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
     border-left: 3px solid var(--vscode-testing-iconPassed, #4ec9b0);
     position: relative;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  }
+
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .meta-item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sep {
+    opacity: 0.6;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* Secondary icons appear on hover or keyboard focus; hidden on narrow cards. */
+  .icon-btn.reveal {
+    display: none;
+  }
+
+  .active-card:hover .icon-btn.reveal,
+  .active-card:focus-within .icon-btn.reveal {
+    display: flex;
+  }
+
+  @container (max-width: 260px) {
+    .active-card:hover .icon-btn.reveal,
+    .active-card:focus-within .icon-btn.reveal {
+      display: none;
+    }
   }
 
   .card-header {
@@ -240,55 +287,6 @@
   .icon-btn:hover {
     background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
     color: var(--vscode-foreground, #fff);
-  }
-
-  .badges-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-  }
-
-  .active-badge {
-    font-size: 9.5px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    padding: 2px 7px;
-    border-radius: 4px;
-    background: var(--vscode-testing-iconPassed, #4ec9b0);
-    color: #000;
-    line-height: 1.3;
-  }
-
-  .tier-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: rgba(204, 167, 0, 0.12);
-    border: 1px solid rgba(204, 167, 0, 0.5);
-    color: #e5b700;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 170px;
-  }
-
-  .time-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--vscode-descriptionForeground, #9aa0a6);
-    white-space: nowrap;
   }
 
   .rename-input {

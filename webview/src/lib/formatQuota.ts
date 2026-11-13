@@ -61,6 +61,18 @@ export function formatCompactAge(ts?: number, isLive = false): string {
 }
 
 /**
+ * Whole-number percentage for the cards: 74.58 -> "75%".
+ * A partly used quota never shows as 100% and a non-empty one never shows as 0%.
+ * The exact value stays available through formatPercentage (used in tooltips).
+ */
+export function formatPercentShort(val?: number): string {
+  if (val === undefined || val === null || isNaN(val)) return '-';
+  if (val > 0 && val < 1) return '<1%';
+  if (val > 99 && val < 100) return '99%';
+  return `${Math.round(val)}%`;
+}
+
+/**
  * Formats quota percentage: e.g. 76.42 -> "76.42%", 0 -> "0%", undefined -> "-"
  */
 export function formatPercentage(val?: number): string {

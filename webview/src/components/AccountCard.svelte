@@ -4,27 +4,29 @@
   import QuotaBoxes from './QuotaBoxes.svelte';
   import OverflowMenu from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
-  import { maskEmail } from '../lib/maskEmail';
+  import { accountDisplayName } from '../../../src/shared/accountName';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
   import { getMode, getTrend, isCompactView } from '../stores/app.svelte';
-  import { isStale, isStarterTier, shortTierName } from '../lib/tier';
+  import { isStale, shortTierName } from '../lib/tier';
 
   interface Props {
     account: AccountMeta;
-    masked: boolean;
+    /** Leave the email address off the card entirely. */
+    hideEmail: boolean;
     disabled?: boolean;
   }
 
-  let { account, masked, disabled = false }: Props = $props();
+  let { account, hideEmail, disabled = false }: Props = $props();
 
   let menuOpen = $state(false);
   let renaming = $state(false);
   let renameValue = $state('');
   let renameInput: HTMLInputElement | undefined = $state();
 
-  let displayEmail = $derived(masked ? maskEmail(account.email) : account.email);
-  let username = $derived(account.label || account.email.split('@')[0]);
+  let username = $derived(accountDisplayName(account, hideEmail));
+  // Spoken name for the card and Switch button; never the email when it is hidden.
+  let spokenName = $derived(hideEmail ? username : account.email);
   let tierName = $derived(account.plan || account.quota?.tierName || 'Antigravity Quota');
   let age = $derived(formatCompactAge(account.quota?.updatedAt || account.lastUsedAt || account.addedAt));
   // Accounts that are not signed in are not refreshed live, so old numbers may be wrong.
@@ -113,7 +115,7 @@
   role="listitem"
   tabindex="0"
   onkeydown={handleCardKeydown}
-  aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
+  aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {spokenName}"
 >
   <!-- Top Profile Row -->
   <div class="card-header">
@@ -139,16 +141,32 @@
             </span>
           {/if}
         </div>
-        <div class="email" title={account.email}>{displayEmail}</div>
+        {#if !hideEmail}
+          <div class="email" title={account.email}>{account.email}</div>
+        {/if}
+        <div class="meta">
+          <span class="meta-item" title="Tier: {tierName}">{shortTierName(tierName)}</span>
+          <span class="sep" aria-hidden="true">·</span>
+          <span
+            class="meta-item age"
+            class:stale
+            title={stale
+              ? `Quota checked ${age}. It may be out of date; switch to this account to refresh it.`
+              : `Quota checked ${age}`}
+          >
+            {#if stale}<Icon name="warning-clock" size={10} />{/if}
+            <span>{age}</span>
+          </span>
+        </div>
       {/if}
     </div>
 
-    <!-- Header Actions -->
+    <!-- Rename and Remove show on hover/focus; both are also in the ⋮ menu. -->
     <div class="header-actions">
-      <button class="icon-btn" onclick={startRename} title="Rename account" aria-label="Rename">
+      <button class="icon-btn reveal" onclick={startRename} title="Rename account" aria-label="Rename">
         <Icon name="edit" size={13} />
       </button>
-      <button class="icon-btn danger" onclick={handleRemove} title="Remove account" aria-label="Remove">
+      <button class="icon-btn reveal danger" onclick={handleRemove} title="Remove account" aria-label="Remove">
         <Icon name="trash" size={13} />
       </button>
       <button
@@ -159,35 +177,17 @@
       >
         <Icon name="dots" size={14} />
       </button>
+      <button
+        class="switch-btn"
+        onclick={handleSwitch}
+        {disabled}
+        title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
+        aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {spokenName}"
+      >
+        <Icon name="switch" size={12} class="switch-icon" />
+        <span>{getMode() === 'profile' ? 'Open' : 'Switch'}</span>
+      </button>
     </div>
-  </div>
-
-  <!-- Middle Action & Badges Row -->
-  <div class="badges-row">
-    <button
-      class="switch-btn"
-      onclick={handleSwitch}
-      {disabled}
-      title={disabled ? 'Switching is disabled in unsupported environment' : undefined}
-      aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {account.email}"
-    >
-      <Icon name="switch" size={12} class="switch-icon" />
-      <span>{getMode() === 'profile' ? 'Open' : 'Switch'}</span>
-    </button>
-    <span class="tier-pill" title="Tier: {tierName}">
-      <Icon name="sparkle" size={10} class="pill-icon" />
-      <span>{shortTierName(tierName)}</span>
-    </span>
-    <span
-      class="time-pill"
-      class:stale
-      title={stale
-        ? `Quota checked ${age}. It may be out of date; switch to this account to refresh it.`
-        : `Quota checked ${age}`}
-    >
-      <Icon name={stale ? 'warning-clock' : 'clock'} size={10} class="pill-icon" />
-      <span>{age}</span>
-    </span>
   </div>
 
   <!-- Quota Cards -->
@@ -207,6 +207,7 @@
 
 <style>
   .account-card {
+    container-type: inline-size;
     padding: 12px;
     border-radius: 8px;
     background: var(--vscode-editor-background, #1e1e1e);
@@ -296,15 +297,63 @@
     color: var(--vscode-errorForeground, #f14c4c);
   }
 
-  .badges-row {
+  .meta {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 10px;
-    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 2px;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .meta-item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* When space is short the tier name shortens with "…"; the age stays whole. */
+  .age {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+
+  .meta-item:first-child {
+    min-width: 0;
+  }
+
+  .age.stale {
+    color: var(--vscode-editorWarning-foreground, #cca700);
+  }
+
+  .sep {
+    opacity: 0.6;
+  }
+
+  /* Secondary icons appear on hover or keyboard focus; hidden on narrow cards. */
+  .icon-btn.reveal {
+    display: none;
+  }
+
+  .account-card:hover .icon-btn.reveal,
+  .account-card:focus-within .icon-btn.reveal {
+    display: flex;
+  }
+
+  @container (max-width: 300px) {
+    .account-card:hover .icon-btn.reveal,
+    .account-card:focus-within .icon-btn.reveal {
+      display: none;
+    }
   }
 
   .switch-btn {
+    flex-shrink: 0;
+    margin-left: 2px;
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -329,41 +378,6 @@
   .switch-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .tier-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: rgba(204, 167, 0, 0.12);
-    border: 1px solid rgba(204, 167, 0, 0.5);
-    color: #e5b700;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 150px;
-  }
-
-  .time-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--vscode-descriptionForeground, #9aa0a6);
-    white-space: nowrap;
-  }
-
-  .time-pill.stale {
-    color: var(--vscode-editorWarning-foreground, #cca700);
-    border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700), transparent 60%);
   }
 
   .rename-input {

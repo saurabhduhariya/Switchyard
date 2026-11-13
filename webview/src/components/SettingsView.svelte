@@ -25,6 +25,19 @@
   let supportOpen = $state(false);
   let supportTrigger: HTMLButtonElement | undefined = $state();
 
+  const modeOptions = [
+    { value: 'tokenSwap', label: 'Token swap', hint: 'Same window, quick restart.' },
+    { value: 'profile', label: 'Profiles', hint: 'A separate window per account.' },
+  ] as const;
+
+  const addOptions = [
+    { value: 'sideWindow', label: 'Side window', hint: 'Sign in elsewhere; this window stays open.' },
+    { value: 'signOutRestart', label: 'Sign out', hint: 'Signs out and restarts this window.' },
+  ] as const;
+
+  let modeHint = $derived(modeOptions.find((o) => o.value === mode)?.hint ?? '');
+  let addHint = $derived(addOptions.find((o) => o.value === addAccountMethod)?.hint ?? '');
+
   function setMode(newMode: 'tokenSwap' | 'profile') {
     if (newMode === mode) return;
     postToHost({ type: 'updateSetting', key: 'mode', value: newMode });
@@ -61,235 +74,172 @@
   function openEditorSettings() {
     postToHost({ type: 'openSettingsEditor' });
   }
+
+  // Arrow keys move between options, as in a native radio group.
+  function segmentKeydown(
+    e: KeyboardEvent,
+    options: readonly { value: string }[],
+    current: string,
+    select: (v: never) => void
+  ) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+    e.preventDefault();
+    const i = options.findIndex((o) => o.value === current);
+    const step = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1;
+    const next = options[(i + step + options.length) % options.length]!;
+    select(next.value as never);
+    const group = (e.currentTarget as HTMLElement).closest('[role="radiogroup"]');
+    requestAnimationFrame(() => group?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus());
+  }
 </script>
 
 <div class="settings-view">
-  <!-- Top Bar Navigation -->
-  <div class="nav-bar">
-    <button class="back-btn" onclick={onBack} aria-label="Back to Accounts" title="Back to Accounts">
+  <header class="nav-bar">
+    <button class="back-btn" onclick={onBack} aria-label="Back to accounts" title="Back to accounts">
       <Icon name="arrow-left" size={13} />
-      <span>Accounts</span>
     </button>
-    <span class="nav-title">Settings</span>
+    <h1 class="nav-title">Settings</h1>
     <button
-      class="icon-btn-subtle"
+      class="icon-btn"
       onclick={openEditorSettings}
-      title="Open in VS Code Settings Editor"
-      aria-label="Open in VS Code Settings Editor"
+      title="Open all settings in the editor"
+      aria-label="Open all settings in the editor"
     >
       <Icon name="external" size={13} />
     </button>
-  </div>
+  </header>
 
   <div class="settings-scroll-area">
-    <!-- Switching Mode Section -->
-    <section class="settings-section">
-      <div class="section-header">
-        <Icon name="switch" size={12} class="section-icon" />
-        <span class="section-title">SWITCHING MODE</span>
-      </div>
-
-      <div class="mode-options">
-        <button
-          type="button"
-          class="mode-card {mode === 'tokenSwap' ? 'active' : ''}"
-          onclick={() => setMode('tokenSwap')}
-        >
-          <div class="mode-card-header">
-            <div class="radio-circle">
-              {#if mode === 'tokenSwap'}
-                <div class="radio-dot"></div>
-              {/if}
-            </div>
-            <span class="mode-name">Token Swap</span>
-            <span class="badge recommended">Recommended</span>
+    <section class="group" aria-labelledby="g-switching">
+      <h2 id="g-switching" class="group-title">Switching</h2>
+      <div class="rows">
+        <div class="row stacked">
+          <span class="label" id="lbl-mode">Mode</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="lbl-mode">
+            {#each modeOptions as opt (opt.value)}
+              <button
+                type="button"
+                role="radio"
+                class="segment"
+                aria-checked={mode === opt.value}
+                tabindex={mode === opt.value ? 0 : -1}
+                onclick={() => setMode(opt.value)}
+                onkeydown={(e) => segmentKeydown(e, modeOptions, mode, setMode)}
+              >
+                <span class="segment-inner">
+                  {#if mode === opt.value}<Icon name="check" size={11} class="segment-check" />{/if}
+                  <span class="segment-text">{opt.label}</span>
+                </span>
+              </button>
+            {/each}
           </div>
-          <p class="mode-desc">
-            Swaps authentication in the current workspace via fast sub-second IDE relaunch. Real avatar &amp; AI quota rotation.
-          </p>
-        </button>
-
-        <button
-          type="button"
-          class="mode-card {mode === 'profile' ? 'active' : ''}"
-          onclick={() => setMode('profile')}
-        >
-          <div class="mode-card-header">
-            <div class="radio-circle">
-              {#if mode === 'profile'}
-                <div class="radio-dot"></div>
-              {/if}
-            </div>
-            <span class="mode-name">Isolated Profiles</span>
-            <span class="badge side-by-side">Side-by-side</span>
-          </div>
-          <p class="mode-desc">
-            Run multiple accounts side-by-side in separate windows. Zero window closing.
-          </p>
-        </button>
-      </div>
-    </section>
-
-    <!-- Add Account Method -->
-    <section class="settings-section">
-      <div class="section-header">
-        <Icon name="login" size={12} class="section-icon" />
-        <span class="section-title">ADD ACCOUNT METHOD</span>
-      </div>
-
-      <div class="mode-options">
-        <button
-          type="button"
-          class="mode-card {addAccountMethod === 'sideWindow' ? 'active' : ''}"
-          onclick={() => setAddAccountMethod('sideWindow')}
-        >
-          <div class="mode-card-header">
-            <div class="radio-circle">
-              {#if addAccountMethod === 'sideWindow'}
-                <div class="radio-dot"></div>
-              {/if}
-            </div>
-            <span class="mode-name">Side Window</span>
-            <span class="badge recommended">Recommended</span>
-          </div>
-          <p class="mode-desc">
-            Open a separate sign-in window so your current workspace stays on the active account.
-          </p>
-        </button>
-
-        <button
-          type="button"
-          class="mode-card {addAccountMethod === 'signOutRestart' ? 'active' : ''}"
-          onclick={() => setAddAccountMethod('signOutRestart')}
-        >
-          <div class="mode-card-header">
-            <div class="radio-circle">
-              {#if addAccountMethod === 'signOutRestart'}
-                <div class="radio-dot"></div>
-              {/if}
-            </div>
-            <span class="mode-name">Sign Out &amp; Restart</span>
-          </div>
-          <p class="mode-desc">
-            Sign out and relaunch the current window (useful inside WSL remote or restricted setups).
-          </p>
-        </button>
-      </div>
-    </section>
-
-    <!-- Confirmation & Behavior -->
-    <section class="settings-section">
-      <div class="section-header">
-        <Icon name="alert" size={12} class="section-icon" />
-        <span class="section-title">BEHAVIOR</span>
-      </div>
-
-
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label">Confirm Before Switch</div>
-          <div class="setting-subtext">
-            Prompt for confirmation before reloading the IDE in Token Swap mode.
-          </div>
+          <span class="hint">{modeHint}</span>
         </div>
-        <button
-          type="button"
-          class="toggle-switch {confirmBeforeSwitch ? 'checked' : ''}"
-          onclick={toggleConfirm}
-          role="switch"
-          aria-checked={confirmBeforeSwitch}
-          aria-label="Confirm before switch"
-        >
-          <span class="toggle-slider"></span>
-        </button>
-      </div>
-    </section>
 
-    <!-- Privacy & Display -->
-    <section class="settings-section">
-      <div class="section-header">
-        <Icon name="lock" size={12} class="section-icon" />
-        <span class="section-title">PRIVACY &amp; DISPLAY</span>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label">Mask Email Addresses</div>
-          <div class="setting-subtext">
-            Hide full emails in cards and status bar (e.g. u***@domain.com).
+        <div class="row stacked">
+          <span class="label" id="lbl-add">Add accounts with</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="lbl-add">
+            {#each addOptions as opt (opt.value)}
+              <button
+                type="button"
+                role="radio"
+                class="segment"
+                aria-checked={addAccountMethod === opt.value}
+                tabindex={addAccountMethod === opt.value ? 0 : -1}
+                onclick={() => setAddAccountMethod(opt.value)}
+                onkeydown={(e) => segmentKeydown(e, addOptions, addAccountMethod, setAddAccountMethod)}
+              >
+                <span class="segment-inner">
+                  {#if addAccountMethod === opt.value}<Icon name="check" size={11} class="segment-check" />{/if}
+                  <span class="segment-text">{opt.label}</span>
+                </span>
+              </button>
+            {/each}
           </div>
+          <span class="hint">{addHint}</span>
         </div>
-        <button
-          type="button"
-          class="toggle-switch {maskEmails ? 'checked' : ''}"
-          onclick={toggleMaskEmails}
-          role="switch"
-          aria-checked={maskEmails}
-          aria-label="Mask email addresses"
-        >
-          <span class="toggle-slider"></span>
-        </button>
-      </div>
-    </section>
 
-    <!-- Database Backups -->
-    <section class="settings-section">
-      <div class="section-header">
-        <Icon name="folder" size={12} class="section-icon" />
-        <span class="section-title">STATE BACKUPS</span>
-      </div>
-
-      <div class="setting-row">
-        <div class="setting-info">
-          <div class="setting-label">Backup Retention Limit</div>
-          <div class="setting-subtext">
-            Number of automatic state.vscdb backups kept before switching.
-          </div>
-        </div>
-        <div class="stepper">
+        <div class="row">
+          <span class="label" id="lbl-confirm">Confirm before switching</span>
           <button
-            class="stepper-btn"
-            onclick={() => changeRetention(-1)}
-            disabled={backupRetention <= 1}
-            aria-label="Decrease retention"
+            type="button"
+            class="toggle {confirmBeforeSwitch ? 'on' : ''}"
+            onclick={toggleConfirm}
+            role="switch"
+            aria-checked={confirmBeforeSwitch}
+            aria-labelledby="lbl-confirm"
           >
-            -
-          </button>
-          <span class="stepper-value">{backupRetention}</span>
-          <button
-            class="stepper-btn"
-            onclick={() => changeRetention(1)}
-            disabled={backupRetention >= 20}
-            aria-label="Increase retention"
-          >
-            +
+            <span class="knob"></span>
           </button>
         </div>
       </div>
+    </section>
 
-      <div class="backup-actions">
-        <button class="action-btn" onclick={openBackupsFolder}>
-          <Icon name="folder" size={13} />
-          <span>Open Backups Folder</span>
-        </button>
-        <button class="action-btn secondary" onclick={restoreBackup}>
-          <Icon name="restore" size={13} />
-          <span>Restore Backup…</span>
-        </button>
+    <section class="group" aria-labelledby="g-privacy">
+      <h2 id="g-privacy" class="group-title">Privacy</h2>
+      <div class="rows">
+        <div class="row">
+          <span class="label-block">
+            <span class="label" id="lbl-mask">Hide email addresses</span>
+            <span class="hint">Removes them from cards and the status bar</span>
+          </span>
+          <button
+            type="button"
+            class="toggle {maskEmails ? 'on' : ''}"
+            onclick={toggleMaskEmails}
+            role="switch"
+            aria-checked={maskEmails}
+            aria-labelledby="lbl-mask"
+          >
+            <span class="knob"></span>
+          </button>
+        </div>
       </div>
     </section>
 
-    <!-- Info & Advanced Footer -->
-    <div class="settings-footer">
-      <div class="security-badge">
-        <Icon name="lock" size={12} />
-        <span>100% Local • Zero Telemetry • Zero External Network</span>
+    <section class="group" aria-labelledby="g-backups">
+      <h2 id="g-backups" class="group-title">Backups</h2>
+      <div class="rows">
+        <div class="row">
+          <span class="label" id="lbl-keep">Backups to keep</span>
+          <div class="stepper" role="group" aria-labelledby="lbl-keep">
+            <button
+              class="stepper-btn"
+              onclick={() => changeRetention(-1)}
+              disabled={backupRetention <= 1}
+              aria-label="Keep fewer backups"
+            >
+              −
+            </button>
+            <span class="stepper-value" aria-live="polite">{backupRetention}</span>
+            <button
+              class="stepper-btn"
+              onclick={() => changeRetention(1)}
+              disabled={backupRetention >= 20}
+              aria-label="Keep more backups"
+            >
+              +
+            </button>
+          </div>
+        </div>
+        <div class="row actions">
+          <button class="text-btn" onclick={openBackupsFolder}>
+            <Icon name="folder" size={12} />
+            <span>Open folder</span>
+          </button>
+          <button class="text-btn" onclick={restoreBackup}>
+            <Icon name="restore" size={12} />
+            <span>Restore…</span>
+          </button>
+        </div>
       </div>
-      <button class="editor-settings-link" onclick={openEditorSettings}>
-        <Icon name="settings" size={12} />
-        <span>Open Advanced VS Code Settings</span>
-      </button>
+    </section>
+
+    <footer class="settings-footer">
+      <span class="local-note">
+        <Icon name="lock" size={11} />
+        <span>Runs locally. No telemetry.</span>
+      </span>
       <button
         bind:this={supportTrigger}
         type="button"
@@ -299,7 +249,7 @@
       >
         Support Switchyard ❤️
       </button>
-    </div>
+    </footer>
   </div>
 </div>
 
@@ -327,60 +277,43 @@
     }
   }
 
+  /* ── Top bar ── */
   .nav-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 28px 1fr 28px;
     align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+    padding: 6px 4px 8px;
     background: var(--vscode-sideBar-background);
     position: sticky;
     top: 0;
     z-index: 10;
   }
 
-  .back-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: transparent;
-    border: none;
-    color: var(--vscode-textLink-foreground, #3794ff);
-    font-size: 11.5px;
-    font-weight: 500;
-    cursor: pointer;
-    padding: 4px 6px;
-    border-radius: 4px;
-    transition: background 0.1s ease;
-  }
-
-  .back-btn:hover {
-    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
-  }
-
   .nav-title {
-    font-size: 12px;
+    margin: 0;
+    font-size: 13px;
     font-weight: 600;
-    color: var(--vscode-foreground);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    text-align: center;
   }
 
-  .icon-btn-subtle {
+  .back-btn,
+  .icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 26px;
     height: 26px;
+    padding: 0;
     background: transparent;
     border: none;
     border-radius: 4px;
     color: var(--vscode-descriptionForeground);
     cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
+    transition: background 0.12s ease, color 0.12s ease;
   }
 
-  .icon-btn-subtle:hover {
+  .back-btn:hover,
+  .icon-btn:hover {
     background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
     color: var(--vscode-foreground);
   }
@@ -388,222 +321,196 @@
   .settings-scroll-area {
     flex: 1;
     overflow-y: auto;
-    padding: 12px 14px 24px;
+    padding: 6px 2px 24px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
   }
 
-  .settings-section {
+  /* ── Groups: a quiet heading over one container of rows ── */
+  .group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-  }
-
-  .section-header {
-    display: flex;
-    align-items: center;
     gap: 6px;
-    padding-bottom: 2px;
   }
 
-  :global(.section-icon) {
-    color: var(--vscode-descriptionForeground);
-    opacity: 0.8;
-  }
-
-  .section-title {
-    font-size: 10.5px;
-    font-weight: 700;
-    letter-spacing: 0.6px;
-    color: var(--vscode-descriptionForeground);
-  }
-
-  /* Mode Options Cards */
-  .mode-options {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .mode-card {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    background: var(--vscode-editor-background, rgba(0, 0, 0, 0.15));
-    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
-    border-radius: 6px;
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    color: inherit;
-    font-family: inherit;
-  }
-
-  .mode-card:hover {
-    border-color: var(--vscode-focusBorder, #007fd4);
-    background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.1));
-  }
-
-  .mode-card.active {
-    border-color: var(--vscode-focusBorder, #007fd4);
-    background: var(--vscode-list-activeSelectionBackground, rgba(0, 122, 204, 0.12));
-    box-shadow: 0 0 0 1px var(--vscode-focusBorder, #007fd4);
-  }
-
-  .mode-card-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .radio-circle {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    border: 1.5px solid var(--vscode-descriptionForeground);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  .mode-card.active .radio-circle {
-    border-color: var(--vscode-focusBorder, #007fd4);
-  }
-
-  .radio-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--vscode-focusBorder, #007fd4);
-  }
-
-  .mode-name {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--vscode-foreground);
-    flex: 1;
-  }
-
-  .badge {
-    font-size: 9.5px;
-    font-weight: 600;
-    padding: 1.5px 6px;
-    border-radius: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
-  }
-
-  .badge.recommended {
-    background: rgba(46, 160, 67, 0.2);
-    color: #4cd964;
-    border: 1px solid rgba(46, 160, 67, 0.4);
-  }
-
-  .badge.side-by-side {
-    background: rgba(56, 139, 253, 0.18);
-    color: #58a6ff;
-    border: 1px solid rgba(56, 139, 253, 0.35);
-  }
-
-  .mode-desc {
+  .group-title {
     margin: 0;
+    padding-left: 2px;
     font-size: 11px;
-    line-height: 1.4;
+    font-weight: 600;
     color: var(--vscode-descriptionForeground);
-    padding-left: 22px;
   }
 
-  /* Setting Row with Toggle / Stepper */
-  .setting-row {
+  .rows {
+    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.18));
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--vscode-editor-background, #1e1e1e), transparent 40%);
+  }
+
+  .row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    min-height: 38px;
     padding: 8px 10px;
-    background: var(--vscode-editor-background, rgba(0, 0, 0, 0.15));
-    border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
-    border-radius: 6px;
   }
 
-  .setting-info {
+  .row + .row {
+    border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.14));
+  }
+
+  .row.stacked {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .row.actions {
+    justify-content: flex-start;
+    gap: 4px;
+    padding: 4px 6px;
+    min-height: 0;
+  }
+
+  .label-block {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    flex: 1;
+    gap: 1px;
+    min-width: 0;
   }
 
-  .setting-label {
-    font-size: 11.5px;
-    font-weight: 600;
+  .label {
+    font-size: 12px;
     color: var(--vscode-foreground);
   }
 
-  .setting-subtext {
-    font-size: 10.5px;
-    color: var(--vscode-descriptionForeground);
+  .hint {
+    font-size: 11px;
     line-height: 1.35;
+    color: var(--vscode-descriptionForeground);
   }
 
-  /* Toggle Switch */
-  .toggle-switch {
-    width: 34px;
-    height: 18px;
-    background: var(--vscode-input-background, #3c3c3c);
-    border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
-    border-radius: 10px;
-    position: relative;
+  /* ── Segmented control ── */
+  .segmented {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 5px;
+    background: var(--vscode-input-background, rgba(128, 128, 128, 0.12));
+    border: 1px solid var(--vscode-input-border, transparent);
+  }
+
+  .segment {
+    padding: 4px 6px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    font-family: inherit;
+    font-size: 11.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+
+  .segment:hover:not([aria-checked='true']) {
+    color: var(--vscode-foreground);
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  }
+
+  /*
+   * Selected state uses the theme's focus colour (a tinted fill plus a solid
+   * outline) rather than button-background, which some themes make nearly
+   * transparent. The check icon keeps it readable without relying on colour.
+   */
+  .segment[aria-checked='true'] {
+    background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4), transparent 78%);
+    box-shadow: inset 0 0 0 1px var(--vscode-focusBorder, #007fd4);
+    color: var(--vscode-foreground);
+    font-weight: 600;
+  }
+
+  .segment-inner {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    max-width: 100%;
+  }
+
+  .segment-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .segment :global(.segment-check) {
+    flex-shrink: 0;
+    color: var(--vscode-foreground);
+  }
+
+  /* ── Toggle ── */
+  .toggle {
+    width: 30px;
+    height: 16px;
     flex-shrink: 0;
     padding: 0;
+    position: relative;
+    border-radius: 8px;
+    border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.4));
+    background: var(--vscode-input-background, #3c3c3c);
+    cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
   }
 
-  .toggle-slider {
+  .knob {
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 12px;
-    height: 12px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    background: var(--vscode-foreground, #ccc);
+    background: var(--vscode-descriptionForeground, #999);
     transition: transform 0.15s ease, background 0.15s ease;
   }
 
-  .toggle-switch.checked {
-    background: var(--vscode-button-background, #007fd4);
-    border-color: var(--vscode-button-background, #007fd4);
+  .toggle.on {
+    background: var(--vscode-button-background, #0e639c);
+    border-color: var(--vscode-button-background, #0e639c);
   }
 
-  .toggle-switch.checked .toggle-slider {
-    transform: translateX(16px);
-    background: #ffffff;
+  .toggle.on .knob {
+    transform: translateX(14px);
+    background: var(--vscode-button-foreground, #fff);
   }
 
-  /* Stepper */
+  /* ── Stepper ── */
   .stepper {
     display: inline-flex;
     align-items: center;
+    flex-shrink: 0;
     border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
     border-radius: 4px;
-    background: var(--vscode-input-background, transparent);
     overflow: hidden;
   }
 
   .stepper-btn {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0;
     background: transparent;
     border: none;
     color: var(--vscode-foreground);
-    font-size: 14px;
+    font-family: inherit;
+    font-size: 13px;
     cursor: pointer;
-    transition: background 0.1s ease;
   }
 
   .stepper-btn:hover:not(:disabled) {
@@ -612,88 +519,59 @@
 
   .stepper-btn:disabled {
     opacity: 0.35;
-    cursor: not-allowed;
+    cursor: default;
   }
 
   .stepper-value {
-    min-width: 24px;
+    min-width: 22px;
     text-align: center;
-    font-size: 11.5px;
-    font-weight: 600;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* Backup Actions */
-  .backup-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 4px;
-  }
-
-  .action-btn {
-    display: flex;
+  /* ── Text buttons ── */
+  .text-btn {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 6px 12px;
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--vscode-button-foreground, #fff);
-    background: var(--vscode-button-background, #007fd4);
+    gap: 5px;
+    padding: 4px 6px;
     border: none;
     border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-textLink-foreground, #3794ff);
+    font-family: inherit;
+    font-size: 11.5px;
     cursor: pointer;
-    transition: background 0.15s ease;
   }
 
-  .action-btn:hover {
-    background: var(--vscode-button-hoverBackground, #026ec1);
+  .text-btn:hover {
+    background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
   }
 
-  .action-btn.secondary {
-    background: var(--vscode-button-secondaryBackground, #3a3d41);
-    color: var(--vscode-button-secondaryForeground, #fff);
-  }
-
-  .action-btn.secondary:hover {
-    background: var(--vscode-button-secondaryHoverBackground, #45494e);
-  }
-
-  /* Footer */
+  /* ── Footer ── */
+  /*
+   * Centred so it looks deliberate both on one line and when the two items
+   * wrap onto separate lines in a narrow sidebar or with a wide font.
+   */
   .settings-footer {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-    padding-top: 14px;
-    border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.15));
+    justify-content: center;
+    gap: 2px 12px;
+    margin-top: auto;
+    padding: 10px 2px 0;
+    border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.14));
   }
 
-  .security-badge {
+  .local-note {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    font-size: 10px;
+    padding: 3px 0;
+    font-size: 10.5px;
+    white-space: nowrap;
     color: var(--vscode-descriptionForeground);
-    opacity: 0.85;
-    text-align: center;
-  }
-
-  .editor-settings-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: transparent;
-    border: none;
-    color: var(--vscode-textLink-foreground, #3794ff);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 4px;
-  }
-
-  .editor-settings-link:hover {
-    text-decoration: underline;
   }
 
   .support-link {
@@ -705,11 +583,23 @@
     font-size: 10.5px;
     cursor: pointer;
     padding: 3px 6px;
-    transition: color 0.1s ease, background 0.1s ease;
+    white-space: nowrap;
+    transition: color 0.12s ease, background 0.12s ease;
   }
 
   .support-link:hover {
     color: var(--vscode-foreground);
     background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .settings-view {
+      animation: none;
+    }
+    .toggle,
+    .knob,
+    .segment {
+      transition: none;
+    }
   }
 </style>

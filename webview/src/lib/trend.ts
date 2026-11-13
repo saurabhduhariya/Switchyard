@@ -13,6 +13,18 @@ export function formatTrendText(series: QuotaTrendSeries | undefined): string {
   return `Used ${text}% in ${span}`;
 }
 
+/** Short caption that fits beside a sparkline: "−49% · 24h", "Steady · 24h", or "7 days" when unknown. */
+export function formatTrendShort(series: QuotaTrendSeries | undefined): string {
+  if (!series) return '';
+  if (series.usedPercent === undefined || series.spanHours === undefined) return '7 days';
+  const hours = series.spanHours;
+  const span = hours >= 23.5 ? '24h' : hours >= 1 ? `${Math.round(hours)}h` : `${Math.max(1, Math.round(hours * 60))}m`;
+  const used = series.usedPercent;
+  if (used < 0.1) return `Steady · ${span}`;
+  const text = used >= 10 ? String(Math.round(used)) : String(Math.round(used * 10) / 10);
+  return `−${text}% · ${span}`;
+}
+
 /** Longer description for screen readers and tooltips. */
 export function describeTrend(series: QuotaTrendSeries | undefined, label: string): string {
   if (!series || series.points.length < 2) return '';
