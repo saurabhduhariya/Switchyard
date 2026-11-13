@@ -437,3 +437,16 @@ return {
 | **Dependency** | `uqr@0.1.3` (MIT, no dependencies) added to `webview/` devDependencies; it ships only inside the bundle. |
 
 **Residual risk:** a fork could republish the extension with a different UPI ID. Users should install from the official `saurabhduhariya` publisher listing.
+
+---
+
+## 12. Addendum — v0.5.0 Panel redesign
+
+**Date:** November 12, 2026
+
+| Area | Finding |
+|------|---------|
+| **Scope** | Webview UI plus how account names are displayed (`src/ui/StatusBar.ts`, the **Switch Account…** picker in `src/extension.ts`, new `src/shared/accountName.ts`). No changes to token swapping, keychain, session handling, capture, quota collection or platform code. |
+| **Privacy** | `switchyard.maskEmails` now hides emails instead of masking them. When on, no part of the email is shown in the panel, status bar, picker or screen-reader labels; unlabelled accounts show "Unlabelled account" instead of the part before `@`. The sign-in card shown while adding an account still shows the detected email so the user can confirm it. Log redaction is unchanged. |
+| **Network / CSP** | None added; CSP unchanged. |
+| **Input** | Card keyboard shortcuts (Enter/Space/F2/Delete) now act only when the card itself has focus, so keys in the rename box or on inner buttons cannot trigger a switch or removal. |

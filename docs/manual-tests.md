@@ -35,6 +35,10 @@ The following test scenarios represent the mandatory manual verification checkli
 | **20** | Failed sign-in -> "Use sign-out method" | To verify | To verify | To verify | **TO VERIFY** | Old flow starts for the current mode |
 | **21** | Support dialog (Accounts footer **Support** and Settings **Support Switchyard ❤️**) | To verify | To verify | To verify | **TO VERIFY** | QR scans in GPay / PhonePe / Paytm with correct payee name, note "Support Switchyard" and an empty amount; **Copy UPI ID** copies; Esc, × and backdrop click close it and return focus; readable in Dark and Light themes |
 | **22** | Accounts footer at narrow sidebar widths | To verify | To verify | To verify | **TO VERIFY** | Import and Support stay on one row; labels shorten below ~445 px instead of wrapping |
+| **23** | Hide email addresses (Settings → Privacy) | To verify | To verify | To verify | **TO VERIFY** | No email on any card, in the status bar or in **Switch Account…**; labelled accounts show their label, unlabelled ones "Unlabelled account"; turning it off brings emails back |
+| **24** | ⋮ menus on the active card, other cards and the top bar | To verify | To verify | To verify | **TO VERIFY** | Menu opens under its button and stays inside the panel; arrow keys and Esc work; **Reveal profile folder** / **Copy settings into profile** appear only in profile mode and open/copy correctly there |
+| **25** | Refresh (top bar and active card) | To verify | To verify | To verify | **TO VERIFY** | Icon spins until the panel updates; active account's quota reloads |
+| **26** | Enter on **Switch** in an inactive card | To verify | To verify | To verify | **TO VERIFY** | Exactly one switch starts (previously two requests were sent) |
 
 ---
 
@@ -59,7 +63,7 @@ The following test scenarios represent the mandatory manual verification checkli
 
 ### Scenario 9 & 10: Account Removal & UI Themes
 * **Secret Scrubbing:** Deleting an account removes its entry from `switchyard.accounts` and calls `context.secrets.delete("switchyard.snapshot.<id>")`.
-* **UI Polish:** The interface adheres to strict VS Code design guidelines with zero hardcoded hex colors, full keyboard navigation (Tab, Enter, Esc), ARIA accessibility labels, and email privacy masking.
+* **UI Polish:** The interface adheres to strict VS Code design guidelines with zero hardcoded hex colors, full keyboard navigation (Tab, Enter, Esc), ARIA accessibility labels, and an option to hide email addresses.
 
 ---
 

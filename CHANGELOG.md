@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-12
+
+Panel redesign. The account-switching, sign-in and quota engines are unchanged on every platform; only the panel and how account names are displayed changed.
+
+### Changed
+- **Accounts panel redesign**:
+  - The active account is marked once (green left bar and avatar dot) instead of a green border plus an **ACTIVE** badge.
+  - Quota columns sit flat inside the card, split by a hairline, instead of in nested boxes.
+  - Percentages are rounded (`75%`); the exact value is in the tooltip. A partly used quota never shows as 100%, and one with quota left never shows 0%.
+  - Healthy quota bars are neutral; amber (≤30%) and red (≤10%) now stand out.
+  - Trend captions are short (`−49% · 24h`, `Steady · 24h`); the full sentence is in the tooltip.
+  - Inactive accounts default to the compact layout (the header toggle still switches to detailed and remembers your choice), with **Switch** on the right of the name row. "Weekly quota only on this plan" is now a tooltip.
+  - Tier and last-checked time are plain muted text instead of pills; the time turns amber only when stale.
+  - Rename, refresh and remove icons appear on hover or keyboard focus (all remain in the ⋮ menu).
+- **Hide email addresses** replaces email masking. When on, emails are left off the cards, the status bar and the **Switch Account…** picker entirely, and accounts are shown by their label (or "Unlabelled account"). The `switchyard.maskEmails` setting key is unchanged, so an existing choice carries over (masking on becomes hiding on).
+- **⋮ menus** open next to the button that opened them (they used to appear at the top of the panel), support arrow keys, Home/End and Esc, and group items with dividers.
+  - **Reveal profile folder** and **Copy settings into profile** are shown only in profile mode, where they work; in token-swap mode they did nothing.
+  - **Re-authenticate** is renamed **Sign in again…** and has its own icon.
+  - The top-bar ⋮ menu no longer repeats **Settings** (the gear button opens it).
+- **Refresh** has a clearer single-arrow icon, and the refresh icons spin until fresh data arrives.
+- **Settings** redesigned: segmented controls with a clear selected state instead of large option cards, shorter labels, sentence-case section titles, and a centred footer. The "Open Advanced VS Code Settings" link was removed; the icon at the top right opens the same editor.
+- The settings icon is now a gear instead of a sun-like shape.
+
+### Fixed
+- Pressing Enter on a button inside an inactive account card (or in its rename box) no longer also starts a switch. On the **Switch** button this sent the switch request twice.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added
@@ -16,19 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Generated locally offline with the bundled [`uqr`](https://github.com/unjs/uqr) library (MIT, zero dependencies) — no network requests, no payment verification or tracking, and no gated features.
 
 ### Changed
-- **Accounts panel redesign**:
-  - The active account is marked once (green left bar and avatar dot) instead of a green border plus an **ACTIVE** badge.
-  - Quota columns sit flat inside the card, split by a hairline, instead of in nested boxes.
-  - Percentages are rounded (`75%`); the exact value is in the tooltip. A partly used quota never shows as 100%.
-  - Healthy quota bars are neutral; amber (≤30%) and red (≤10%) now stand out.
-  - Trend captions are short (`−49% · 24h`, `Steady · 24h`); the full sentence is in the tooltip.
-  - Inactive accounts default to the compact layout (header toggle still switches to detailed), with **Switch** on the right of the name row.
-  - Tier and last-checked time are plain muted text instead of pills; the time turns amber only when stale.
-  - Rename, refresh and remove icons appear on hover or keyboard focus (all remain in the ⋮ menu).
-  - **Hide email addresses** replaces email masking: when on, emails are left off the cards, status bar and **Switch Account…** picker entirely, and accounts are shown by their label (or "Unlabelled account"). The `switchyard.maskEmails` setting key is unchanged, so existing choices carry over.
-  - **⋮ menus** open next to the button that opened them (they used to appear at the top of the panel), support arrow keys, and group items with dividers. **Reveal profile folder** and **Copy settings into profile** are shown only in profile mode, where they work; in token-swap mode they did nothing. **Re-authenticate** is renamed **Sign in again…**.
-  - **Refresh** has a clearer single-arrow icon and spins until fresh data arrives.
-  - Redesigned **Settings**, and replaced the sun-like settings icon with a gear.
 - **Accounts footer**: **Import from Backup / File** and **Support Switchyard** now share one row, split by a divider. In narrow sidebars the labels shorten to **Import** and **Support** instead of wrapping.
 
 ## [0.3.1] - 2026-11-12
