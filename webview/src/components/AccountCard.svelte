@@ -126,7 +126,6 @@
   onkeydown={handleCardKeydown}
   aria-label="{getMode() === 'profile' ? 'Open window for' : 'Switch to'} {spokenName}"
 >
-  <!-- Top Profile Row -->
   <div class="card-header">
     <Avatar email={account.email} size={36} />
     <div class="card-info">
@@ -170,7 +169,6 @@
       {/if}
     </div>
 
-    <!-- Rename and Remove show on hover/focus; both are also in the ⋮ menu. -->
     <div class="header-actions">
       <button class="icon-btn reveal" onclick={startRename} title="Rename account" aria-label="Rename">
         <Icon name="edit" size={13} />
@@ -203,7 +201,6 @@
     </div>
   </div>
 
-  <!-- Quota Cards -->
   <QuotaBoxes
     quota={account.quota}
     {tierName}

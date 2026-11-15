@@ -78,7 +78,6 @@ export class ProfileEngine implements SwitchEngine {
       };
     }
 
-    // 1. Check if a window for this profile is already running
     const pids = this.memento.get<Record<string, number>>('switchyard.profilePids', {});
     const existingPid = pids[accountId];
     if (existingPid && isProcessAlive(existingPid)) {
@@ -95,7 +94,6 @@ export class ProfileEngine implements SwitchEngine {
       };
     }
 
-    // 2. Prepare profile directory
     const profileDir = this.getProfileDir(accountId);
     const profileDb = path.join(profileDir, 'User', 'globalStorage', 'state.vscdb');
     const isFirstLaunch = !fs.existsSync(profileDb);
@@ -104,7 +102,6 @@ export class ProfileEngine implements SwitchEngine {
       fs.mkdirSync(profileDir, { recursive: true });
     }
 
-    // 3. Resolve executable & shared extensions
     let exe: string;
     try {
       const config = vscode.workspace.getConfiguration('switchyard');
@@ -118,13 +115,10 @@ export class ProfileEngine implements SwitchEngine {
 
     const extensionsDir = getSharedExtensionsDir(this.extensionUri);
 
-    // 4. Resolve workspace folders to reopen
     let remoteName: string | undefined;
     try {
       remoteName = (vscode as any).env?.remoteName;
-    } catch {
-      // ignore when mocked in unit tests
-    }
+    } catch {}
     const foldersToOpen = getWorkspaceRelaunchArgs({
       overrideFolders: options?.folders,
       workspaceFolders: vscode.workspace.workspaceFolders,
@@ -136,7 +130,6 @@ export class ProfileEngine implements SwitchEngine {
       `Launching profile window for ${account.email} [dir=${profileDir}, exe=${exe}]`
     );
 
-    // 5. Spawn detached IDE process with clean environment
     try {
       const child = spawnIsolatedWindow({
         exe,
@@ -158,10 +151,8 @@ export class ProfileEngine implements SwitchEngine {
       return { ok: false, mode: 'profile', error: msg };
     }
 
-    // 6. Update lastUsedAt timestamp
     await this.store.touch(accountId);
 
-    // 7. First-launch user guidance toast
     if (isFirstLaunch) {
       void vscode.window.showInformationMessage(
         `Opened new window for ${account.email}. Please sign in once with ${account.email} in the new window.`
@@ -199,21 +190,18 @@ export class ProfileEngine implements SwitchEngine {
         fs.mkdirSync(targetUserDir, { recursive: true });
       }
 
-      // Copy settings.json
       const settingsSrc = path.join(sourceUserDir, 'settings.json');
       if (fs.existsSync(settingsSrc)) {
         fs.copyFileSync(settingsSrc, path.join(targetUserDir, 'settings.json'));
         copiedCount++;
       }
 
-      // Copy keybindings.json
       const keybindingsSrc = path.join(sourceUserDir, 'keybindings.json');
       if (fs.existsSync(keybindingsSrc)) {
         fs.copyFileSync(keybindingsSrc, path.join(targetUserDir, 'keybindings.json'));
         copiedCount++;
       }
 
-      // Copy snippets directory
       const snippetsSrc = path.join(sourceUserDir, 'snippets');
       if (fs.existsSync(snippetsSrc) && fs.statSync(snippetsSrc).isDirectory()) {
         const targetSnippetsDir = path.join(targetUserDir, 'snippets');

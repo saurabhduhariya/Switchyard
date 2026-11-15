@@ -58,7 +58,6 @@ export function buildLaunchArgs(options: LaunchArgsOptions): string[] {
  * Respects user overrides, AppImage environments, process exec path, and standard install paths.
  */
 export function findExecutable(customPath?: string): string {
-  // 1. User-configured custom path
   if (customPath && customPath.trim().length > 0) {
     const trimmed = customPath.trim();
     if (fs.existsSync(trimmed)) {
@@ -67,12 +66,10 @@ export function findExecutable(customPath?: string): string {
     throw new Error(`Configured executable path does not exist: ${trimmed}`);
   }
 
-  // 2. Linux AppImage environment
   if (process.env.APPIMAGE && fs.existsSync(process.env.APPIMAGE)) {
     return process.env.APPIMAGE;
   }
 
-  // 3. Platform-specific known installation candidates (prefer launcher scripts)
   const platform = process.platform;
   const candidates: string[] = [];
 
@@ -126,7 +123,6 @@ export function findExecutable(customPath?: string): string {
     }
   }
 
-  // 4. Current process executable if running inside Antigravity/Electron
   const execPath = process.execPath;
   const isNodeBinary = path.basename(execPath).toLowerCase().startsWith('node');
   if (!isNodeBinary && fs.existsSync(execPath)) {
@@ -136,7 +132,6 @@ export function findExecutable(customPath?: string): string {
     }
   }
 
-  // 5. Fallback binary name in PATH for Unix
   if (platform === 'linux') {
     return 'antigravity-ide';
   }
@@ -169,9 +164,7 @@ export function getSharedExtensionsDir(extensionUri?: { fsPath: string }): strin
         ) {
           return dir;
         }
-      } catch {
-        // ignore unreadable dir
-      }
+      } catch {}
     }
     if (existingWinDirs[0]) {
       return existingWinDirs[0];
@@ -315,9 +308,7 @@ export function getMainProcessPid(): number {
         return parsed;
       }
     }
-  } catch {
-    // Fall back to the starting PID.
-  }
+  } catch {}
   return startPid;
 }
 
@@ -387,7 +378,6 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
   const wslDistro = isWslContext ? resolveActiveWslDistro() : undefined;
   const remoteState = { remoteAdded: false };
 
-  // 1. Explicit folder override (e.g. passed via options.folders)
   if (input.overrideFolders !== undefined) {
     const out: string[] = [];
     for (const folder of input.overrideFolders) {
@@ -405,7 +395,6 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
 
   const args: string[] = [];
 
-  // 2. Multi-root .code-workspace file if open
   if (
     input.workspaceFile &&
     input.workspaceFile.scheme &&
@@ -431,7 +420,6 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
     }
   }
 
-  // 3. Open workspace folders (local or vscode-remote://wsl+<distro>/...)
   if (input.workspaceFolders && input.workspaceFolders.length > 0) {
     for (const folder of input.workspaceFolders) {
       const uri = folder.uri;
@@ -452,7 +440,6 @@ export function getWorkspaceRelaunchArgs(input: WorkspaceRelaunchInput): string[
     return args;
   }
 
-  // 4. Empty WSL window (no folder open yet, e.g. ">< WSL: Ubuntu-24.04")
   if (isWslContext && wslDistro) {
     args.push('--remote', `wsl+${wslDistro}`);
   }

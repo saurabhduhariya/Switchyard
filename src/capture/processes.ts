@@ -66,9 +66,7 @@ function terminateProcess(pid: number, force: boolean): void {
     } else {
       process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
     }
-  } catch {
-    // already gone
-  }
+  } catch {}
 }
 
 /**

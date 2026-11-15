@@ -183,7 +183,6 @@ export function decodeKeyringValue(raw: string): DecodedKeyringToken | undefined
       json: obj,
     };
   } catch {
-    // Non-JSON payload (e.g. go-keyring-base64 protobuf bytes)
     if (!isGoKeyring && TRIVIAL_NON_TOKEN_LITERALS.has(jsonStr.toLowerCase())) {
       return undefined;
     }
@@ -329,9 +328,7 @@ function readStandaloneToken(options?: KeychainWslOptions): string | undefined {
           return content;
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -345,9 +342,7 @@ function writeStandaloneToken(
   if (jsonStr.startsWith('go-keyring-base64:')) {
     try {
       jsonStr = Buffer.from(jsonStr.slice('go-keyring-base64:'.length).trim(), 'base64').toString('utf8');
-    } catch {
-      // keep jsonStr
-    }
+    } catch {}
   }
 
   let formattedJson: string | undefined;
@@ -520,7 +515,6 @@ export function readKeychainToken(options?: KeychainWslOptions): string | undefi
         if (winToken) return winToken;
       }
 
-      // 1. Primary: secret-tool (libsecret CLI)
       try {
         const out = child_process.execFileSync(
           'secret-tool',
@@ -528,11 +522,8 @@ export function readKeychainToken(options?: KeychainWslOptions): string | undefi
           { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
         );
         if (out && out.trim()) return out.trim();
-      } catch {
-        // Fallback to python3 secretstorage if secret-tool is not installed
-      }
+      } catch {}
 
-      // 2. Fallback: python3 with secretstorage / gi.repository.Secret
       const pyScript = `
 import sys
 try:
@@ -554,11 +545,8 @@ sys.exit(1)
           timeout: 3000,
         });
         if (out && out.trim()) return out.trim();
-      } catch {
-        // ignore
-      }
+      } catch {}
 
-      // 3. Fallback: jetski-standalone-oauth-token file (standard on headless Linux / agy hub)
       const standalone = readStandaloneToken(options);
       if (standalone) return standalone;
 
@@ -573,9 +561,7 @@ sys.exit(1)
           { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 3000 }
         );
         if (out && out.trim()) return out.trim();
-      } catch {
-        // ignore
-      }
+      } catch {}
       return readStandaloneToken(options);
     }
 
@@ -627,9 +613,7 @@ function storeLinuxSecretService(secret: string): boolean {
       }
     );
     return true;
-  } catch {
-    // Fallback to python3 secretstorage
-  }
+  } catch {}
 
   const pyScript = `
 import sys, secretstorage

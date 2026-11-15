@@ -35,14 +35,12 @@
   } from './stores/app.svelte';
   import { postToHost } from './lib/vscode';
 
-  // Wire up message listener
   window.addEventListener('message', (e) => {
     if (e.data?.type) {
       handleMessage(e.data);
     }
   });
 
-  // Tell the host we're ready
   postToHost({ type: 'ready' });
 </script>
 
@@ -214,7 +212,6 @@
     padding: 8px 0 2px;
   }
 
-  /* Loading shimmer */
   .loading {
     display: flex;
     flex-direction: column;
@@ -249,7 +246,6 @@
     }
   }
 
-  /* Scrollbar theming */
   .content::-webkit-scrollbar {
     width: 6px;
   }

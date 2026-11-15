@@ -257,7 +257,6 @@ export class CaptureManager {
       };
     }
 
-    // Check for existing session
     const existing = this.rawSession();
     if (existing) {
       const owner = this.ownership(existing);
@@ -280,12 +279,10 @@ export class CaptureManager {
 
     this.startingCapture = true;
     try {
-      // Generate session ID
       const sessionId = `capture-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
       const globalStorageDir = this.getEffectiveGlobalStorageDir();
       const captureDir = getCaptureDir(globalStorageDir, sessionId);
 
-      // Create capture directory with restricted permissions
       try {
         fs.mkdirSync(captureDir, { recursive: true, mode: 0o700 });
       } catch (err) {
@@ -294,7 +291,6 @@ export class CaptureManager {
         return { ok: false, error: `Failed to create capture directory: ${msg}` };
       }
 
-      // Write marker file
       const markerPath = path.join(captureDir, CAPTURE_MARKER_FILE);
       try {
         fs.writeFileSync(
@@ -307,7 +303,6 @@ export class CaptureManager {
         return { ok: false, error: `Failed to write marker file: ${msg}` };
       }
 
-      // Resolve executable
       let exe: string;
       try {
         const config = vscode.workspace.getConfiguration('switchyard');
@@ -349,19 +344,16 @@ export class CaptureManager {
       clearKeychainToken();
       try {
         await logoutAgyDaemon();
-      } catch {
-        // ignore
-      }
+      } catch {}
       killAgyHubDaemon();
 
-      // Spawn isolated window (no folders, opens on sign-in page)
       try {
         const child = spawnIsolatedWindow({
           exe,
           userDataDir: captureDir,
           extensionsDir,
           extraArgs: this.launchArgsProvider(),
-          folders: [], // Empty folders array opens sign-in page
+          folders: [],
           newWindow: true,
           spawner: this.spawner,
         });
@@ -384,7 +376,6 @@ export class CaptureManager {
         return { ok: false, error: msg };
       }
 
-      // Transition to waitingForSignIn and start watching
       session.state = 'waitingForSignIn';
       await this.persistSession(session);
       this.notifyStateChange(session);
@@ -501,7 +492,7 @@ export class CaptureManager {
       fs.rmSync(path.join(dir, CAPTURE_CLOSE_REQUEST_FILE), { force: true });
       fs.mkdirSync(profilesRoot, { recursive: true });
       if (fs.existsSync(target)) {
-        fs.rmSync(target, { recursive: true, force: true }); // empty shell from an earlier attempt
+        fs.rmSync(target, { recursive: true, force: true });
       }
       for (let i = 0; i < 4; i++) {
         try {
@@ -512,7 +503,7 @@ export class CaptureManager {
           if (i === 3) {
             throw err;
           }
-          await new Promise((resolve) => setTimeout(resolve, 500)); // Windows file locks
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
     } catch (err) {
@@ -557,7 +548,6 @@ export class CaptureManager {
   private async startWatching(session: CaptureSessionData): Promise<void> {
     const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
 
-    // Start watcher
     this.watcher = new CaptureWatcher(dbPath, this.logger, session.preCaptureFingerprint);
     this.watcher.onSignedInUnflushed(() => {
       const current = this.getCurrentSession();
@@ -576,12 +566,11 @@ export class CaptureManager {
     this.watcher.onDetection(async (identity, detectedSnapshot) => {
       const current = this.getCurrentSession();
       if (!current || current.sessionId !== session.sessionId) {
-        return; // Stale session
+        return;
       }
 
       this.logger.info(`Detected sign-in in side window: ${identity.email || identity.fingerprint}`);
 
-      // Stop watcher & timeout immediately
       this.watcher?.stop();
       this.watcher = undefined;
       if (this.timeoutTimer) {
@@ -603,19 +592,15 @@ export class CaptureManager {
         if (capturedQuota) {
           this.lastDetectedQuotas.set(current.sessionId, capturedQuota);
         }
-      } catch {
-        // best effort
-      }
+      } catch {}
 
       current.state = 'finishing';
       current.diagnostic = 'Sign-in detected! Closing side window...';
       await this.persistSession(current);
       this.notifyStateChange(current);
 
-      // Automatically close the side window so it flushes state.vscdb to disk
       await this.closeWindowAndWaitForFlush(current);
 
-      // Read flushed state.vscdb keys (oauthToken, userStatus, modelCredits, profileUrl) from Window 2
       const mergedValues: Record<string, string> = {
         ...(detectedSnapshot?.values ?? {}),
       };
@@ -631,9 +616,7 @@ export class CaptureManager {
           ]);
           Object.assign(mergedValues, flushedDb);
         }
-      } catch {
-        // best effort
-      }
+      } catch {}
 
       // Restore Account 1's stashed keychain token so Window 1 stays signed into Account 1
       this.restoreStashedKeychain(current);
@@ -643,7 +626,6 @@ export class CaptureManager {
 
     this.watcher.start();
 
-    // Set timeout
     this.timeoutTimer = setTimeout(async () => {
       await this.handleTimeout(session.sessionId);
     }, CAPTURE_TIMEOUT_MS);
@@ -827,7 +809,6 @@ export class CaptureManager {
       // Request window 2 to close cooperatively and wait for its DB to flush
       await this.closeWindowAndWaitForFlush(session);
 
-      // Final read of capture DB (picks up any userStatus/profileUrl flushed when Window 2 closed).
       const dbPath = path.join(session.dir, 'User', 'globalStorage', 'state.vscdb');
       const { readKeys } = await import('../db/StateDb');
       const { KEYS } = await import('../constants');
@@ -858,7 +839,6 @@ export class CaptureManager {
         ...cached,
       };
 
-      // If fromDb has userStatus/profileUrl that cached lacked, keep them.
       const flushedUserStatus = fromDb[KEYS.userStatus];
       if (flushedUserStatus && !merged[KEYS.userStatus]) {
         merged[KEYS.userStatus] = flushedUserStatus;
@@ -895,7 +875,6 @@ export class CaptureManager {
           }
         }
 
-        // Persist the resolved email inside agyUserStatus so parseSnapshot always resolves it.
         if (identity.email) {
           let statusObj: Record<string, unknown> = {};
           try {
@@ -903,9 +882,7 @@ export class CaptureManager {
             if (agyStatus) {
               statusObj = JSON.parse(agyStatus);
             }
-          } catch {
-            // Ignore malformed status JSON.
-          }
+          } catch {}
           statusObj.email = identity.email;
           snapshot[KEYS.agyUserStatus] = JSON.stringify(statusObj);
         }
@@ -913,7 +890,6 @@ export class CaptureManager {
 
       this.logger.info(`Final capture read: token=${hasToken(snapshot)} email=${identity.email ?? 'none'}`);
 
-      // Check if the account is already saved (by email, or by fingerprint when email doesn't conflict).
       const existingAccounts = await this.store.list();
       const detectedEmailNorm = identity.email?.toLowerCase().trim();
       const duplicate =
@@ -945,7 +921,6 @@ export class CaptureManager {
         savedId = duplicate.id;
         updated = true;
       } else {
-        // Save new account (do NOT set as active)
         const meta = await this.store.upsertFromSnapshot(
           { values: snapshot, capturedAt: Date.now() },
           label
@@ -961,7 +936,6 @@ export class CaptureManager {
         this.lastDetectedQuotas.delete(session.sessionId);
       }
 
-      // Profile mode: keep the window's data as the account's profile; otherwise delete it
       let promoted = false;
       if (session.promoteToProfile) {
         promoted = await this.promoteToProfile(session.dir, savedId);
@@ -979,7 +953,6 @@ export class CaptureManager {
       await this.persistSession(session);
       this.notifyStateChange(session);
 
-      // Keep the card long enough for "Switch to this account", then dismiss it
       if (this.doneTimer) {
         clearTimeout(this.doneTimer);
       }
@@ -1045,8 +1018,6 @@ export class CaptureManager {
     }
 
     if (this.ownership(raw) === 'foreign-live') {
-      // Another Switchyard window is actively handling it. If that window is the one that
-      // just reloaded, its heartbeat will go stale shortly, so look again then.
       const staleIn = (raw.heartbeatAt ?? raw.startedAt) + this.ownerStaleMs - Date.now();
       if (this.recheckTimer) {
         clearTimeout(this.recheckTimer);
@@ -1060,7 +1031,6 @@ export class CaptureManager {
       return;
     }
 
-    // Mine, or abandoned by a window that is gone: take it over.
     const session = raw;
     if (session.ownerId !== this.windowId) {
       this.logger.info(`Adopting abandoned capture session ${session.sessionId}`);
@@ -1080,7 +1050,6 @@ export class CaptureManager {
       return;
     }
     if (session.state === 'detected' && dirExists) {
-      // user can still Save (final read comes from the capture DB); keep the expiry running
       const remaining = (session.detectedAt ?? Date.now()) + this.detectedTtlMs - Date.now();
       this.armDetectedExpiry(session.sessionId, remaining);
       return;
@@ -1103,13 +1072,11 @@ export class CaptureManager {
       return { ok: false, error: 'No active capture session waiting for sign-in.' };
     }
 
-    // Check if the real window is still alive (the spawn PID may be a launcher wrapper)
     const alive = await this.processFinder(session.dir);
     if (alive.length > 0) {
       return { ok: false, error: 'Window is still open.' };
     }
 
-    // Relaunch window
     try {
       const config = vscode.workspace.getConfiguration('switchyard');
       const customPath = config.get<string>('executablePath');
@@ -1165,12 +1132,10 @@ export class CaptureManager {
 
         const sessionDir = path.join(captureRoot, entry.name);
 
-        // Skip current session
         if (currentSession && sessionDir === currentSession.dir) {
           continue;
         }
 
-        // Check marker file
         const markerPath = path.join(sessionDir, CAPTURE_MARKER_FILE);
         if (!fs.existsSync(markerPath)) {
           continue;
@@ -1185,9 +1150,7 @@ export class CaptureManager {
             this.logger.info(`Sweeping stale capture session: ${entry.name}`);
             await this.cleanup(sessionDir);
           }
-        } catch {
-          // Invalid marker, skip
-        }
+        } catch {}
       }
     } catch (err) {
       this.logger.warn(`Failed to sweep stale sessions: ${err}`);
@@ -1200,7 +1163,7 @@ export class CaptureManager {
   private async cleanup(dir: string, _legacyPid?: number): Promise<void> {
     // NOTE: a persisted PID is never signalled. After an IDE restart or reboot the OS may
     // have reused it for an unrelated program. The real window is found by --user-data-dir.
-    this.lastDetectedSnapshots.delete(path.basename(dir)); // do not keep tokens in memory
+    this.lastDetectedSnapshots.delete(path.basename(dir));
 
     // Make sure the real window is gone (the PID above may only be a launcher wrapper),
     // otherwise it would keep running with its profile deleted underneath it.
@@ -1211,11 +1174,8 @@ export class CaptureManager {
         pids.forEach(forceKill);
         await new Promise((resolve) => setTimeout(resolve, 600));
       }
-    } catch {
-      // best effort
-    }
+    } catch {}
 
-    // Delete directory with retries (Windows may lock files)
     const maxRetries = 3;
     for (let i = 0; i < maxRetries; i++) {
       try {
@@ -1259,7 +1219,6 @@ export class CaptureManager {
       clearTimeout(this.recheckTimer);
       this.recheckTimer = undefined;
     }
-    // Releasing the lease lets a reloaded window take the session over right away.
     const mine = this.getCurrentSession();
     if (mine && ACTIVE_STATES.includes(mine.state)) {
       mine.heartbeatAt = 0;

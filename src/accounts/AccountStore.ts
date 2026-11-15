@@ -58,9 +58,7 @@ export class AccountStore {
                 resolvedPlan = identity.plan;
               }
             }
-          } catch {
-            // ignore
-          }
+          } catch {}
           account.plan = resolvedPlan;
           modified = true;
         }
@@ -236,11 +234,9 @@ export class AccountStore {
       const email = identity.email || `unknown-${identity.fingerprint}@switchyard.local`;
       const id = identity.email ? createAccountId(identity.email) : `fp-${identity.fingerprint}`;
 
-      // 1. Save snapshot in secrets
       const secretKey = `${SECRET_PREFIX}${id}`;
       await this.secrets.store(secretKey, JSON.stringify(snapshot));
 
-      // 2. Update metadata in state
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const existingIdx = accounts.findIndex((a) => a.id === id);
       const existing = accounts[existingIdx];
@@ -294,16 +290,13 @@ export class AccountStore {
    */
   async remove(id: string): Promise<void> {
     return this.mutex.runExclusive(async () => {
-      // 1. Delete secret
       const secretKey = `${SECRET_PREFIX}${id}`;
       await this.secrets.delete(secretKey);
 
-      // 2. Remove from metadata list
       const accounts = this.state.get<AccountMeta[]>(ACCOUNTS_STATE_KEY, []);
       const filtered = accounts.filter((a) => a.id !== id);
       await this.state.update(ACCOUNTS_STATE_KEY, filtered);
 
-      // 3. Clear activeId if the removed account was active
       const active = this.state.get<string | undefined>(ACTIVE_ACCOUNT_STATE_KEY, undefined);
       if (active === id) {
         await this.state.update(ACTIVE_ACCOUNT_STATE_KEY, undefined);

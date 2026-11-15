@@ -16,7 +16,6 @@ function tryCheckpointWal(tempDbPath: string): void {
     return;
   }
 
-  // 1. Try native sqlite3 CLI if installed
   try {
     child_process.execFileSync('sqlite3', [tempDbPath, 'PRAGMA wal_checkpoint(TRUNCATE);'], {
       timeout: 3000,
@@ -24,9 +23,7 @@ function tryCheckpointWal(tempDbPath: string): void {
       windowsHide: true,
     });
     return;
-  } catch {
-    // sqlite3 CLI not available or failed
-  }
+  } catch {}
 
   // On Windows, 'python' is standard while 'python3' is often the Microsoft Store dummy shim.
   // On Unix/Linux, 'python3' is standard.
@@ -41,9 +38,7 @@ function tryCheckpointWal(tempDbPath: string): void {
         windowsHide: true,
       });
       return;
-    } catch {
-      // try next candidate
-    }
+    } catch {}
   }
 }
 
@@ -109,19 +104,14 @@ export async function readKeys(dbPath: string, keys: string[]): Promise<Record<s
     if (fs.existsSync(walFile)) {
       try {
         fs.copyFileSync(walFile, `${tempDb}-wal`);
-      } catch {
-        // WAL file may have been removed or checkpointed concurrently; ignore
-      }
+      } catch {}
     }
     if (fs.existsSync(shmFile)) {
       try {
         fs.copyFileSync(shmFile, `${tempDb}-shm`);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
 
-    // Checkpoint any WAL entries into tempDb so sql.js sees the live commits
     tryCheckpointWal(tempDb);
 
     const SQL = await getSqlJs();
@@ -157,9 +147,7 @@ export async function readKeys(dbPath: string, keys: string[]): Promise<Record<s
   } finally {
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch {
-      // ignore temp dir cleanup error
-    }
+    } catch {}
   }
 }
 
@@ -204,7 +192,6 @@ export async function writeKeys(dbPath: string, entries: Record<string, string>)
     const exported = Buffer.from(db.export());
     await atomicWriteFile(dbPath, exported);
 
-    // Keep state.vscdb.backup in sync if it exists
     const backupSibling = `${dbPath}.backup`;
     if (fs.existsSync(backupSibling)) {
       await atomicWriteFile(backupSibling, exported);
@@ -323,9 +310,7 @@ async function atomicWriteFile(targetPath: string, data: Buffer, retries = 5, de
       if (attempt >= retries || !isLockError) {
         try {
           fs.unlinkSync(tmpPath);
-        } catch {
-          // ignore
-        }
+        } catch {}
         throw err;
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs));

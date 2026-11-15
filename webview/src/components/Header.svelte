@@ -7,7 +7,6 @@
   let menuOpen = $state(false);
   let menuBtn: HTMLButtonElement | undefined = $state();
 
-  // Re-detects the signed-in account and re-reads its quota.
   function handleRefresh() {
     if (isRefreshing()) return;
     startRefresh();

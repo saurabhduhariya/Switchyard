@@ -17,7 +17,7 @@ interface QuotaBucketDto {
   bucketId?: string;
   displayName?: string;
   description?: string;
-  window?: string; // "weekly" | "5h"
+  window?: string;
   remainingFraction?: number;
   resetTime?: string;
   disabled?: boolean;
@@ -153,7 +153,6 @@ export class QuotaCollector {
       return this.liveResult(await this.requestLiveQuota(endpoint));
     } catch (err) {
       this.logger?.debug('Live quota request failed, retrying discovery once:', err);
-      // Clear cache and retry discovery once
       if (!options?.expectedEmail && !options?.captureDir) {
         this.cachedEndpoint = undefined;
       }
@@ -173,7 +172,6 @@ export class QuotaCollector {
   }
 
   private async requestLiveQuota(endpoint: LSServerEndpoint): Promise<AccountQuotaSummary | undefined> {
-    // 1. Fetch userTier from GetUserStatus if available
     let tierName: string | undefined;
     try {
       const statusRes = await this.sendConnectRpc<GetUserStatusResponse>(
@@ -196,7 +194,6 @@ export class QuotaCollector {
       this.logger?.debug('GetUserStatus tier query error:', err);
     }
 
-    // 2. Dedicated quota endpoint with weekly and 5h buckets
     try {
       const quotaRes = await this.sendConnectRpc<RetrieveUserQuotaSummaryResponse>(
         endpoint.port,
@@ -210,7 +207,6 @@ export class QuotaCollector {
       this.logger?.debug('RetrieveUserQuotaSummary call failed, attempting fallback to GetUserStatus:', err);
     }
 
-    // 3. Fallback to GetUserStatus model configs if RetrieveUserQuotaSummary was empty/unavailable
     try {
       const statusRes = await this.sendConnectRpc<GetUserStatusResponse>(
         endpoint.port,
@@ -345,9 +341,7 @@ export class QuotaCollector {
         }
         return true;
       }
-    } catch {
-      // Fallback to RetrieveUserQuotaSummary below
-    }
+    } catch {}
 
     if ((expectedEmail || options?.captureDir) && !captureMatched) {
       return false;
@@ -362,9 +356,7 @@ export class QuotaCollector {
       if (qRes && qRes.response) {
         return true;
       }
-    } catch {
-      // Port wasn't the HTTP service
-    }
+    } catch {}
 
     return false;
   }
@@ -392,8 +384,6 @@ export class QuotaCollector {
       return this.cachedEndpoint;
     }
 
-    // 1. Try finding the active window's language_server / agy process with --csrf_token first
-    // (this process serves RetrieveUserQuotaSummary and GetUserStatus model configs directly).
     const lsEndpoint = await this.discoverEndpoint(options);
     if (lsEndpoint) {
       if (!scoped) {
@@ -403,7 +393,6 @@ export class QuotaCollector {
       return lsEndpoint;
     }
 
-    // 2. Fallback: Discover agy --hub daemon from ~/.gemini/antigravity/daemon/hub_<port>.json
     const hubEndpoint = await discoverAgyHubEndpoint();
     if (hubEndpoint) {
       if (!scoped || (await this.probeEndpoint(hubEndpoint.port, hubEndpoint.token, undefined, options))) {
@@ -513,9 +502,7 @@ export class QuotaCollector {
               const found = await this.findWorkingEndpointOnPorts(wslPorts, token, line, options);
               if (found) return found;
             }
-          } catch {
-            // WSL not installed or no WSL distro running; ignore
-          }
+          } catch {}
         }
 
         return undefined;
@@ -538,7 +525,6 @@ export class QuotaCollector {
         const pid = pidMatch[1];
 
         if (token && pid) {
-          // Check if port is specified directly on the command line
           const candidatePorts: number[] = [];
           const portMatch = line.match(/--(?:extension_server_port|server_port|hub-port|hub_port|port)[=\s]+(\d+)/i);
           if (portMatch?.[1]) {
@@ -548,11 +534,9 @@ export class QuotaCollector {
             }
           }
 
-          // Test candidate port directly first if present
           const direct = await this.findWorkingEndpointOnPorts(candidatePorts, token, line, options);
           if (direct) return direct;
 
-          // Fall back to scanning listening ports for this pid
           const ports = this.getListeningPortsForPid(pid).filter((p) => !candidatePorts.includes(p));
           const discovered = await this.findWorkingEndpointOnPorts(ports, token, line, options);
           if (discovered) return discovered;
@@ -704,12 +688,10 @@ export class QuotaCollector {
 
     const configs = userStatus.cascadeModelConfigData?.clientModelConfigs || [];
 
-    // Find Gemini config
     const geminiConfig = configs.find(
       (c) => c.label?.toLowerCase().includes('gemini') && c.quotaInfo?.remainingFraction !== undefined
     );
 
-    // Find Claude / GPT config
     const claudeGptConfig = configs.find(
       (c) =>
         (c.label?.toLowerCase().includes('claude') || c.label?.toLowerCase().includes('gpt')) &&
@@ -781,13 +763,11 @@ export class QuotaCollector {
 
     try {
       const raw = Buffer.from(val, 'base64');
-      // Look for inner base64 string after userStatusSentinelKey
       const match = raw.toString('latin1').match(/userStatusSentinelKey[\s\S]{1,20}?([A-Za-z0-9+/=]{40,})/);
       const innerStr = match?.[1];
       if (!innerStr) return undefined;
 
       const inner = Buffer.from(innerStr, 'base64');
-      // Look for field 33 (cascadeModelConfigData)
       let offset = 0;
       let field33: Buffer | undefined;
       let field36: Buffer | undefined;
@@ -846,7 +826,6 @@ export class QuotaCollector {
         }
       }
 
-      // Parse models in field 33
       let geminiRemaining: number | undefined;
       let geminiResetTime: string | undefined;
       let claudeResetTime: string | undefined;
@@ -958,7 +937,6 @@ export class QuotaCollector {
         if (cfn === 1) {
           label = sub.toString('utf8');
         } else if (cfn === 15) {
-          // quotaInfo
           let qi = 0;
           while (qi < sub.length) {
             const { wireType: qw, nextOffset: qnxt } = this.readVarintKey(sub, qi);

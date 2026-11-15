@@ -212,7 +212,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Immediately push existing state so UI renders instantly without waiting
     void this.push();
   }
 
@@ -235,24 +234,19 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       pinned: pinnedIds.includes(acc.id),
     }));
 
-    // Get capture session state
     const captureSession = this.captureManager?.getCurrentSession();
 
-    // Recent usage for the sparklines; forget accounts that no longer exist
     const accountIds = rawAccounts.map((a) => a.id);
     await this.history.prune(accountIds);
     const trends = this.history.trends(accountIds);
 
-    // The error only applies while the account it was recorded for is still the signed-in one
     const quotaError =
       this.quotaError && this.quotaError.accountId === activeId ? this.quotaError : undefined;
 
-    // "Switch to a better account" hint when the signed-in account is running low
     const suggestion = config.get<boolean>('suggestBestAccount', true)
       ? this.computeSuggestion(rawAccounts, activeId)
       : undefined;
 
-    // Check addingAccount guide state
     let addAccountGuide: AddAccountGuideState | undefined;
     const addingState = this.ctx.globalState?.get<{
       previousId?: string;
@@ -269,7 +263,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           expectedEmail: addingState.expectedEmail,
         };
       } else {
-        // Active account detected, clear addingAccount guide
         await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
       }
     } else if (!activeId && rawAccounts.length > 0 && !this.dismissedSignOutBanner) {
@@ -385,11 +378,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         const accounts = await this.store.list();
 
         if (accounts.length > 0) {
-          // Try to match by profileUrl if available
           let matched: AccountMeta | undefined;
 
           if (result.profileUrl) {
-            // Match by profileUrl stored in any saved account's snapshot
             for (const acc of accounts) {
               const snap = await this.store.loadSnapshot(acc.id);
               if (snap?.values?.['antigravity.profileUrl'] === result.profileUrl) {
@@ -400,7 +391,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           }
 
           if (!matched && accounts.length === 1) {
-            // Only one account saved — reasonable to assume it's the active one
             matched = accounts[0];
           }
 
@@ -413,7 +403,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
               this.logger.info(`Partial detection matched account: ${matched.email}`);
             }
           } else {
-            // Multiple accounts saved but can't determine which is active.
             // Don't clear activeId — keep last known active to avoid false sign-out banner.
             this.logger.debug('Partial detection: could not match to a specific saved account');
           }
@@ -426,7 +415,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       const { identity, snapshot } = result;
       const contentHash = crypto.createHash('sha256').update(JSON.stringify(snapshot.values)).digest('hex');
 
-      // Match detected account against store
       const detectedEmailNorm = identity.email?.toLowerCase().trim();
       const canMatchAccount = (candidate: AccountMeta | undefined): candidate is AccountMeta => {
         if (!candidate) return false;
@@ -466,7 +454,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
 
       if (matched) {
-        // Matched a saved account — clear any pending toast & guide
         this.dismissedSignOutBanner = false;
         this.pendingSnapshot = undefined;
         await this.ctx.globalState?.update('switchyard.addingAccount', undefined);
@@ -495,7 +482,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
           this.logger.debug(`Synchronized rotated snapshot for ${matched.email}`);
         }
       } else {
-        // Unsaved account detected (first-run capture or new login)
         const addingState = this.ctx.globalState?.get<
           { previousId?: string; previousEmail?: string; expectedEmail?: string; startedAt?: number } | undefined
         >('switchyard.addingAccount');
@@ -532,7 +518,6 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         const emailDisplay = identity.email;
         const candidateId = createAccountId(identity.email);
 
-        // Clear activeId so the old account is not shown as active
         await this.store.setActive(undefined);
 
         await this.view?.webview.postMessage({
@@ -552,21 +537,17 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         });
       }
 
-      // Push state immediately so UI renders instantly without waiting for quota network call
       await this.push();
 
-      // Refresh active account quota asynchronously in background so detection returns and pushes instantly
       const pendingSwitch = this.ctx.globalState?.get('switchyard.pendingSwitch');
       const activeAccountId = await this.store.activeId();
       if (activeAccountId && !pendingSwitch) {
         void this.readQuota(activeAccountId, false).then(() => this.push());
       }
 
-      // Always push updated state to the webview
       await this.push();
     } catch (err) {
       this.logger.error('Error in detectAndRefresh:', err);
-      // Still push state even on error so the webview isn't stuck in loading
       await this.push();
     }
   }
@@ -882,9 +863,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Token Swap mode: check preferred method
     if (addAccountMethod === 'sideWindow' && this.captureManager) {
-      // Use side-window capture flow
       const result = await this.captureManager.startCapture();
       if (result.alreadyInProgress) {
         // Session is already open/launching in this window — do NOT jump to Sign Out & Restart!
@@ -897,22 +876,15 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       }
       if (!result.ok) {
         vscode.window.showErrorMessage(`Switchyard: Failed to start capture: ${result.error}`);
-        // Fall back to legacy flow
         await this.handleAddNewAccountLegacy();
       }
-      // UI will update via capture state change callback
       return;
     }
 
-    // Fall back to legacy sign-out-restart flow
     await this.handleAddNewAccountLegacy();
   }
 
-  /**
-   * Legacy add account flow (sign out and restart).
-   */
   private async handleAddNewAccountLegacy(): Promise<void> {
-    // Token Swap mode: modal explanation
     const choice = await vscode.window.showInformationMessage(
       'Switchyard will save your current session, sign you out of Antigravity, and restart the IDE. After restart, sign in with your new Google account; Switchyard will detect and save it automatically.',
       { modal: true },
@@ -1111,13 +1083,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // 2. Try auth session request
     try {
       await vscode.authentication.getSession('antigravity_auth', [], { createIfNone: true });
       return;
-    } catch {
-      // try command fallback
-    }
+    } catch {}
 
     const candidateCommands = [
       'antigravity.login',
@@ -1131,9 +1100,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
         await vscode.commands.executeCommand(cmd);
         executed = true;
         break;
-      } catch {
-        // try next
-      }
+      } catch {}
     }
     if (!executed) {
       void vscode.window.showInformationMessage(

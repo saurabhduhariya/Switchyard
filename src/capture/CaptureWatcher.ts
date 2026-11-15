@@ -10,11 +10,11 @@ import { Logger } from '../util/logger';
  * Implements double-read debounce to ensure stable detection.
  */
 export type CaptureWatchStatus =
-  | 'noDb' // capture DB not created yet (window still starting / not signed in)
-  | 'signedOut' // DB exists but holds no auth keys yet
-  | 'walPending' // DB exists, no auth yet, but a non-empty -wal is buffering writes
-  | 'partial' // user looks signed in but tokens are not in state.vscdb (OS secret store)
-  | 'full' // tokens + identity readable
+  | 'noDb'
+  | 'signedOut'
+  | 'walPending'
+  | 'partial'
+  | 'full'
   | 'error';
 
 export class CaptureWatcher {
@@ -87,14 +87,11 @@ export class CaptureWatcher {
   start(): void {
     this.logger.debug(`Starting capture watcher for: ${this.dbPath}`);
 
-    // Start polling
     this.pollTimer = setInterval(() => {
       void this.poll();
     }, CAPTURE_POLL_INTERVAL_MS);
 
     this.attachFsWatcher();
-
-    // Initial poll
     void this.poll();
   }
 
@@ -224,7 +221,6 @@ export class CaptureWatcher {
         await this.handleDetection(result);
       }
     } catch (err) {
-      // DB might be locked or malformed during write
       this.setStatus('error', String(err));
       this.resetDebounce();
     } finally {
@@ -278,7 +274,6 @@ export class CaptureWatcher {
       return;
     }
 
-    // Check if this matches the last detection
     if (this.lastDetection) {
       const emailMatches = email === this.lastDetection.email;
       const fingerprintMatches = fingerprint === this.lastDetection.fingerprint;
@@ -286,28 +281,23 @@ export class CaptureWatcher {
       if (emailMatches && fingerprintMatches) {
         this.consecutiveMatchCount++;
 
-        // Require two consecutive identical reads
         if (this.consecutiveMatchCount >= 2) {
           this.logger.info(
             `Stable detection confirmed: ${email || fingerprint} (${this.consecutiveMatchCount} consecutive matches)`
           );
 
-          // Notify callback
           if (this.onDetectionCallback) {
             this.onDetectionCallback(result.identity, result.snapshot);
           }
 
-          // Stop watching after successful detection
           this.stop();
         }
       } else {
-        // Different detection, reset counter
         this.logger.debug(`Detection changed, resetting debounce`);
         this.lastDetection = result.identity;
         this.consecutiveMatchCount = 1;
       }
     } else {
-      // First detection
       this.logger.debug(`First detection: ${email || fingerprint}`);
       this.lastDetection = result.identity;
       this.consecutiveMatchCount = 1;

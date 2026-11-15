@@ -16,7 +16,6 @@ export function isCompanionMode(globalStorageUri: vscode.Uri): boolean {
     return false;
   }
 
-  // Verify marker file exists
   const captureDir = findCaptureDir(globalStoragePath);
   if (!captureDir) {
     return false;
@@ -41,7 +40,7 @@ function findCaptureDir(globalStoragePath: string): string | undefined {
 
     const parent = path.dirname(current);
     if (parent === current) {
-      break; // Reached root
+      break;
     }
     current = parent;
   }
@@ -68,13 +67,11 @@ export function setupCompanionMode(
     return { dispose: () => {} };
   }
 
-  // Show guidance message
   void vscode.window.showInformationMessage(
     'Sign in here, then return to your main window to save the account.',
     { modal: false }
   );
 
-  // Watch for close-request file
   const closeRequestPath = path.join(captureDir, CAPTURE_CLOSE_REQUEST_FILE);
   let pollTimer: NodeJS.Timeout | undefined;
   let disposed = false;
@@ -94,7 +91,6 @@ export function setupCompanionMode(
       void Promise.resolve(vscode.commands.executeCommand('workbench.action.quit')).catch((err) => {
         logger.warn(`workbench.action.quit failed: ${err}`);
       });
-      // Fallback if quit is ignored: close window again
       setTimeout(() => {
         logger.warn('Capture window still open after close request; retrying closeWindow');
         void Promise.resolve(vscode.commands.executeCommand('workbench.action.closeWindow')).catch(() => undefined);
@@ -102,10 +98,7 @@ export function setupCompanionMode(
     }
   };
 
-  // Poll every 500ms for close request
   pollTimer = setInterval(checkCloseRequest, 500);
-
-  // Also initial check
   checkCloseRequest();
 
   return {

@@ -144,7 +144,6 @@ export class AuthDetector {
           }
         : undefined;
 
-    // 1. Check OS Keychain + agy --hub daemon (v2.6.0+)
     const rawKeychain = readKeychainToken(wslOptions);
     const decodedKeyring = rawKeychain ? decodeKeyringValue(rawKeychain) : undefined;
     const hasStructuredKeychainToken = Boolean(
@@ -181,8 +180,6 @@ export class AuthDetector {
         };
       }
 
-      // If state.vscdb also has auth keys, merge them if they belong to the same account
-      // (or if state.vscdb is the active IDE window and keychain was out of sync, prefer state.vscdb's identity)
       if (hasLegacyAuth) {
         const dbIdentity = parseSnapshot(dbValues);
 
@@ -191,7 +188,7 @@ export class AuthDetector {
           dbIdentity.email!.toLowerCase().trim() !== kcIdentity.email!.toLowerCase().trim();
 
         if (emailsConflict && !isCaptureDb) {
-          // The IDE window (Antigravity Settings) is signed into dbValues; do not mix with a conflicting keychain token
+          // The IDE window is signed into dbValues; do not mix with a conflicting keychain token
           return {
             identity: dbIdentity,
             snapshot: {
@@ -230,7 +227,6 @@ export class AuthDetector {
       };
     }
 
-    // 2. state.vscdb Detection
     if (this.dbPath) {
       if (hasLegacyAuth) {
         const identity = parseSnapshot(dbValues);

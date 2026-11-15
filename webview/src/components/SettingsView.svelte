@@ -277,7 +277,6 @@
     }
   }
 
-  /* ── Top bar ── */
   .nav-bar {
     display: grid;
     grid-template-columns: 28px 1fr 28px;
@@ -327,7 +326,6 @@
     gap: 18px;
   }
 
-  /* ── Groups: a quiet heading over one container of rows ── */
   .group {
     display: flex;
     flex-direction: column;
@@ -392,7 +390,6 @@
     color: var(--vscode-descriptionForeground);
   }
 
-  /* ── Segmented control ── */
   .segmented {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -453,7 +450,6 @@
     color: var(--vscode-foreground);
   }
 
-  /* ── Toggle ── */
   .toggle {
     width: 30px;
     height: 16px;
@@ -488,7 +484,6 @@
     background: var(--vscode-button-foreground, #fff);
   }
 
-  /* ── Stepper ── */
   .stepper {
     display: inline-flex;
     align-items: center;
@@ -529,7 +524,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* ── Text buttons ── */
   .text-btn {
     display: inline-flex;
     align-items: center;
@@ -548,7 +542,6 @@
     background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.15));
   }
 
-  /* ── Footer ── */
   /*
    * Centred so it looks deliberate both on one line and when the two items
    * wrap onto separate lines in a narrow sidebar or with a wide font.

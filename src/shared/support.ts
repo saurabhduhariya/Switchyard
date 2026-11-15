@@ -1,15 +1,3 @@
-/**
- * Public details for the optional "Support Switchyard" UPI donation dialog.
- *
- * These values are intentionally public: supporters need them to pay. They are
- * not credentials. Replace the two placeholders below with your real UPI ID
- * (VPA, e.g. `name@bank`) and the payee name registered with that UPI ID.
- * Until both are replaced, the dialog shows a configuration notice instead of a
- * QR code.
- *
- * No amount is configured on purpose: the supporter enters any amount in their
- * own UPI app. Switchyard never sees, verifies or stores payments.
- */
 export const SUPPORT_CONFIG: SupportConfig = {
   upiId: 'switchyard@nyes',
   payeeName: 'Saurabh Prajapat',
@@ -17,11 +5,8 @@ export const SUPPORT_CONFIG: SupportConfig = {
 };
 
 export interface SupportConfig {
-  /** UPI Virtual Payment Address, `handle@psp`. */
   upiId: string;
-  /** Name shown to the payer in their UPI app. */
   payeeName: string;
-  /** Short note attached to the payment (`tn`). */
   transactionNote: string;
 }
 
@@ -30,7 +15,6 @@ export type SupportConfigCheck =
   | { ok: false; reason: 'upiIdNotConfigured' | 'upiIdInvalid' | 'payeeNameNotConfigured' | 'payeeNameInvalid' | 'noteInvalid' };
 
 const PLACEHOLDER = /REPLACE_WITH|YOUR_UPI|YOUR_PAYEE|yourname@/i;
-// handle: letters, digits, dot, hyphen, underscore. PSP handle: letters then letters/digits.
 const UPI_ID = /^[a-zA-Z0-9._-]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,63}$/;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 

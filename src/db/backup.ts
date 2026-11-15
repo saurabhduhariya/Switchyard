@@ -46,9 +46,7 @@ export async function createBackup(dbPath: string, backupRootDir?: string): Prom
       fs.copyFileSync(item.source, destPath);
       try {
         fs.chmodSync(destPath, 0o600);
-      } catch {
-        // chmod might not be supported on some filesystems/Windows; ignore
-      }
+      } catch {}
       copiedFiles.push(item.destName);
     }
   }
@@ -100,12 +98,9 @@ export async function listBackups(backupRootDir: string): Promise<BackupInfo[]> 
           files: meta.files || [],
         });
         continue;
-      } catch {
-        // fallback to inferring from folder name
-      }
+      } catch {}
     }
 
-    // Fallback: parse directory name as timestamp
     const stat = fs.statSync(dirPath);
     const files = fs.readdirSync(dirPath).filter((f) => f !== 'meta.json');
     backups.push({
@@ -140,9 +135,7 @@ export async function restoreBackup(info: BackupInfo, targetDbPath: string): Pro
       fs.copyFileSync(srcFile, destFile);
       try {
         fs.chmodSync(destFile, 0o600);
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 }
@@ -164,9 +157,7 @@ export async function pruneBackups(backupRootDir: string, keep: number): Promise
     try {
       fs.rmSync(backup.path, { recursive: true, force: true });
       deleted.push(backup.path);
-    } catch {
-      // ignore deletion errors
-    }
+    } catch {}
   }
 
   return deleted;

@@ -81,7 +81,6 @@ export class TokenSwapEngine implements SwitchEngine {
       };
     }
 
-    // 1. Confirm dialog (modal) if confirmBeforeSwitch setting is enabled
     const config = vscode.workspace.getConfiguration('switchyard');
     const confirm = config.get<boolean>('confirmBeforeSwitch', true);
     if (confirm) {
@@ -100,7 +99,7 @@ export class TokenSwapEngine implements SwitchEngine {
       }
     }
 
-    // 2. Re-capture active session before switching (rotation safety)
+    // Re-capture active session before switching (rotation safety)
     if (this.detector && activeId) {
       try {
         const activeAccount = await this.store.get(activeId);
@@ -122,7 +121,6 @@ export class TokenSwapEngine implements SwitchEngine {
       }
     }
 
-    // 3. Load target snapshot from SecretStorage
     const targetSnapshot = await this.store.loadSnapshot(accountId);
     if (
       !targetSnapshot ||
@@ -136,8 +134,7 @@ export class TokenSwapEngine implements SwitchEngine {
       };
     }
 
-    // 3b. If running on Antigravity 2.6.0+ (agy extension or OS Keychain active),
-    // verify the saved account has a v2.6.0 keychainToken before quitting the IDE.
+    // If running on Antigravity 2.6.0+, verify the saved account has a keychainToken before quitting the IDE.
     let isAgy26OrNewer = false;
     try {
       isAgy26OrNewer = Boolean(
@@ -221,7 +218,6 @@ export class TokenSwapEngine implements SwitchEngine {
       });
     }
 
-    // 4-8. Resolve relaunch context, write SwitchJob in persistent shared storage, and spawn helper
     const prep = this.prepareRelaunchContext(options?.folders);
     if (!prep.ok) {
       return { ok: false, mode: 'tokenSwap', error: prep.error };
@@ -253,7 +249,6 @@ export class TokenSwapEngine implements SwitchEngine {
       return { ok: false, mode: 'tokenSwap', error: spawned.error };
     }
 
-    // 9. Record pendingSwitch state in memento for post-restart reconciliation
     await this.memento.update('switchyard.pendingSwitch', {
       targetId: accountId,
       targetEmail: account.email,
@@ -261,10 +256,8 @@ export class TokenSwapEngine implements SwitchEngine {
       startedAt: Date.now(),
     });
 
-    // 10. Update lastUsedAt timestamp
     await this.store.touch(accountId);
 
-    // 11. Trigger IDE quit
     this.logger.info(`Triggering workbench.action.quit to switch to ${account.email}`);
     void vscode.commands.executeCommand('workbench.action.quit');
 
@@ -280,7 +273,6 @@ export class TokenSwapEngine implements SwitchEngine {
    * stores addingAccount state in memento, and relaunches the IDE.
    */
   async signOutAndRestart(options?: SignOutAndRestartOptions): Promise<SwitchResult> {
-    // 1. Capture current active session if available
     let previousId = options?.previousId;
     let previousEmail = options?.previousEmail;
     const currentActiveId = previousId || (await this.store.activeId());
@@ -316,7 +308,6 @@ export class TokenSwapEngine implements SwitchEngine {
       }
     }
 
-    // 2-6. Resolve relaunch context, write SwitchJob in persistent shared storage, and spawn helper
     const prep = this.prepareRelaunchContext(options?.folders);
     if (!prep.ok) {
       return { ok: false, mode: 'tokenSwap', error: prep.error };
@@ -348,7 +339,6 @@ export class TokenSwapEngine implements SwitchEngine {
       return { ok: false, mode: 'tokenSwap', error: spawned.error };
     }
 
-    // 7. Record addingAccount state in memento and clear any abandoned capture session
     await this.memento.update(CAPTURE_SESSION_STATE_KEY, undefined);
     await this.memento.update('switchyard.addingAccount', {
       previousId,
@@ -358,10 +348,8 @@ export class TokenSwapEngine implements SwitchEngine {
       startedAt: Date.now(),
     });
 
-    // 8. Clear activeId in store so old account is not marked active upon restart
     await this.store.setActive(undefined);
 
-    // 9. Trigger IDE quit
     this.logger.info('Triggering workbench.action.quit for sign out and restart');
     void vscode.commands.executeCommand('workbench.action.quit');
 
@@ -391,9 +379,7 @@ export class TokenSwapEngine implements SwitchEngine {
     let remoteName: string | undefined;
     try {
       remoteName = (vscode as any).env?.remoteName;
-    } catch {
-      // ignore when mocked in unit tests
-    }
+    } catch {}
     const foldersToOpen = getWorkspaceRelaunchArgs({
       overrideFolders,
       workspaceFolders: vscode.workspace.workspaceFolders,
@@ -432,13 +418,9 @@ export class TokenSwapEngine implements SwitchEngine {
           if (fs.statSync(full).mtimeMs < cutoff) {
             fs.rmSync(full, { force: true });
           }
-        } catch {
-          // ignore per-file cleanup error
-        }
+        } catch {}
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   private spawnHelperJob(params: {
@@ -511,9 +493,7 @@ export class TokenSwapEngine implements SwitchEngine {
       this.logger.error(`Failed to spawn switch-helper: ${msg}`);
       try {
         fs.rmSync(jobPath, { force: true });
-      } catch {
-        // ignore
-      }
+      } catch {}
       return { ok: false, error: `Failed to spawn helper: ${msg}` };
     }
 

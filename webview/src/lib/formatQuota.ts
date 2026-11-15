@@ -77,6 +77,5 @@ export function formatPercentShort(val?: number): string {
  */
 export function formatPercentage(val?: number): string {
   if (val === undefined || val === null || isNaN(val)) return '-';
-  // If it has decimal places, show up to 2 decimal places, otherwise integer
   return Number.isInteger(val) ? `${val}%` : `${val.toFixed(2)}%`;
 }

@@ -94,7 +94,6 @@
 </script>
 
 <div class="active-card" aria-current="true" role="listitem">
-  <!-- Top Profile Row -->
   <div class="card-header">
     <Avatar email={account.email} size={36} active={true} />
     <div class="card-info">
@@ -134,7 +133,6 @@
       {/if}
     </div>
 
-    <!-- Rename and Refresh show on hover/focus; both are also in the ⋮ menu. -->
     <div class="header-actions">
       <button class="icon-btn reveal" onclick={startRename} title="Rename account" aria-label="Rename">
         <Icon name="edit" size={13} />
@@ -163,7 +161,6 @@
     </div>
   </div>
 
-  <!-- Quota Cards -->
   {#if getQuotaError() && getQuotaError()!.accountId === account.id}
     <QuotaErrorNotice error={getQuotaError()!} hasQuota={!!account.quota} onretry={handleRefresh} />
   {/if}
@@ -183,7 +180,6 @@
 </div>
 
 <style>
-  /* "Active" is shown once: the green left bar (plus the avatar's dot). */
   .active-card {
     container-type: inline-size;
     padding: 12px;
@@ -224,7 +220,6 @@
     white-space: nowrap;
   }
 
-  /* Secondary icons appear on hover or keyboard focus; hidden on narrow cards. */
   .icon-btn.reveal {
     display: none;
   }

@@ -172,18 +172,14 @@ async function probeQuotaEndpoint(port: number, token: string): Promise<boolean>
     if (qRes.response?.groups && Array.isArray(qRes.response.groups) && qRes.response.groups.length > 0) {
       return true;
     }
-  } catch {
-    // try GetUserStatus next
-  }
+  } catch {}
 
   try {
     const uRes = await sendAgyConnectRpc<Record<string, any>>(port, token, 'GetUserStatus', {}, 1000);
     if (uRes.userStatus && Object.keys(uRes.userStatus).length > 0) {
       return true;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   return false;
 }
@@ -197,9 +193,7 @@ async function probeEndpoint(port: number, token: string): Promise<boolean> {
     if (aRes && Object.keys(aRes).length > 0) {
       return true;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
   return false;
 }
 
@@ -246,9 +240,7 @@ async function probeHubDaemonDirectories(
               candidatePids.add(String(v));
             }
           }
-        } catch {
-          // Ignore malformed JSON files.
-        }
+        } catch {}
 
         const tokensToTry = token ? [token, ...candidateTokens, ''] : [...candidateTokens, ''];
         for (const port of portsToTry) {
@@ -266,9 +258,7 @@ async function probeHubDaemonDirectories(
           }
         }
       }
-    } catch {
-      // Ignore directory read errors.
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -316,7 +306,6 @@ async function probeUnixProcessOutput(
 
   const allTokensToTry = [...candidateTokens, ''];
 
-  // Pass 1: prefer endpoints that serve live quota/userStatus
   for (const entry of processEntries) {
     for (const port of entry.ports) {
       for (const tok of allTokensToTry) {
@@ -327,7 +316,6 @@ async function probeUnixProcessOutput(
     }
   }
 
-  // Pass 2: accept AuthGetStatus endpoints
   for (const entry of processEntries) {
     for (const port of entry.ports) {
       for (const tok of allTokensToTry) {
@@ -388,9 +376,7 @@ async function discoverWslAgyHubEndpointOnWindows(
       const [psOut = '', ssOut = ''] = out.split('===SS===');
       const found = await probeUnixProcessOutput(psOut, ssOut, wslPids, wslTokens);
       if (found) return found;
-    } catch {
-      // Ignore unreachable or stopped WSL distros.
-    }
+    } catch {}
   }
 
   return undefined;
@@ -415,7 +401,6 @@ export async function discoverAgyHubEndpoint(
   const candidatePids = new Set<string>();
   const candidateTokens = new Set<string>();
 
-  // 1. Inspect local ~/.gemini/antigravity/daemon/hub_<port>.json (newest first)
   const localEndpoint = await probeHubDaemonDirectories(
     getAgyDaemonDirs({ includeWsl: false, preferWsl: false }),
     candidatePids,
@@ -425,7 +410,6 @@ export async function discoverAgyHubEndpoint(
     return localEndpoint;
   }
 
-  // 2. Scan running processes for `agy` or `language_server`.
   try {
     if (process.platform === 'win32' || isWsl()) {
       const psScript = `
@@ -452,9 +436,7 @@ export async function discoverAgyHubEndpoint(
             timeout: 3000,
           }
         );
-      } catch {
-        // Ignore netstat errors.
-      }
+      } catch {}
 
       const parsed = JSON.parse(psOut.trim() || '[]');
       const items = Array.isArray(parsed) ? parsed : [parsed];
@@ -527,17 +509,13 @@ export async function discoverAgyHubEndpoint(
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'ignore'],
           });
-        } catch {
-          // Ignore errors from ss.
-        }
+        } catch {}
       }
 
       const found = await probeUnixProcessOutput(psOut, ssOut, candidatePids, candidateTokens);
       if (found) return found;
     }
-  } catch {
-    // Ignore process discovery errors.
-  }
+  } catch {}
 
   if (process.platform === 'win32' && options?.includeWsl) {
     return discoverWslAgyHubEndpointOnWindows(options);
@@ -566,7 +544,6 @@ export async function queryAgyLiveAuthStatus(
 
   const endpoint = await discoverAgyHubEndpoint(options);
   if (endpoint) {
-    // 1. Call AuthGetStatus.
     try {
       const authRes = await sendAgyConnectRpc<Record<string, any>>(
         endpoint.port,
@@ -605,11 +582,8 @@ export async function queryAgyLiveAuthStatus(
           name = statusObj.name;
         }
       }
-    } catch {
-      // Fall back to GetUserStatus.
-    }
+    } catch {}
 
-    // 2. Call GetUserStatus for email and plan tier.
     try {
       const userRes = await sendAgyConnectRpc<Record<string, any>>(
         endpoint.port,
@@ -640,17 +614,13 @@ export async function queryAgyLiveAuthStatus(
           plan = extractPlanFromBuffer(Buffer.from(str, 'utf8'));
         }
       }
-    } catch {
-      // Ignore errors from GetUserStatus.
-    }
+    } catch {}
 
     if (authenticated || email) {
       rpcRespondedSignedOut = false;
     }
   }
 
-  // 3. Fallback: scan ~/.gemini/antigravity only (not Gemini CLI's ~/.gemini/google_accounts.json)
-  // when RPC did not explicitly report an unauthenticated state.
   if (!email && !rpcRespondedSignedOut) {
     const wslHomes =
       process.platform === 'win32' && (options?.includeWsl || options?.preferWsl)
@@ -744,23 +714,15 @@ function cleanupDaemonDir(dir: string, killRecordedPid: boolean): void {
           if (typeof parsed.pid === 'number' && parsed.pid > 0) {
             try {
               process.kill(parsed.pid, 'SIGTERM');
-            } catch {
-              // The process may already be dead.
-            }
+            } catch {}
           }
-        } catch {
-          // Ignore malformed JSON files.
-        }
+        } catch {}
       }
       try {
         fs.rmSync(full, { force: true });
-      } catch {
-        // Ignore file cleanup errors.
-      }
+      } catch {}
     }
-  } catch {
-    // Ignore directory read errors.
-  }
+  } catch {}
 }
 
 /**
@@ -772,7 +734,6 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
     return;
   }
 
-  // 1. Delete local hub_*.json files and kill their recorded PIDs.
   for (const dir of getAgyDaemonDirs({ includeWsl: false, preferWsl: false })) {
     cleanupDaemonDir(dir, !dir.startsWith('/mnt/'));
   }
@@ -784,13 +745,10 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
       try {
         fs.rmSync(path.join(h, '.gemini', 'antigravity', cachedFile), { force: true });
         fs.rmSync(path.join(h, '.gemini', cachedFile), { force: true });
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 
-  // 2. Kill any lingering agy hub process on Windows and/or Linux.
   if (process.platform === 'win32' || isWsl()) {
     try {
       const psKill = "Get-CimInstance Win32_Process -Filter \"Name like '%agy%'\" | Where-Object { $_.CommandLine -like '*--hub*' -or $_.CommandLine -like '* hub*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
@@ -800,9 +758,7 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
         ['-NoProfile', '-NonInteractive', '-EncodedCommand', b64],
         { stdio: 'ignore', windowsHide: true, timeout: 5000 }
       );
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
   if (process.platform !== 'win32') {
     try {
@@ -810,12 +766,9 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
         stdio: 'ignore',
         timeout: 2000,
       });
-    } catch {
-      // pkill exits 1 when no process matched; ignore.
-    }
+    } catch {}
   }
 
-  // 3. When requested from Windows UI host (e.g. switch-helper), also terminate WSL agy --hub & clear WSL caches.
   if (process.platform === 'win32' && options?.includeWsl) {
     for (const wslDir of getWslDaemonDirsOnWindows(options)) {
       // Never pass Linux PIDs from WSL hub_*.json to Windows process.kill().
@@ -829,9 +782,7 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
         try {
           fs.rmSync(joinWinUnc(wh.uncHome, '.gemini', 'antigravity', cachedFile), { force: true });
           fs.rmSync(joinWinUnc(wh.uncHome, '.gemini', cachedFile), { force: true });
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
     }
 
@@ -853,9 +804,7 @@ export function killAgyHubDaemon(options?: AgyDaemonWslOptions): void {
           ],
           { stdio: 'ignore', windowsHide: true, timeout: 4000 }
         );
-      } catch {
-        // ignore stopped/unreachable distros
-      }
+      } catch {}
     }
   }
 }
@@ -905,9 +854,7 @@ export function ensureAgyHubDaemonRunning(): void {
           windowsHide: true,
         });
         child.unref();
-      } catch {
-        // ignore
-      }
+      } catch {}
       return;
     }
   }

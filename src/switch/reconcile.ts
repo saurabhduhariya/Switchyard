@@ -40,9 +40,7 @@ async function promptAction(
   prompt: Thenable<string | undefined>,
   onChoice: (choice: string | undefined) => void
 ): Promise<void> {
-  void Promise.resolve(prompt).then(onChoice, () => {
-    // Ignore errors from dismissed or cancelled VS Code notifications
-  });
+  void Promise.resolve(prompt).then(onChoice, () => {});
   await Promise.resolve();
   await Promise.resolve();
 }
@@ -96,9 +94,7 @@ export async function reconcilePendingSwitch(
     } finally {
       try {
         fs.rmSync(resolvedResultFile, { force: true });
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 
@@ -188,9 +184,7 @@ export async function reconcilePendingSwitch(
     } finally {
       try {
         fs.rmSync(resolvedAddingResult, { force: true });
-      } catch {
-        // ignore
-      }
+      } catch {}
     }
   }
 }

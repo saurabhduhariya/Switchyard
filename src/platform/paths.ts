@@ -67,7 +67,7 @@ export interface FindStateDbOptions {
 export function findStateDb(options: FindStateDbOptions = {}): string | undefined {
   const fsImpl = options.fsModule || fs;
 
-  // 1. Try deriving from extension's globalStorageUri path
+  // Deriving from extension's globalStorageUri path
   // (Skip if running inside a headless WSL remote server path like ~/.antigravity-server or ~/.vscode-server,
   // unless it is an isolated switchyard-capture directory).
   const isRemoteServerStorage =
@@ -90,7 +90,6 @@ export function findStateDb(options: FindStateDbOptions = {}): string | undefine
     }
   }
 
-  // 2. Try candidate user data dirs
   const candidateDirs = options.candidateDirs || getUserDataDirs();
   for (const dir of candidateDirs) {
     const candidatePath = path.join(dir, 'User', 'globalStorage', 'state.vscdb');

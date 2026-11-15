@@ -86,7 +86,6 @@
       fill="none"
     />
   {:else if name === 'refresh'}
-    <!-- Single clockwise arrow (a nearly full circle with one arrowhead) -->
     <path
       d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.55 0 3 .62 4.1 1.65L13.5 5.5"
       stroke="currentColor"
@@ -170,7 +169,6 @@
       fill="none"
     />
   {:else if name === 'settings'}
-    <!-- 8-tooth gear outline (teeth between r=5 and r=6.6) with a centre hole -->
     <path
       d="M6.79 3.15L7.12 1.46L8.88 1.46L9.21 3.15A5 5 0 0 1 10.58 3.72L12 2.75L13.25 4L12.28 5.42A5 5 0 0 1 12.85 6.79L14.54 7.12L14.54 8.88L12.85 9.21A5 5 0 0 1 12.28 10.58L13.25 12L12 13.25L10.58 12.28A5 5 0 0 1 9.21 12.85L8.88 14.54L7.12 14.54L6.79 12.85A5 5 0 0 1 5.42 12.28L4 13.25L2.75 12L3.72 10.58A5 5 0 0 1 3.15 9.21L1.46 8.88L1.46 7.12L3.15 6.79A5 5 0 0 1 3.72 5.42L2.75 4L4 2.75L5.42 3.72A5 5 0 0 1 6.79 3.15Z"
       stroke="currentColor"

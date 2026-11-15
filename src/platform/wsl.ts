@@ -50,9 +50,7 @@ export function isWsl(): boolean {
       cachedIsWsl = /microsoft|wsl/i.test(ver);
       return cachedIsWsl;
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
   cachedIsWsl = false;
   return false;
@@ -74,7 +72,6 @@ export function toWindowsPath(linuxPath: string): string {
       .trim();
     if (out) return out;
   } catch {
-    // fallback if path is /mnt/<drive>/...
     const m = linuxPath.match(/^\/mnt\/([a-zA-Z])\/(.*)$/);
     if (m?.[1] && m[2] !== undefined) {
       return `${m[1].toUpperCase()}:\\${m[2].replace(/\//g, '\\')}`;
@@ -94,7 +91,6 @@ export function getWslWindowsUserHomes(): string[] {
 
   const homes: string[] = [];
 
-  // 1. Try querying Windows USERPROFILE via cmd.exe + wslpath -u
   try {
     const rawWinProfile = child_process
       .execFileSync('cmd.exe', ['/d', '/s', '/c', 'echo %USERPROFILE%'], {
@@ -116,11 +112,8 @@ export function getWslWindowsUserHomes(): string[] {
         homes.push(posixPath);
       }
     }
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 2. Scan /mnt/c/Users/* as fallback
   const usersRoot = '/mnt/c/Users';
   if (fs.existsSync(usersRoot)) {
     try {
@@ -132,9 +125,7 @@ export function getWslWindowsUserHomes(): string[] {
           homes.push(full);
         }
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   cachedWslHomes = homes;
@@ -207,9 +198,7 @@ export function getWslDistrosOnWindows(options?: {
     for (const line of decodeWslCliOutput(raw).split(/\r?\n/)) {
       addDistro(line);
     }
-  } catch {
-    // ignore wsl.exe enumeration errors
-  }
+  } catch {}
 
   return distros;
 }
@@ -255,9 +244,7 @@ export function resolveWslDistroLinuxHome(distro: string): WslLinuxUserHome | un
       cachedWslDistroHomes.set(distro, resolved);
       return resolved;
     }
-  } catch {
-    // fall back to scanning \\wsl.localhost\<distro>\home
-  }
+  } catch {}
 
   try {
     const uncHomeRoot = buildWslUncPath(distro, '/home');
@@ -279,9 +266,7 @@ export function resolveWslDistroLinuxHome(distro: string): WslLinuxUserHome | un
         return resolved;
       }
     }
-  } catch {
-    // ignore UNC enumeration errors
-  }
+  } catch {}
 
   cachedWslDistroHomes.set(distro, null);
   return undefined;
@@ -391,9 +376,7 @@ export function resolveActiveWslDistro(): string | undefined {
       if (out && !out.includes('$WSL_DISTRO_NAME')) {
         return out.split(/\r?\n/)[0]?.trim() || undefined;
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
   return undefined;
 }

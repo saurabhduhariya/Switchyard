@@ -128,7 +128,6 @@
 </script>
 
 <div use:portal>
-  <!-- Transparent layer: a click anywhere outside the menu closes it. -->
   <div class="menu-backdrop" aria-hidden="true" onclick={() => close(false)}></div>
   <div
     class="overflow-menu"

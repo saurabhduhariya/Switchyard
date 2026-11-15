@@ -168,7 +168,6 @@
   </div>
 {:else}
   <div class="quota-grid" title={planNote}>
-    <!-- Gemini -->
     <div class="quota-box">
       <div class="box-title">Gemini</div>
       {#if showWeekly}
@@ -180,7 +179,6 @@
       {/if}
     </div>
 
-    <!-- Claude + GPT -->
     <div class="quota-box">
       <div class="box-title">Claude + GPT</div>
       {#if showWeekly}
@@ -374,7 +372,6 @@
     text-overflow: ellipsis;
   }
 
-  /* Compact summary */
   .compact-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;

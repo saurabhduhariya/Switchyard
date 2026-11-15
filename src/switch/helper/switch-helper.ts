@@ -63,15 +63,11 @@ function appendHelperLog(logFile: string | undefined, level: 'INFO' | 'WARN' | '
       if (st.size > MAX_LOG_BYTES) {
         fs.truncateSync(logFile, 0);
       }
-    } catch {
-      // file does not exist yet
-    }
+    } catch {}
     fs.appendFileSync(logFile, `${new Date().toISOString()} [${level}] ${message}\n`, {
       mode: 0o600,
     });
-  } catch {
-    // Best-effort logging must never break token swapping
-  }
+  } catch {}
 }
 
 /**
@@ -120,23 +116,19 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
   const previousWslToken = wslOpts ? readWslStandaloneToken(wslOpts) : undefined;
 
   try {
-    // 1. Wait for parent IDE process to terminate + settle
     if (job.parentPid && job.parentPid > 0) {
       await waitForExit(job.parentPid, { settleDelayMs: 400 });
       log('INFO', `Parent IDE process ${job.parentPid} exited`);
     }
 
-    // 2. Kill the detached agy --hub daemon so it doesn't keep the old account in memory
     killAgyHubDaemon(wslOpts);
     log('INFO', 'Cleared agy hub daemon/cache');
 
-    // 3. Create full backup of state.vscdb if present
     if (job.dbPath && fs.existsSync(job.dbPath)) {
       backupInfo = await createBackup(job.dbPath, job.backupDir);
       log('INFO', `Created backup ${backupInfo.id}`);
     }
 
-    // 4. v2.6.0+ OS Keychain swap or clear
     if (job.clearKeychain || !job.keychainToken) {
       const cleared = clearKeychainToken(wslOpts);
       log('INFO', `Cleared OS keychain token (ok=${cleared})`);
@@ -168,13 +160,11 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       }
     }
 
-    // 5. Also write/delete any state.vscdb keys (for v2.5.5 compatibility or profileUrl)
     const dbValues = { ...job.values };
     delete dbValues[KEYS.keychainToken];
     delete dbValues[KEYS.agyUserStatus];
 
     if (job.dbPath && fs.existsSync(job.dbPath)) {
-      // 5a. Update official Antigravity extension memento (google.google-antigravity)
       try {
         const existingAntigravity = await readKeys(job.dbPath, ['google.google-antigravity']);
         if (existingAntigravity['google.google-antigravity']) {
@@ -197,15 +187,12 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
         log('WARN', `Could not update google.google-antigravity in state.vscdb: ${err instanceof Error ? err.message : String(err)}`);
       }
 
-      // Clean up old WAL/SHM companion files before writing
       const walFile = `${job.dbPath}-wal`;
       const shmFile = `${job.dbPath}-shm`;
       try {
         if (fs.existsSync(walFile)) fs.rmSync(walFile, { force: true });
         if (fs.existsSync(shmFile)) fs.rmSync(shmFile, { force: true });
-      } catch {
-        // WAL removal is best-effort
-      }
+      } catch {}
 
       if (job.deleteKeys && job.deleteKeys.length > 0) {
         await deleteKeys(job.dbPath, job.deleteKeys);
@@ -216,7 +203,6 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       }
       log('INFO', `Updated state.vscdb (deleted=${job.deleteKeys?.length || 0}, written=${Object.keys(dbValues).length})`);
 
-      // If we don't have a keychainToken (e.g. legacy v2.5.5), verify from DB
       if (!job.keychainToken && !job.clearKeychain) {
         const verified = await readKeys(job.dbPath, [
           KEYS.oauth,
@@ -265,7 +251,6 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       }
     }
   } finally {
-    // 7. Write result file
     try {
       if (job.resultFile) {
         const resultDir = path.dirname(job.resultFile);
@@ -281,14 +266,12 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
       log('ERROR', `Failed to write result file: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
     }
 
-    // 8. Delete job file (sensitive tokens)
+    // Delete job file (sensitive tokens)
     try {
       fs.rmSync(jobPath, { force: true });
-    } catch {
-      // ignore
-    }
+    } catch {}
 
-    // 9. Always relaunch the IDE so the user is never left stranded
+    // Always relaunch the IDE so the user is never left stranded
     if (job.relaunch?.exe) {
       try {
         const cleanEnv: Record<string, string | undefined> = { ...process.env };
@@ -324,7 +307,6 @@ export async function runHelper(jobPathArg?: string): Promise<SwitchResultFile> 
   return result;
 }
 
-// Auto-run when executed directly via Node / CLI
 if (
   process.argv[1] &&
   (process.argv[1].endsWith('switch-helper.ts') ||

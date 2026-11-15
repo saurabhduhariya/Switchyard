@@ -27,17 +27,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const logger = new Logger(channel);
   logger.info('Activating Switchyard extension...');
 
-  // 0. Detect Companion Mode (capture window)
   if (isCompanionMode(context.globalStorageUri)) {
     logger.info('Running in companion mode - setting up minimal UI');
     const companionDisposable = setupCompanionMode(context, logger);
     const companionStatusBar = createCompanionStatusBar();
     context.subscriptions.push(channel, companionDisposable, companionStatusBar);
-    // Skip all other initialization for companion mode
     return;
   }
 
-  // 1. Locate state.vscdb
   const dbPath = findStateDb({ globalStorageUriPath: context.globalStorageUri.fsPath });
   if (dbPath) {
     logger.info(`Found state.vscdb at: ${dbPath}`);
@@ -45,7 +42,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     logger.warn('Could not locate state.vscdb database in candidate locations.');
   }
 
-  // 1b. Check if user is running a legacy Antigravity IDE version (<= 2.5.5)
+  // Check if user is running a legacy Antigravity IDE version (<= 2.5.5)
   const agyExtension = vscode.extensions.getExtension('google.google-antigravity');
   const is26Plus = Boolean(agyExtension) || isAntigravity26OrNewer(vscode.env?.appRoot);
   const dismissedOldIdeWarning = context.globalState.get<boolean>('switchyard.dismissedOldIdeNotice', false);
@@ -68,7 +65,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   }
 
-  // 2. Initialize Core Services
   const store = new AccountStore({
     secrets: context.secrets,
     state: context.globalState,
@@ -94,7 +90,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const statusBar = new StatusBar();
   const panelProvider = new PanelProvider(context, store, detector, logger, statusBar, switchEngine);
 
-  // 2c. Initialize Capture Manager for side-window add account flow
   const captureManager = new CaptureManager({
     store,
     logger,
@@ -103,18 +98,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     memento: context.globalState,
   });
 
-  // 2d. Set capture manager on panel provider
   panelProvider.setCaptureManager(captureManager);
 
-  // Register capture state change callback
   captureManager.onStateChange((_session) => {
-    void panelProvider.push(); // Refresh UI when capture state changes
+    void panelProvider.push();
   });
 
-  // 2e. Sweep stale capture sessions on startup
   void captureManager.sweepStaleSessions().then(() => captureManager.resume());
 
-  // 3. Register Webview Provider & Status Bar early so startup never blocks sidebar rendering
   context.subscriptions.push(
     channel,
     statusBar,
@@ -124,7 +115,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     { dispose: () => captureManager.dispose() }
   );
 
-  // 2f. Reconcile any pending switch from a previous IDE quit/restart without blocking activation
   void reconcilePendingSwitch(context.globalState, store, logger, dbPath).then(
     () => {
       void panelProvider.push();
@@ -134,7 +124,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   );
 
-  // 2g. Auto-heal any corrupted Pro/Ultra quotas from previous switch race conditions
+  // Auto-heal any corrupted Pro/Ultra quotas from previous switch race conditions
   if (dbPath) {
     const backupDir = getBackupsDir(getGlobalStorageDir(dbPath));
     void recoverCorruptedQuotas(store, backupDir, logger).then((restored) => {
@@ -144,7 +134,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   }
 
-  // 4. File Watcher on state.vscdb directory (debounced 500 ms)
   if (dbPath) {
     const dbDir = path.dirname(dbPath);
     try {
@@ -169,7 +158,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
 
-  // 5. Window Focus Listener (re-detect on focus)
   context.subscriptions.push(
     vscode.window.onDidChangeWindowState((state) => {
       if (state.focused) {
@@ -178,7 +166,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // 5b. Authentication Sessions Change Listener (re-detect when user logs in/out in the IDE)
   context.subscriptions.push(
     vscode.authentication.onDidChangeSessions(() => {
       logger.info('Authentication sessions changed; triggering detectAndRefresh');
@@ -186,7 +173,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // 5c. Periodic Detection Polling (every 5 seconds) to catch live logins/logouts automatically
   const pollTimer = setInterval(() => {
     void panelProvider.detectAndRefresh();
   }, 5000);
@@ -194,7 +180,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     dispose: () => clearInterval(pollTimer),
   });
 
-  // 5d. Quota reset notifications (local only: uses the quota already stored per account)
   const quotaNotifier = new QuotaResetNotifier({
     listAccounts: () => store.list(),
     getActiveId: () => store.activeId(),
@@ -219,7 +204,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   quotaNotifier.start();
   context.subscriptions.push({ dispose: () => quotaNotifier.dispose() });
 
-  // 6. Settings Change Listener (e.g. switchyard.maskEmails, switchyard.mode)
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
@@ -247,9 +231,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // 7. Register Commands
   context.subscriptions.push(
-    // switchyard.addAccount: capture current login
     vscode.commands.registerCommand('switchyard.addAccount', async () => {
       if (!detector) {
         vscode.window.showErrorMessage('Switchyard: state.vscdb database not found.');
@@ -265,7 +247,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const { identity, snapshot } = result;
       const email = identity.email || `account-${identity.fingerprint.slice(0, 6)}`;
 
-      // Check if already saved
       const existing = identity.email
         ? await store.getByEmail(identity.email)
         : await store.get(`fp-${identity.fingerprint}`);
@@ -284,7 +265,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      // Prompt for optional label
       const label = await vscode.window.showInputBox({
         title: 'Add Account to Switchyard',
         prompt: `Enter an optional label for ${email}`,
@@ -298,12 +278,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.window.showInformationMessage(`Switchyard: Successfully saved account ${meta.email}`);
     }),
 
-    // switchyard.addNewAccount: guided flow to sign out and sign in with new account
     vscode.commands.registerCommand('switchyard.addNewAccount', async () => {
       await panelProvider.handleAddNewAccount();
     }),
 
-    // switchyard.openBackupsFolder: reveals the backup directory in system file explorer
     vscode.commands.registerCommand('switchyard.openBackupsFolder', async () => {
       const storageDir = dbPath
         ? getGlobalStorageDir(dbPath)
@@ -315,8 +293,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(backupDir));
     }),
 
-
-    // switchyard.switchAccount: Quick Pick selector (or direct switch if targetAccountId is passed)
     vscode.commands.registerCommand('switchyard.switchAccount', async (targetAccountId?: string) => {
       if (typeof targetAccountId === 'string' && targetAccountId) {
         await panelProvider.handleSwitch(targetAccountId);
@@ -358,13 +334,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // switchyard.refresh
     vscode.commands.registerCommand('switchyard.refresh', async () => {
       await panelProvider.detectAndRefresh(true);
       vscode.window.showInformationMessage('Switchyard: Refreshed accounts and active state.');
     }),
 
-    // switchyard.restoreBackup
     vscode.commands.registerCommand('switchyard.restoreBackup', async () => {
       if (!dbPath) {
         vscode.window.showErrorMessage('Switchyard: Cannot restore backup because state.vscdb path is unknown.');
@@ -405,7 +379,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // switchyard.importAccount: import account from a state.vscdb database or backup file
     vscode.commands.registerCommand('switchyard.importAccount', async (targetDbUri?: vscode.Uri) => {
       let chosenPath: string | undefined;
 
@@ -470,19 +443,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
-    // switchyard.openSettings: open in-panel settings
     vscode.commands.registerCommand('switchyard.openSettings', async () => {
       await vscode.commands.executeCommand('agSwitchyard.panel.focus');
       await panelProvider.showSettings();
     })
   );
 
-  // 8. Initial Detection & Sync
-  // detectAndRefresh is also triggered by resolveWebviewView when the panel appears,
-  // but we call it here too for activation-time detection before the panel is shown.
   void panelProvider.detectAndRefresh();
 }
 
-export function deactivate(): void {
-  // Handled automatically via subscriptions
-}
+export function deactivate(): void {}

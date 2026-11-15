@@ -14,8 +14,6 @@ import type {
 } from '../../../src/shared/messages';
 import { getVsCodeApi } from '../lib/vscode';
 
-// ── Reactive State (Svelte 5 runes) ──
-
 let accounts = $state<AccountMeta[]>([]);
 let activeId = $state<string | undefined>(undefined);
 let busy = $state(false);
@@ -49,8 +47,6 @@ function loadCompactView(): boolean {
   }
 }
 let compactView = $state(loadCompactView());
-
-// ── Getters & Setters ──
 
 export function isCompactView(): boolean {
   return compactView;
@@ -171,7 +167,6 @@ export function getCaptureSession(): CaptureSessionState | undefined {
   return captureSession;
 }
 
-// ── Refresh feedback ──
 // The refresh icons spin from the click until the host sends fresh state.
 let refreshing = $state(false);
 let refreshStartedAt = 0;
@@ -198,8 +193,6 @@ function finishRefresh(): void {
   const left = MIN_SPIN_MS - (Date.now() - refreshStartedAt);
   refreshTimer = setTimeout(() => (refreshing = false), Math.max(0, left));
 }
-
-// ── Message Handler ──
 
 export function handleMessage(data: ToWebview): void {
   switch (data.type) {

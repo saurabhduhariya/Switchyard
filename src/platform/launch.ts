@@ -47,7 +47,6 @@ export function spawnIsolatedWindow(
       )
     : folders;
 
-  // Build CLI arguments
   const args = buildLaunchArgs({
     userDataDir: isWinExeOnWsl ? toWindowsPath(userDataDir) : userDataDir,
     extensionsDir: extensionsDir && isWinExeOnWsl ? toWindowsPath(extensionsDir) : extensionsDir,
@@ -56,7 +55,6 @@ export function spawnIsolatedWindow(
     extraArgs,
   });
 
-  // Clean environment: strip all VSCODE_*, ELECTRON_*, ANTIGRAVITY_* variables
   const cleanEnv: Record<string, string | undefined> = { ...process.env };
   for (const key of Object.keys(cleanEnv)) {
     if (
@@ -72,7 +70,6 @@ export function spawnIsolatedWindow(
     delete cleanEnv.NODE_OPTIONS;
   }
 
-  // Spawn detached process
   const spawnOpts: SpawnOptions = {
     detached: true,
     stdio: 'ignore',

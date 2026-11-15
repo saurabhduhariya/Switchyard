@@ -6,32 +6,32 @@ export interface Snapshot {
 }
 
 export interface QuotaBucket {
-  remainingFraction?: number; // 0.0 - 1.0 (e.g. 0.645962)
-  remainingPercent?: number; // 0 - 100 (e.g. 64.60)
-  resetTime?: string; // ISO date string
+  remainingFraction?: number;
+  remainingPercent?: number;
+  resetTime?: string;
   disabled?: boolean;
 }
 
 export interface ModelQuotaGroup {
-  name: string; // "Gemini" | "Claude + GPT"
+  name: string;
   weekly?: QuotaBucket;
   fiveHour?: QuotaBucket;
-  weeklyRemaining?: number; // percentage (e.g. 76.42)
-  weeklyResetTime?: string; // ISO string e.g. "2026-10-02T14:36:41Z"
+  weeklyRemaining?: number;
+  weeklyResetTime?: string;
   rolling5hRemaining?: number;
   rolling5hResetTime?: string;
 }
 
 export interface AccountQuotaSummary {
-  tierName: string; // e.g. "Google AI Pro Quota"
+  tierName: string;
   gemini: ModelQuotaGroup;
   claudeGpt: ModelQuotaGroup;
-  updatedAt: number; // epoch ms
+  updatedAt: number;
   source: 'live' | 'cache' | 'vscdb';
 }
 
 export interface AccountMeta {
-  id: string; // sha256(email.toLowerCase()).slice(0, 16)
+  id: string;
   email: string;
   label?: string;
   plan?: string;

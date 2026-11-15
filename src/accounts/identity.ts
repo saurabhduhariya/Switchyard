@@ -63,7 +63,6 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
       if (fieldNumber === 0) break;
 
       if (wireType === 0) {
-        // Varint
         const val = readVarint(buf, offset);
         if (val.bytesRead === 0) break;
         fields.push({
@@ -73,7 +72,6 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
         });
         offset += val.bytesRead;
       } else if (wireType === 1) {
-        // 64-bit
         if (offset + 8 > buf.length) break;
         fields.push({
           fieldNumber,
@@ -82,7 +80,6 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
         });
         offset += 8;
       } else if (wireType === 2) {
-        // Length-delimited
         const len = readVarint(buf, offset);
         if (len.bytesRead === 0) break;
         offset += len.bytesRead;
@@ -94,7 +91,6 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
         });
         offset += len.value;
       } else if (wireType === 5) {
-        // 32-bit
         if (offset + 4 > buf.length) break;
         fields.push({
           fieldNumber,
@@ -103,7 +99,6 @@ export function readProtobufFields(buf: Buffer): ProtobufField[] {
         });
         offset += 4;
       } else {
-        // Unrecognized wire type; stop parsing
         break;
       }
     } catch {
@@ -157,9 +152,7 @@ export function fingerprint(value: string): string {
       if (refresh) {
         return crypto.createHash('sha256').update(refresh).digest('hex').slice(0, 12);
       }
-    } catch {
-      // Not JSON; hash the raw string below.
-    }
+    } catch {}
   }
   return crypto.createHash('sha256').update(value || '').digest('hex').slice(0, 12);
 }
@@ -281,7 +274,6 @@ export function hasSignedOutSentinel(rawValue?: string): boolean {
 export function extractEmailFromBuffer(buf: Buffer): string | undefined {
   if (!buf || buf.length === 0) return undefined;
 
-  // 1. Walk protobuf fields recursively
   const fields = readProtobufFields(buf);
   for (const field of fields) {
     if (field.wireType === 2) {
@@ -291,9 +283,7 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
           const innerBuf = Buffer.from(str.trim(), 'base64');
           const innerEmail = extractEmailFromBuffer(innerBuf);
           if (innerEmail) return innerEmail;
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
       const subEmail = extractEmailFromBuffer(field.data);
@@ -301,7 +291,6 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
     }
   }
 
-  // 2. Check for JWT tokens
   const str = buf.toString('utf8');
   const jwtRegex = /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g;
   let match: RegExpExecArray | null;
@@ -313,7 +302,7 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
     }
   }
 
-  // 3. Direct regex check (iterate matches so asset filenames like icon@2x.png do not shadow real emails)
+  // Iterate matches so asset filenames like icon@2x.png do not shadow real emails
   const directRe = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,15})/g;
   let directMatch: RegExpExecArray | null;
   while ((directMatch = directRe.exec(str)) !== null) {
@@ -324,7 +313,6 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
     }
   }
 
-  // 4. Scan for embedded base64 chunks within binary buffer
   const latinStr = buf.toString('latin1');
   const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
   for (const chunk of b64Chunks) {
@@ -332,9 +320,7 @@ export function extractEmailFromBuffer(buf: Buffer): string | undefined {
       const decodedBuf = Buffer.from(chunk, 'base64');
       const innerEmail = extractEmailFromBuffer(decodedBuf);
       if (innerEmail) return innerEmail;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   return undefined;
@@ -376,9 +362,7 @@ export function extractTierFromProtobuf(buf: Buffer): UserTierInfo | undefined {
           const innerBuf = Buffer.from(str.trim(), 'base64');
           const innerTier = extractTierFromProtobuf(innerBuf);
           if (innerTier) return innerTier;
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
       const subTier = extractTierFromProtobuf(field.data);
@@ -386,7 +370,6 @@ export function extractTierFromProtobuf(buf: Buffer): UserTierInfo | undefined {
     }
   }
 
-  // Scan embedded base64 chunks for userTier
   const latinStr = buf.toString('latin1');
   const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
   for (const chunk of b64Chunks) {
@@ -394,9 +377,7 @@ export function extractTierFromProtobuf(buf: Buffer): UserTierInfo | undefined {
       const decodedBuf = Buffer.from(chunk, 'base64');
       const innerTier = extractTierFromProtobuf(decodedBuf);
       if (innerTier) return innerTier;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   return undefined;
@@ -433,20 +414,17 @@ export function formatPlanFromTier(tier: UserTierInfo): string | undefined {
 export function extractPlanFromBuffer(buf: Buffer): string | undefined {
   if (!buf || buf.length === 0) return undefined;
 
-  // 1. Direct protobuf userTier check (highest fidelity)
   const tier = extractTierFromProtobuf(buf);
   if (tier) {
     const formatted = formatPlanFromTier(tier);
     if (formatted) return formatted;
   }
 
-  // 2. Direct string check in buffer utf8 representation
   const direct = findPlanInString(buf.toString('utf8'));
   if (direct) {
     return direct;
   }
 
-  // 3. Recursive traversal of length-delimited protobuf fields
   const fields = readProtobufFields(buf);
   for (const field of fields) {
     if (field.wireType === 2) {
@@ -456,9 +434,7 @@ export function extractPlanFromBuffer(buf: Buffer): string | undefined {
           const innerBuf = Buffer.from(str.trim(), 'base64');
           const innerPlan = extractPlanFromBuffer(innerBuf);
           if (innerPlan) return innerPlan;
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
       const subPlan = extractPlanFromBuffer(field.data);
@@ -466,7 +442,6 @@ export function extractPlanFromBuffer(buf: Buffer): string | undefined {
     }
   }
 
-  // 4. Also scan embedded base64 chunks for plan
   const latinStr = buf.toString('latin1');
   const b64Chunks = latinStr.match(/[A-Za-z0-9+/=]{40,}/g) || [];
   for (const chunk of b64Chunks) {
@@ -474,20 +449,16 @@ export function extractPlanFromBuffer(buf: Buffer): string | undefined {
       const decodedBuf = Buffer.from(chunk, 'base64');
       const innerPlan = extractPlanFromBuffer(decodedBuf);
       if (innerPlan) return innerPlan;
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   return undefined;
 }
 
 function findPlanInString(text: string): string | undefined {
-  // Check Starter / Free tiers first
   if (/\b(?:free-tier|starter-tier|Antigravity Starter(?:\s+Quota)?|Starter Quota)\b/i.test(text)) {
     return 'Antigravity Starter';
   }
-  // Check Ultra
   if (/\b(?:g1-ultra-tier|Google\s+(?:One\s+)?AI\s+Ultra|Gemini Ultra)\b/i.test(text)) {
     return 'Google AI Ultra';
   }
@@ -533,7 +504,6 @@ export function parseSnapshot(
   let email: string | undefined;
   let plan: string | undefined;
 
-  // 1. v2.6.0: Extract email and plan from agyUserStatusJson if present
   if (agyUserStatusJson) {
     try {
       const parsed = JSON.parse(agyUserStatusJson) as {
@@ -558,7 +528,6 @@ export function parseSnapshot(
     }
   }
 
-  // 2. v2.6.0: Extract email from go-keyring-base64 payload if not yet found
   if (!email && keychainToken) {
     const rawStr = keychainToken.startsWith('go-keyring-base64:')
       ? keychainToken.slice('go-keyring-base64:'.length).trim()
@@ -568,20 +537,17 @@ export function parseSnapshot(
       extractEmailFromBuffer(decoded.length > 0 ? decoded : Buffer.from(keychainToken, 'utf8'));
   }
 
-  // 3. v2.5.5 fallback: Try extracting email and plan from userStatus protobuf
   if (userStatus) {
     const userStatusBuf = b64decode(userStatus);
     if (!email) email = extractEmailFromBuffer(userStatusBuf);
     if (!plan) plan = extractPlanFromBuffer(userStatusBuf);
   }
 
-  // 4. v2.5.5 fallback: oauthToken
   if (!email && oauth) {
     const oauthBuf = b64decode(oauth);
     email = extractEmailFromBuffer(oauthBuf);
   }
 
-  // 5. Fallback scan over identity/auth values only (avoid scanning unrelated keys like modelCredits/profileUrl)
   if (!email && typeof valuesOrOauth === 'object' && valuesOrOauth !== null) {
     const authCandidates = [
       agyUserStatusJson,
@@ -603,7 +569,6 @@ export function parseSnapshot(
     }
   }
 
-  // 6. Compute fingerprint from primary auth credential
   const fp = fingerprint(keychainToken || oauth || userStatus || agyUserStatusJson || '');
 
   return {
