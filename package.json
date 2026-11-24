@@ -226,7 +226,6 @@
     "watch": "run-p watch:ext watch:web",
     "lint": "eslint src",
     "test": "vitest run",
-    "test:int": "node ./out/test/integration/runTests.js",
     "package": "vsce package --no-dependencies",
     "vscode:prepublish": "npm run build"
   },

@@ -14,13 +14,7 @@ export const ALLOWED_CAPTURE_FLAGS: readonly string[] = [
   '--disable-workspace-trust',
 ];
 
-export const DEFAULT_CAPTURE_FLAGS: readonly string[] = [
-  '--skip-welcome',
-  '--skip-release-notes',
-  '--skip-add-to-recently-opened',
-  '--disable-telemetry',
-  '--disable-workspace-trust',
-];
+export const DEFAULT_CAPTURE_FLAGS: readonly string[] = ALLOWED_CAPTURE_FLAGS;
 
 const EXTENSION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9._-]*$/i;
 

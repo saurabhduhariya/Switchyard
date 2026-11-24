@@ -11,7 +11,7 @@ export const UNLABELLED_ACCOUNT = 'Unlabelled account';
  * With `hideEmail`, nothing derived from the email is returned: an unlabelled
  * account shows {@link UNLABELLED_ACCOUNT} instead.
  */
-export function accountDisplayName(account: { label?: string; email: string }, hideEmail: boolean): string {
+export function accountDisplayName(account: { label?: string; email: string }, hideEmail = false): string {
   const label = account.label?.trim();
   if (label) return label;
   if (hideEmail) return UNLABELLED_ACCOUNT;

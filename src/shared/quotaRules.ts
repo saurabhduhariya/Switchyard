@@ -215,7 +215,4 @@ export function readBuckets(quota: AccountQuotaSummary | undefined, tierOrPlan?:
   ];
 }
 
-/** Short display name for an account, matching the panel ("label" or the part before the @). */
-export function accountDisplayName(account: { label?: string; email: string }): string {
-  return account.label || account.email.split('@')[0] || account.email;
-}
+export { accountDisplayName } from './accountName';
