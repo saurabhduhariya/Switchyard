@@ -1,4 +1,11 @@
-import type { AccountQuotaSummary, QuotaTrend, QuotaTrendSeries } from './messages';
+import type {
+  AccountQuotaSummary,
+  PacingAdvisory,
+  PacingBucketId,
+  PacingSafety,
+  QuotaTrend,
+  QuotaTrendSeries,
+} from './messages';
 import { readBuckets } from './quotaRules';
 
 export interface ShortQuotaSample {
@@ -25,12 +32,18 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 
 export const SHORT_HISTORY_MAX_AGE_MS = 6 * HOUR;
-export const SHORT_HISTORY_MAX_SAMPLES = 120;
+export const SHORT_HISTORY_MAX_SAMPLES = 360;
 export const SHORT_MIN_SAMPLE_GAP_MS = 2 * MIN;
-const EMA_ALPHA = 0.3;
-const MIN_REPORTED_RATE = 0.5;
+export const IN_MEMORY_SAMPLE_GAP_MS = 60 * 1000;
+/** Smooth velocity across a 30m rolling window with a 10m floor so single burst turns never spike wildly. */
+export const RATE_WINDOW_MS = 30 * MIN;
+export const MIN_RATE_WINDOW_MS = 10 * MIN;
+const RATE_ANCHOR_MAX_AGE_MS = 2 * HOUR;
+export const MIN_REPORTED_BURN_RATE = 0.5;
 const IDLE_HALF_LIFE_MIN = 15;
 const IDLE_DECAY_GRACE_MS = 10 * MIN;
+const MAX_RECOMMENDED_DELAY_SEC = 300;
+const MIN_RECOMMENDED_DELAY_SEC = 10;
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
@@ -81,7 +94,8 @@ export function pruneShortHistory(history: ShortQuotaSample[], now: number): Sho
 
 export function appendShortSample(
   history: ShortQuotaSample[],
-  sample: ShortQuotaSample
+  sample: ShortQuotaSample,
+  minGapMs: number = SHORT_MIN_SAMPLE_GAP_MS
 ): { history: ShortQuotaSample[]; changed: boolean } {
   const last = history[history.length - 1];
   if (!last) {
@@ -92,7 +106,7 @@ export function appendShortSample(
   }
 
   const unchanged = sameSample(last, sample);
-  if (unchanged && sample.t - last.t < SHORT_MIN_SAMPLE_GAP_MS) {
+  if (unchanged && sample.t - last.t < minGapMs) {
     return { history, changed: false };
   }
 
@@ -108,7 +122,7 @@ export function appendShortSample(
 
 function computeRate(burnRatePerHour: number, currentPercent: number | undefined): BucketBurnRate {
   const rounded = round1(burnRatePerHour);
-  if (rounded < MIN_REPORTED_RATE) {
+  if (rounded < MIN_REPORTED_BURN_RATE) {
     return { burnRatePerHour: 0, tteMinutes: null };
   }
   const tteMinutes =
@@ -126,46 +140,53 @@ export function computeBucketBurnRate(
   fallbackTrend?: QuotaTrendSeries
 ): BucketBurnRate {
   const recent = pruneShortHistory(history, now).filter((s) => s[key] !== undefined);
-  let ema = 0;
-  let hasDrop = false;
-  let lastDropAt: number | undefined;
-
+  // Keep only samples since the most recent upward quota reset.
+  let postResetStart = 0;
   for (let i = 1; i < recent.length; i++) {
-    const prev = recent[i - 1]!;
-    const curr = recent[i]!;
-    const prevVal = prev[key]!;
-    const currVal = curr[key]!;
-    const dtMs = curr.t - prev.t;
-    if (dtMs <= 0) continue;
-
-    if (currVal > prevVal) {
-      // Quota reset: start velocity fresh from post-reset samples.
-      ema = 0;
-      hasDrop = false;
-      lastDropAt = undefined;
-      continue;
-    }
-
-    const drop = prevVal - currVal;
-    if (drop >= 0.1) {
-      const dtHours = Math.max(dtMs, 30_000) / HOUR;
-      const instRate = drop / dtHours;
-      ema = hasDrop ? EMA_ALPHA * instRate + (1 - EMA_ALPHA) * ema : instRate;
-      hasDrop = true;
-      lastDropAt = curr.t;
-    } else if (hasDrop && dtMs >= 5 * MIN) {
-      ema *= 1 - EMA_ALPHA;
+    if ((recent[i]![key] as number) > (recent[i - 1]![key] as number)) {
+      postResetStart = i;
     }
   }
+  const active = recent.slice(postResetStart);
 
-  if (hasDrop && lastDropAt !== undefined && ema >= MIN_REPORTED_RATE) {
-    const idleMs = Math.max(0, now - lastDropAt);
-    if (idleMs > IDLE_DECAY_GRACE_MS) {
-      const decayMinutes = (idleMs - IDLE_DECAY_GRACE_MS) / MIN;
-      ema *= Math.pow(0.5, decayMinutes / IDLE_HALF_LIFE_MIN);
+  if (active.length >= 2) {
+    const windowCutoff = now - RATE_WINDOW_MS;
+    const anchorFloor = now - RATE_ANCHOR_MAX_AGE_MS;
+    let anchorIdx = 0;
+    for (let i = 0; i < active.length; i++) {
+      const t = active[i]!.t;
+      if (t <= windowCutoff) {
+        anchorIdx = i;
+      } else {
+        if (i > 0 && active[i - 1]!.t < anchorFloor && t >= windowCutoff) {
+          anchorIdx = i;
+        }
+        break;
+      }
     }
-    if (ema >= MIN_REPORTED_RATE) {
-      return computeRate(ema, currentPercent);
+
+    let totalDrop = 0;
+    let lastDropAt: number | undefined;
+    for (let i = Math.max(1, anchorIdx + 1); i < active.length; i++) {
+      const drop = (active[i - 1]![key] as number) - (active[i]![key] as number);
+      if (drop >= 0.1) {
+        totalDrop += drop;
+        lastDropAt = active[i]!.t;
+      }
+    }
+
+    if (totalDrop >= 0.1 && lastDropAt !== undefined) {
+      const spanHours = Math.max(now - active[anchorIdx]!.t, MIN_RATE_WINDOW_MS) / HOUR;
+      let rate = totalDrop / spanHours;
+      const idleMs = Math.max(0, now - lastDropAt);
+      if (idleMs > IDLE_DECAY_GRACE_MS) {
+        const decayMinutes = (idleMs - IDLE_DECAY_GRACE_MS) / MIN;
+        rate *= Math.pow(0.5, decayMinutes / IDLE_HALF_LIFE_MIN);
+      }
+      if (rate >= MIN_REPORTED_BURN_RATE) {
+        return computeRate(rate, currentPercent);
+      }
+      return { burnRatePerHour: 0, tteMinutes: null };
     }
   }
 
@@ -173,7 +194,7 @@ export function computeBucketBurnRate(
     fallbackTrend?.usedPercent !== undefined &&
     fallbackTrend.spanHours !== undefined &&
     fallbackTrend.spanHours >= 0.5 &&
-    fallbackTrend.usedPercent >= MIN_REPORTED_RATE
+    fallbackTrend.usedPercent >= MIN_REPORTED_BURN_RATE
   ) {
     return computeRate(fallbackTrend.usedPercent / fallbackTrend.spanHours, currentPercent);
   }
@@ -245,5 +266,112 @@ export function computeAccountBurnRates(
     ...(gemini ? { gemini } : {}),
     ...(claudeGpt ? { claudeGpt } : {}),
   };
+}
+
+const SAFETY_RANK: Record<PacingSafety, number> = {
+  sustainable: 0,
+  elevated: 1,
+  critical: 2,
+};
+
+function parseResetMinutes(resetTime: string | undefined, now: number): number | null {
+  if (!resetTime) return null;
+  const resetAt = Date.parse(resetTime);
+  if (Number.isNaN(resetAt) || resetAt <= now) return null;
+  return Math.max(1, Math.round((resetAt - now) / MIN));
+}
+
+export function classifyPacing(
+  tteMinutes: number | null,
+  ttrMinutes: number | null
+): { safety: PacingSafety; recommendedDelaySec?: number } {
+  if (tteMinutes === null) {
+    return { safety: 'sustainable' };
+  }
+
+  if (ttrMinutes !== null && ttrMinutes > 0) {
+    // Cap evaluation horizon at 12h so multi-day weekly resets do not trigger false alarms on >12h TTE.
+    const horizonMinutes = Math.min(ttrMinutes, 12 * 60);
+    if (tteMinutes < horizonMinutes) {
+      const ratio = ttrMinutes / Math.max(1, tteMinutes);
+      const recommendedDelaySec = Math.round(
+        Math.min(MAX_RECOMMENDED_DELAY_SEC, Math.max(MIN_RECOMMENDED_DELAY_SEC, (ratio - 1) * 30))
+      );
+      const safety: PacingSafety =
+        tteMinutes <= 30 || tteMinutes <= horizonMinutes * 0.65 ? 'critical' : 'elevated';
+      return { safety, recommendedDelaySec };
+    }
+    if (tteMinutes <= horizonMinutes * 1.15) {
+      return { safety: 'elevated' };
+    }
+    return { safety: 'sustainable' };
+  }
+
+  if (tteMinutes <= 30) return { safety: 'critical' };
+  if (tteMinutes <= 120) return { safety: 'elevated' };
+  return { safety: 'sustainable' };
+}
+
+/**
+ * Evaluates all active quota buckets for an account and returns the highest-urgency pacing
+ * advisory, or undefined when consumption velocity is idle (< 0.5%/h).
+ */
+export function computePacingAdvisory(
+  samples: ShortQuotaSample[],
+  quota: AccountQuotaSummary | undefined,
+  plan: string | undefined,
+  now: number,
+  trend?: QuotaTrend
+): PacingAdvisory | undefined {
+  if (!quota) return undefined;
+
+  const advisories: PacingAdvisory[] = [];
+  for (const reading of readBuckets(quota, plan)) {
+    if (reading.percent === undefined || Number.isNaN(reading.percent)) continue;
+    const bucketId = `${reading.group}.${reading.window}` as PacingBucketId;
+    const key = KEY_MAP[bucketId];
+    if (!key) continue;
+
+    const fallbackTrend =
+      reading.window === 'weekly'
+        ? reading.group === 'gemini'
+          ? trend?.gemini
+          : trend?.claudeGpt
+        : undefined;
+
+    const rate = computeBucketBurnRate(samples, key, reading.percent, now, fallbackTrend);
+    if (rate.burnRatePerHour < MIN_REPORTED_BURN_RATE) continue;
+
+    const ttrMinutes = parseResetMinutes(reading.resetTime, now);
+    const { safety, recommendedDelaySec } = classifyPacing(rate.tteMinutes, ttrMinutes);
+
+    advisories.push({
+      bucket: bucketId,
+      burnRatePerHour: rate.burnRatePerHour,
+      tteMinutes: rate.tteMinutes,
+      ttrMinutes,
+      safety,
+      ...(recommendedDelaySec !== undefined ? { recommendedDelaySec } : {}),
+    });
+  }
+
+  if (advisories.length === 0) return undefined;
+
+  advisories.sort((a, b) => {
+    const safetyDiff = SAFETY_RANK[b.safety] - SAFETY_RANK[a.safety];
+    if (safetyDiff !== 0) return safetyDiff;
+
+    const aTte = a.tteMinutes ?? Number.POSITIVE_INFINITY;
+    const bTte = b.tteMinutes ?? Number.POSITIVE_INFINITY;
+    if (aTte !== bTte) return aTte - bTte;
+
+    if (b.burnRatePerHour !== a.burnRatePerHour) return b.burnRatePerHour - a.burnRatePerHour;
+
+    const aFive = a.bucket.endsWith('.fiveHour') ? 1 : 0;
+    const bFive = b.bucket.endsWith('.fiveHour') ? 1 : 0;
+    return bFive - aFive;
+  });
+
+  return advisories[0];
 }
 

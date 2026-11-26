@@ -2,14 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AccountMeta, AccountQuotaSummary } from '../../src/shared/messages';
 import {
   appendShortSample,
+  classifyPacing,
   computeAccountBurnRates,
   computeBucketBurnRate,
+  computePacingAdvisory,
   pruneShortHistory,
   SHORT_HISTORY_MAX_AGE_MS,
   SHORT_MIN_SAMPLE_GAP_MS,
   shortSampleFromQuota,
   type ShortQuotaSample,
 } from '../../src/shared/quotaBurnRate';
+import { BurnRateAnalyzer } from '../../src/quota/BurnRateAnalyzer';
 import { SHORT_QUOTA_HISTORY_KEY, ShortQuotaHistoryStore } from '../../src/quota/QuotaHistoryStore';
 
 const NOW = Date.parse('2026-10-10T12:00:00Z');
@@ -127,6 +130,105 @@ describe('quotaBurnRate', () => {
     };
     const allRates = store.burnRatesFor([acc], {}, NOW);
     expect(allRates['acc-1']?.gemini?.burnRatePerHour).toBe(18);
+  });
+
+  it('classifies pacing sustainability and throttle recommendations accurately', () => {
+    expect(classifyPacing(120, 240)).toEqual({ safety: 'critical', recommendedDelaySec: 30 });
+    expect(classifyPacing(180, 220)).toEqual({ safety: 'elevated', recommendedDelaySec: 10 });
+    expect(classifyPacing(240, 120)).toEqual({ safety: 'sustainable' });
+    expect(classifyPacing(2600, 5760)).toEqual({ safety: 'sustainable' });
+    expect(classifyPacing(20, null)).toEqual({ safety: 'critical' });
+    expect(classifyPacing(90, null)).toEqual({ safety: 'elevated' });
+  });
+
+  it('computes PacingAdvisory favoring urgent 5h exhaustion over sustainable weekly', () => {
+    const quota = {
+      tierName: 'Google AI Pro Quota',
+      updatedAt: NOW,
+      source: 'live' as const,
+      gemini: {
+        name: 'Gemini',
+        weekly: { remainingPercent: 90, resetTime: new Date(NOW + 5 * 24 * HOUR).toISOString() },
+        fiveHour: { remainingPercent: 36, resetTime: new Date(NOW + 4 * HOUR).toISOString() },
+      },
+      claudeGpt: {
+        name: 'Claude + GPT',
+        weekly: { remainingPercent: 100, resetTime: new Date(NOW + 5 * 24 * HOUR).toISOString() },
+        fiveHour: { remainingPercent: 100, resetTime: new Date(NOW + 4 * HOUR).toISOString() },
+      },
+    };
+    const samples: ShortQuotaSample[] = [
+      { t: NOW - 60 * MIN, gw: 94, g5: 60 },
+      { t: NOW - 30 * MIN, gw: 92, g5: 48 },
+      { t: NOW, gw: 90, g5: 36 }, // -24%/h -> TTE = 90m < TTR = 240m => critical
+    ];
+
+    const advisory = computePacingAdvisory(samples, quota, 'Pro', NOW)!;
+    expect(advisory.bucket).toBe('gemini.fiveHour');
+    expect(advisory.burnRatePerHour).toBe(24);
+    expect(advisory.tteMinutes).toBe(90);
+    expect(advisory.ttrMinutes).toBe(240);
+    expect(advisory.safety).toBe('critical');
+    expect(advisory.recommendedDelaySec).toBe(50);
+
+    // Idle history produces no pacing advisory
+    expect(computePacingAdvisory([{ t: NOW, gw: 90, g5: 90 }], quota, 'Pro', NOW)).toBeUndefined();
+  });
+
+  it('tracks high-resolution samples in BurnRateAnalyzer in memory alongside persisted store', async () => {
+    const stored: Record<string, unknown> = {};
+    const memento = {
+      get: (k: string, d?: unknown) => (k in stored ? stored[k] : d),
+      update: vi.fn(async (k: string, v: unknown) => {
+        stored[k] = v;
+      }),
+    };
+    const analyzer = new BurnRateAnalyzer(memento as any);
+
+    await analyzer.record('acc-1', makeQuota({ gw: 95, g5: 60 }), NOW - 30 * MIN);
+    // Unchanged read at 1m gap enters in-memory ring buffer without triggering a Memento disk write
+    await analyzer.record('acc-1', makeQuota({ gw: 95, g5: 60 }), NOW - 29 * MIN);
+    // Drop detected immediately enters memory + store
+    await analyzer.record('acc-1', makeQuota({ gw: 94, g5: 51 }), NOW);
+
+    expect(memento.update).toHaveBeenCalledTimes(2);
+    expect(analyzer.getSamples('acc-1', NOW)).toHaveLength(3);
+
+    const acc: AccountMeta = {
+      id: 'acc-1',
+      email: 'a@example.com',
+      addedAt: 1,
+      quota: {
+        tierName: 'Google AI Pro Quota',
+        updatedAt: NOW,
+        source: 'live',
+        gemini: {
+          name: 'Gemini',
+          weekly: { remainingPercent: 94, resetTime: new Date(NOW + 4 * 24 * HOUR).toISOString() },
+          fiveHour: { remainingPercent: 51, resetTime: new Date(NOW + 4 * HOUR).toISOString() },
+        },
+        claudeGpt: { name: 'Claude + GPT' },
+      },
+    };
+
+    const result = analyzer.analyze([acc], 'acc-1', {}, NOW);
+    // Smoothed over full 30m window: 9% consumed in 30m => 18%/h
+    expect(result.burnRates['acc-1']?.gemini?.burnRatePerHour).toBe(18);
+    expect(result.pacing?.bucket).toBe('gemini.fiveHour');
+    expect(result.pacing?.safety).toBe('elevated');
+
+    await analyzer.prune([]);
+    expect(analyzer.getSamples('acc-1', NOW)).toEqual([]);
+  });
+
+  it('prevents a single 1-minute chunk drop from spiking into triple-digit hourly rates', () => {
+    const burst: ShortQuotaSample[] = [
+      { t: NOW - 1 * MIN, g5: 75 },
+      { t: NOW, g5: 70.7 }, // -4.3% inside 1 minute -> floored across 10m window => 25.8%/h (not 258%/h)
+    ];
+    const rate = computeBucketBurnRate(burst, 'g5', 70.7, NOW);
+    expect(rate.burnRatePerHour).toBe(25.8);
+    expect(rate.tteMinutes).toBe(Math.round((70.7 / 25.8) * 60));
   });
 });
 

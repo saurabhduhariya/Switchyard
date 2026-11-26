@@ -2,9 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   formatCountdown,
   formatCompactAge,
+  formatDelayShort,
   formatPercentage,
   formatPercentShort,
   formatResetShort,
+  formatTteShort,
+  formatPacingBucketLabel,
+  formatPacingBucketShort,
   compactTierBadge,
 } from '../../src/shared/formatQuota';
 
@@ -62,6 +66,22 @@ describe('formatQuota', () => {
       expect(compactTierBadge('Antigravity Starter Quota')).toBe('Starter');
       expect(compactTierBadge('Antigravity Quota')).toBeUndefined();
       expect(compactTierBadge(undefined)).toBeUndefined();
+    });
+
+    it('formats time-to-exhaustion and pacing bucket labels concisely', () => {
+      expect(formatTteShort(null)).toBeUndefined();
+      expect(formatTteShort(-5)).toBeUndefined();
+      expect(formatTteShort(35)).toBe('~35m left');
+      expect(formatTteShort(126)).toBe('~2.1h left');
+      expect(formatTteShort(120, false)).toBe('~2h');
+      expect(formatPacingBucketLabel('gemini.fiveHour')).toBe('Gemini 5h');
+      expect(formatPacingBucketLabel('claudeGpt.weekly')).toBe('Claude + GPT weekly');
+      expect(formatPacingBucketShort('gemini.fiveHour')).toBe('Gem 5h');
+      expect(formatPacingBucketShort('claudeGpt.weekly')).toBe('Cld Wk');
+      expect(formatDelayShort(undefined)).toBeUndefined();
+      expect(formatDelayShort(35)).toBe('~35s');
+      expect(formatDelayShort(75)).toBe('~1m');
+      expect(formatDelayShort(300)).toBe('~5m');
     });
   });
 

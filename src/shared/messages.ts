@@ -127,6 +127,23 @@ export interface CaptureSessionState {
 
 export type StatusBarMode = 'minimal' | 'quota' | 'compactGraph' | 'burnRate';
 
+export type PacingBucketId =
+  | 'gemini.fiveHour'
+  | 'claudeGpt.fiveHour'
+  | 'gemini.weekly'
+  | 'claudeGpt.weekly';
+
+export type PacingSafety = 'sustainable' | 'elevated' | 'critical';
+
+export interface PacingAdvisory {
+  bucket: PacingBucketId;
+  burnRatePerHour: number;
+  tteMinutes: number | null;
+  ttrMinutes: number | null;
+  safety: PacingSafety;
+  recommendedDelaySec?: number;
+}
+
 export type ToWebview =
   | {
       type: 'state';
@@ -143,6 +160,8 @@ export type ToWebview =
       suggestion?: SwitchSuggestion;
       /** Recent usage per account id, for the sparklines. */
       trends?: Record<string, QuotaTrend>;
+      /** Active burn-rate pacing advisory for the signed-in account. */
+      pacing?: PacingAdvisory;
       /** Set when the signed-in account's quota could not be read. */
       quotaError?: QuotaErrorState;
       unsupported?: {

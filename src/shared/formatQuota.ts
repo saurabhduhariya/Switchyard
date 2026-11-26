@@ -85,3 +85,48 @@ export function compactTierBadge(tierName?: string): string | undefined {
   return withoutBrand || short;
 }
 
+/** Formats time-to-exhaustion cleanly (e.g. "~2.1h left", "~35m left"). */
+export function formatTteShort(minutes: number | null | undefined, includeLeft = true): string | undefined {
+  if (minutes === null || minutes === undefined || Number.isNaN(minutes) || minutes < 0) {
+    return undefined;
+  }
+  const suffix = includeLeft ? ' left' : '';
+  if (minutes < 60) {
+    return `~${Math.round(minutes)}m${suffix}`;
+  }
+  const hours = Math.round((minutes / 60) * 10) / 10;
+  const hoursText = Number.isInteger(hours) ? String(hours) : hours.toFixed(1);
+  return `~${hoursText}h${suffix}`;
+}
+
+const PACING_LABELS: Record<string, string> = {
+  'gemini.fiveHour': 'Gemini 5h',
+  'claudeGpt.fiveHour': 'Claude + GPT 5h',
+  'gemini.weekly': 'Gemini weekly',
+  'claudeGpt.weekly': 'Claude + GPT weekly',
+};
+
+const PACING_SHORT_LABELS: Record<string, string> = {
+  'gemini.fiveHour': 'Gem 5h',
+  'claudeGpt.fiveHour': 'Cld 5h',
+  'gemini.weekly': 'Gem Wk',
+  'claudeGpt.weekly': 'Cld Wk',
+};
+
+export function formatPacingBucketLabel(bucket: string): string {
+  return PACING_LABELS[bucket] ?? bucket;
+}
+
+export function formatPacingBucketShort(bucket: string): string {
+  return PACING_SHORT_LABELS[bucket] ?? bucket;
+}
+
+/** Formats a cooldown/throttle delay in seconds cleanly as "~35s" or "~2m". */
+export function formatDelayShort(seconds: number | undefined): string | undefined {
+  if (seconds === undefined || Number.isNaN(seconds) || seconds <= 0) return undefined;
+  if (seconds < 60) return `~${Math.round(seconds)}s`;
+  const mins = Math.max(1, Math.round(seconds / 60));
+  return `~${mins}m`;
+}
+
+
