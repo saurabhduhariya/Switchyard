@@ -16,6 +16,8 @@ import { findStateDb, getBackupsDir, getGlobalStorageDir } from './platform/path
 import { resolveWslContextFromVscode } from './platform/wsl';
 import { PanelProvider } from './ui/PanelProvider';
 import { StatusBar } from './ui/StatusBar';
+import { formatAccountQuotaBrief } from './shared/statusBarModel';
+import type { StatusBarMode } from './shared/messages';
 import { Logger } from './util/logger';
 import { createSwitchEngine } from './switch/SwitchEngine';
 import { reconcilePendingSwitch } from './switch/reconcile';
@@ -206,12 +208,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
-      if (
-        e.affectsConfiguration('switchyard.maskEmails') ||
-        e.affectsConfiguration('switchyard.mode') ||
-        e.affectsConfiguration('switchyard.confirmBeforeSwitch') ||
-        e.affectsConfiguration('switchyard.backupRetention')
-      ) {
+      if (e.affectsConfiguration('switchyard.mode')) {
         const currentMode = vscode.workspace
           .getConfiguration('switchyard')
           .get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
@@ -226,6 +223,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             detector,
           })
         );
+      }
+
+      if (
+        e.affectsConfiguration('switchyard.maskEmails') ||
+        e.affectsConfiguration('switchyard.mode') ||
+        e.affectsConfiguration('switchyard.confirmBeforeSwitch') ||
+        e.affectsConfiguration('switchyard.backupRetention') ||
+        e.affectsConfiguration('switchyard.statusBarMode') ||
+        e.affectsConfiguration('switchyard.addAccountMethod') ||
+        e.affectsConfiguration('switchyard.suggestBestAccount')
+      ) {
         void panelProvider.push();
       }
     })
@@ -306,20 +314,41 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
       }
 
-      // Setting key kept as `maskEmails` so existing choices carry over; it now hides emails.
-      const hideEmails = vscode.workspace.getConfiguration('switchyard').get<boolean>('maskEmails', false);
+      const config = vscode.workspace.getConfiguration('switchyard');
+      const hideEmails = config.get<boolean>('maskEmails', false);
+      const pinnedIds = new Set(context.globalState.get<string[]>('switchyard.pinned', []));
 
-      const items = accounts.map((acc) => {
+      const ordered = [...accounts].sort((a, b) => {
+        if (a.id === activeId) return -1;
+        if (b.id === activeId) return 1;
+        const aPinned = pinnedIds.has(a.id);
+        const bPinned = pinnedIds.has(b.id);
+        if (aPinned && !bPinned) return -1;
+        if (!aPinned && bPinned) return 1;
+        return 0;
+      });
+
+      const items = ordered.map((acc) => {
         const title = hideEmails ? accountDisplayName(acc, true) : acc.email;
         const isActive = acc.id === activeId;
+        const isPinned = pinnedIds.has(acc.id);
+        const quotaBrief = formatAccountQuotaBrief(acc, isActive);
+        const detailParts: string[] = [];
+        if (isActive) {
+          detailParts.push('Currently active');
+        } else if (isPinned) {
+          detailParts.push('$(pin) Pinned');
+        }
+        if (quotaBrief) detailParts.push(quotaBrief);
+
         return {
-          label: isActive ? `$(check) ${title}` : title,
+          label: isActive ? `$(check) ${title}` : isPinned ? `$(pin) ${title}` : title,
           description: hideEmails
             ? acc.plan
               ? `(${acc.plan})`
               : ''
             : acc.label || (acc.plan ? `(${acc.plan})` : ''),
-          detail: isActive ? 'Currently active' : undefined,
+          detail: detailParts.length > 0 ? detailParts.join(' · ') : undefined,
           id: acc.id,
         };
       });
@@ -446,6 +475,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('switchyard.openSettings', async () => {
       await vscode.commands.executeCommand('agSwitchyard.panel.focus');
       await panelProvider.showSettings();
+    }),
+
+    vscode.commands.registerCommand('switchyard.cycleNextAccount', async () => {
+      await panelProvider.handleCycleNextAccount();
+    }),
+
+    vscode.commands.registerCommand('switchyard.cycleStatusBarMode', async () => {
+      const modes: StatusBarMode[] = ['quota', 'compactGraph', 'burnRate', 'minimal'];
+      const config = vscode.workspace.getConfiguration('switchyard');
+      const current = config.get<StatusBarMode>('statusBarMode', 'quota');
+      const next = modes[(modes.indexOf(current) + 1) % modes.length] ?? 'quota';
+      await config.update('statusBarMode', next, vscode.ConfigurationTarget.Global);
+      await panelProvider.push();
+      vscode.window.setStatusBarMessage(`Switchyard status bar: ${next}`, 2500);
     })
   );
 

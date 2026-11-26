@@ -92,6 +92,26 @@
       {
         "command": "switchyard.openSettings",
         "title": "Switchyard: Settings"
+      },
+      {
+        "command": "switchyard.cycleNextAccount",
+        "title": "Switchyard: Cycle to Next Best Account"
+      },
+      {
+        "command": "switchyard.cycleStatusBarMode",
+        "title": "Switchyard: Cycle Status Bar Mode"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "switchyard.cycleNextAccount",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
+      },
+      {
+        "command": "switchyard.switchAccount",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
       }
     ],
     "walkthroughs": [
@@ -161,6 +181,23 @@
           "type": "boolean",
           "default": false,
           "description": "Hide email addresses in the accounts panel, status bar and account picker. Accounts are shown by their label instead."
+        },
+        "switchyard.statusBarMode": {
+          "type": "string",
+          "default": "quota",
+          "enum": [
+            "minimal",
+            "quota",
+            "compactGraph",
+            "burnRate"
+          ],
+          "enumDescriptions": [
+            "Show only the active account name and a compact tier badge in the status bar.",
+            "Show active Gemini and Claude+GPT remaining quota percentages.",
+            "Show a compact Unicode block meter of active quota buckets.",
+            "Show active remaining quota along with real-time hourly burn rate."
+          ],
+          "description": "Controls what quota telemetry is displayed in the Switchyard status bar quota item."
         },
         "switchyard.executablePath": {
           "type": "string",

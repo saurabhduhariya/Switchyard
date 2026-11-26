@@ -9,6 +9,7 @@ import type {
   CaptureSessionState,
   QuotaErrorState,
   QuotaTrend,
+  StatusBarMode,
   SwitchSuggestion,
   ToWebview,
 } from '../../../src/shared/messages';
@@ -20,6 +21,7 @@ let busy = $state(false);
 let busyMessage = $state('');
 let error = $state('');
 let maskEmails = $state(false);
+let statusBarMode = $state<StatusBarMode>('quota');
 let mode = $state<'profile' | 'tokenSwap'>('profile');
 let addAccountMethod = $state<'sideWindow' | 'signOutRestart'>('sideWindow');
 let confirmBeforeSwitch = $state(true);
@@ -139,6 +141,10 @@ export function getMaskEmails(): boolean {
   return maskEmails;
 }
 
+export function getStatusBarMode(): StatusBarMode {
+  return statusBarMode;
+}
+
 export function getToast(): string {
   return toast;
 }
@@ -200,6 +206,7 @@ export function handleMessage(data: ToWebview): void {
       accounts = data.accounts;
       activeId = data.activeId;
       maskEmails = data.maskEmails ?? false;
+      statusBarMode = data.statusBarMode ?? 'quota';
       mode = data.mode ?? 'profile';
       addAccountMethod = data.addAccountMethod ?? 'sideWindow';
       confirmBeforeSwitch = data.confirmBeforeSwitch ?? true;

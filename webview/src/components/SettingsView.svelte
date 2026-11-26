@@ -1,10 +1,12 @@
 <script lang="ts">
   import Icon from './Icon.svelte';
   import SupportDialog from './SupportDialog.svelte';
+  import type { StatusBarMode } from '../../../src/shared/messages';
   import {
     getMode,
     getAddAccountMethod,
     getMaskEmails,
+    getStatusBarMode,
     getConfirmBeforeSwitch,
     getBackupRetention,
   } from '../stores/app.svelte';
@@ -19,6 +21,7 @@
   let mode = $derived(getMode());
   let addAccountMethod = $derived(getAddAccountMethod());
   let maskEmails = $derived(getMaskEmails());
+  let statusBarMode = $derived(getStatusBarMode());
   let confirmBeforeSwitch = $derived(getConfirmBeforeSwitch());
   let backupRetention = $derived(getBackupRetention());
 
@@ -35,8 +38,16 @@
     { value: 'signOutRestart', label: 'Sign out', hint: 'Signs out and restarts this window.' },
   ] as const;
 
+  const statusBarOptions = [
+    { value: 'quota', label: 'Quota %', hint: 'Shows Gemini & Claude+GPT remaining quota.' },
+    { value: 'compactGraph', label: 'Mini graph', hint: 'Shows Unicode block bars [████░░] 68%.' },
+    { value: 'burnRate', label: 'Burn rate', hint: 'Shows remaining % and hourly usage pace.' },
+    { value: 'minimal', label: 'Minimal', hint: 'Shows only account name and compact tier badge.' },
+  ] as const;
+
   let modeHint = $derived(modeOptions.find((o) => o.value === mode)?.hint ?? '');
   let addHint = $derived(addOptions.find((o) => o.value === addAccountMethod)?.hint ?? '');
+  let statusBarHint = $derived(statusBarOptions.find((o) => o.value === statusBarMode)?.hint ?? '');
 
   function setMode(newMode: 'tokenSwap' | 'profile') {
     if (newMode === mode) return;
@@ -46,6 +57,11 @@
   function setAddAccountMethod(newMethod: 'sideWindow' | 'signOutRestart') {
     if (newMethod === addAccountMethod) return;
     postToHost({ type: 'updateSetting', key: 'addAccountMethod', value: newMethod });
+  }
+
+  function setStatusBarMode(newMode: StatusBarMode) {
+    if (newMode === statusBarMode) return;
+    postToHost({ type: 'updateSetting', key: 'statusBarMode', value: newMode });
   }
 
   function toggleMaskEmails() {
@@ -171,6 +187,34 @@
           >
             <span class="knob"></span>
           </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="group" aria-labelledby="g-statusbar">
+      <h2 id="g-statusbar" class="group-title">Status bar</h2>
+      <div class="rows">
+        <div class="row stacked">
+          <span class="label" id="lbl-statusbar">Quota display</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="lbl-statusbar">
+            {#each statusBarOptions as opt (opt.value)}
+              <button
+                type="button"
+                role="radio"
+                class="segment"
+                aria-checked={statusBarMode === opt.value}
+                tabindex={statusBarMode === opt.value ? 0 : -1}
+                onclick={() => setStatusBarMode(opt.value)}
+                onkeydown={(e) => segmentKeydown(e, statusBarOptions, statusBarMode, setStatusBarMode)}
+              >
+                <span class="segment-inner">
+                  {#if statusBarMode === opt.value}<Icon name="check" size={11} class="segment-check" />{/if}
+                  <span class="segment-text">{opt.label}</span>
+                </span>
+              </button>
+            {/each}
+          </div>
+          <span class="hint">{statusBarHint}</span>
         </div>
       </div>
     </section>

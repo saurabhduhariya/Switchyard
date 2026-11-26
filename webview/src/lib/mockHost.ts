@@ -5,7 +5,7 @@
  * Only loads in standalone browser dev mode (when acquireVsCodeApi is absent).
  */
 
-import type { AccountMeta, AccountQuotaSummary, ToWebview } from '../../../src/shared/messages';
+import type { AccountMeta, AccountQuotaSummary, StatusBarMode, ToWebview } from '../../../src/shared/messages';
 import { buildTrend, type QuotaSample } from '../../../src/shared/quotaHistory';
 import { suggestBestAccount } from '../../../src/shared/quotaSuggest';
 
@@ -122,6 +122,7 @@ function post(data: ToWebview) {
 
 let currentScenario: ScenarioKey = '3';
 let currentActiveId = SCENARIOS[currentScenario].activeId;
+let currentStatusBarMode: StatusBarMode = 'quota';
 
 function sendState() {
   const s = SCENARIOS[currentScenario];
@@ -146,6 +147,7 @@ function sendState() {
     type: 'state',
     accounts: s.accounts,
     activeId: currentActiveId,
+    statusBarMode: currentStatusBarMode,
     suggestion,
     trends: Object.keys(trends).length > 0 ? trends : undefined,
     quotaError,
@@ -194,6 +196,13 @@ export function initMockHost(): void {
 
       case 'revealProfile':
         console.log('[MockHost] Reveal profile for:', msg.id);
+        break;
+
+      case 'updateSetting':
+        if (msg.key === 'statusBarMode') {
+          currentStatusBarMode = msg.value as StatusBarMode;
+          sendState();
+        }
         break;
     }
   }) as EventListener);

@@ -5,6 +5,7 @@ import { AuthDetector } from '../accounts/AuthDetector';
 import { createAccountId, Snapshot } from '../accounts/types';
 import { CaptureManager } from '../capture/CaptureManager';
 import { CAPTURE_DETECTED_TTL_MS } from '../constants';
+import { selectNextCarouselAccount } from '../shared/accountCarousel';
 import { suggestBestAccount } from '../shared/quotaSuggest';
 
 export const DISMISSED_SUGGESTIONS_KEY = 'switchyard.dismissedSuggestions';
@@ -17,6 +18,7 @@ import type {
   AccountQuotaSummary,
   AddAccountGuideState,
   QuotaErrorState,
+  StatusBarMode,
   SwitchSuggestion,
   ToHost,
   ToWebview,
@@ -25,7 +27,7 @@ import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
 import { describeQuotaError, QuotaCollector } from '../quota/QuotaCollector';
-import { QuotaHistoryStore } from '../quota/QuotaHistoryStore';
+import { QuotaHistoryStore, ShortQuotaHistoryStore } from '../quota/QuotaHistoryStore';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'agSwitchyard.panel';
@@ -40,6 +42,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private dismissedSignOutBanner = false;
   private readonly quotaCollector: QuotaCollector;
   private readonly history: QuotaHistoryStore;
+  private readonly shortHistory: ShortQuotaHistoryStore;
   /** Set once reading the signed-in account's quota keeps failing (or the user asked for a retry). */
   private quotaError?: QuotaErrorState;
   private quotaFailures = 0;
@@ -57,6 +60,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.quotaCollector = new QuotaCollector(this.logger);
     this.history = new QuotaHistoryStore(this.ctx.globalState);
+    this.shortHistory = new ShortQuotaHistoryStore(this.ctx.globalState);
   }
 
   public setSwitchEngine(switchEngine: SwitchEngine): void {
@@ -215,6 +219,10 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     void this.push();
   }
 
+  private getPinnedIds(): string[] {
+    return this.ctx.globalState?.get<string[]>('switchyard.pinned', []) ?? [];
+  }
+
   /**
    * Pushes the current state of accounts, active ID, and masking preference to the webview.
    */
@@ -223,12 +231,13 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const activeId = await this.store.activeId();
     const config = vscode.workspace.getConfiguration('switchyard');
     const maskEmails = config.get<boolean>('maskEmails', false);
+    const statusBarMode = config.get<StatusBarMode>('statusBarMode', 'quota');
     const mode = config.get<'profile' | 'tokenSwap'>('mode', 'tokenSwap');
     const addAccountMethod = config.get<'sideWindow' | 'signOutRestart'>('addAccountMethod', 'sideWindow');
     const confirmBeforeSwitch = config.get<boolean>('confirmBeforeSwitch', true);
     const backupRetention = config.get<number>('backupRetention', 5);
 
-    const pinnedIds = this.ctx.globalState?.get<string[]>('switchyard.pinned', []) ?? [];
+    const pinnedIds = this.getPinnedIds();
     const accounts = rawAccounts.map((acc) => ({
       ...acc,
       pinned: pinnedIds.includes(acc.id),
@@ -238,7 +247,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
     const accountIds = rawAccounts.map((a) => a.id);
     await this.history.prune(accountIds);
+    await this.shortHistory.prune(accountIds);
     const trends = this.history.trends(accountIds);
+    const burnRates = this.shortHistory.burnRatesFor(accounts, trends);
 
     const quotaError =
       this.quotaError && this.quotaError.accountId === activeId ? this.quotaError : undefined;
@@ -277,6 +288,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       accounts,
       activeId,
       maskEmails,
+      statusBarMode,
       mode,
       addAccountMethod,
       confirmBeforeSwitch,
@@ -304,7 +316,12 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     };
 
     await this.view?.webview.postMessage(msg);
-    this.statusBar.update(accounts, activeId, maskEmails);
+    this.statusBar.update(accounts, activeId, maskEmails, {
+      mode: statusBarMode,
+      trends,
+      burnRates,
+      quotaError,
+    });
     void vscode.commands.executeCommand('setContext', 'switchyard.hasAccounts', accounts.length > 0);
   }
 
@@ -565,6 +582,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const saved = await this.store.get(accountId);
     if (saved?.quota?.updatedAt === quota.updatedAt) {
       await this.history.record(accountId, quota);
+      await this.shortHistory.record(accountId, quota);
     }
   }
 
@@ -790,6 +808,32 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     } else {
       await this.push();
     }
+  }
+
+  /**
+   * Cycles immediately to the highest-quota pinned/healthy saved account.
+   */
+  public async handleCycleNextAccount(): Promise<void> {
+    const rawAccounts = await this.store.list();
+    if (rawAccounts.length === 0) {
+      void vscode.window.showInformationMessage('Switchyard: No saved accounts yet. Sign in and click "Add Account".');
+      return;
+    }
+
+    const activeId = await this.store.activeId();
+    const pinnedIds = this.getPinnedIds();
+    const accounts = rawAccounts.map((acc) => ({
+      ...acc,
+      pinned: pinnedIds.includes(acc.id),
+    }));
+
+    const next = selectNextCarouselAccount(accounts, activeId);
+    if (!next) {
+      void vscode.window.showInformationMessage('Switchyard: Add another account to cycle between accounts.');
+      return;
+    }
+
+    await this.handleSwitch(next.id);
   }
 
   public async handleRevealProfile(id: string): Promise<void> {

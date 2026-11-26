@@ -16,7 +16,22 @@ vi.mock('vscode', () => {
         dispose: vi.fn(),
         text: '',
         tooltip: '',
+        name: '',
+        command: '',
+        backgroundColor: undefined,
       })),
+    },
+    MarkdownString: class MarkdownString {
+      public value: string;
+      public supportThemeIcons: boolean;
+      public isTrusted?: boolean | { enabledCommands: string[] };
+      constructor(value = '', supportThemeIcons = false) {
+        this.value = value;
+        this.supportThemeIcons = supportThemeIcons;
+      }
+    },
+    ThemeColor: class ThemeColor {
+      constructor(public readonly id: string) {}
     },
     workspace: {
       getConfiguration: vi.fn(() => ({
@@ -470,6 +485,62 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       await panelProvider.handleAddNewAccount();
       expect(capture.startCapture).not.toHaveBeenCalled();
       expect(engine.signOutAndRestart).toHaveBeenCalledOnce();
+    });
+
+    it('pushes statusBarMode in state and cycles to the best saved account on handleCycleNextAccount', async () => {
+      vi.mocked(vscode.workspace.getConfiguration).mockImplementation(
+        () =>
+          ({
+            get: vi.fn((_key: string, defaultVal: any) => defaultVal),
+            update: vi.fn(),
+          }) as any
+      );
+      const a1 = await store.upsertFromSnapshot(
+        {
+          values: {
+            'antigravityUnifiedStateSync.oauthToken': 'dG9rLTE=',
+            'agy.userStatusJson': JSON.stringify({ email: 'one@example.com' }),
+          },
+          capturedAt: 1,
+        },
+        'One'
+      );
+      const a2 = await store.upsertFromSnapshot(
+        {
+          values: {
+            'antigravityUnifiedStateSync.oauthToken': 'dG9rLTI=',
+            'agy.userStatusJson': JSON.stringify({ email: 'two@example.com' }),
+          },
+          capturedAt: 1,
+        },
+        'Two'
+      );
+      await store.updateQuota(a1.id, {
+        tierName: 'Google AI Pro Quota',
+        updatedAt: Date.now(),
+        source: 'live',
+        gemini: { name: 'Gemini', weekly: { remainingPercent: 5 } },
+        claudeGpt: { name: 'Claude + GPT', weekly: { remainingPercent: 5 } },
+      });
+      await store.updateQuota(a2.id, {
+        tierName: 'Google AI Pro Quota',
+        updatedAt: Date.now(),
+        source: 'cache',
+        gemini: { name: 'Gemini', weekly: { remainingPercent: 95 } },
+        claudeGpt: { name: 'Claude + GPT', weekly: { remainingPercent: 90 } },
+      });
+      await store.setActive(a1.id);
+
+      const switchSpy = vi.fn(async () => ({ ok: true, mode: 'tokenSwap' as const }));
+      panelProvider.setSwitchEngine({ mode: 'tokenSwap', switchTo: switchSpy } as any);
+
+      postedMessages.length = 0;
+      await panelProvider.push();
+      const stateMsg = postedMessages.find((m) => m.type === 'state');
+      expect(stateMsg && stateMsg.type === 'state' && stateMsg.statusBarMode).toBe('quota');
+
+      await panelProvider.handleCycleNextAccount();
+      expect(switchSpy).toHaveBeenCalledWith(a2.id);
     });
   });
 
