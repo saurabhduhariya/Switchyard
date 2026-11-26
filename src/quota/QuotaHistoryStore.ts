@@ -1,5 +1,13 @@
 import type * as vscode from 'vscode';
-import type { AccountQuotaSummary, QuotaTrend } from '../shared/messages';
+import type { AccountMeta, AccountQuotaSummary, QuotaTrend } from '../shared/messages';
+import {
+  appendShortSample,
+  computeAccountBurnRates,
+  pruneShortHistory,
+  shortSampleFromQuota,
+  type AccountBurnRates,
+  type ShortQuotaSample,
+} from '../shared/quotaBurnRate';
 import {
   appendSample,
   buildTrend,
@@ -9,41 +17,71 @@ import {
 } from '../shared/quotaHistory';
 
 export const QUOTA_HISTORY_KEY = 'switchyard.quotaHistory';
+export const SHORT_QUOTA_HISTORY_KEY = 'switchyard.shortQuotaHistory';
 
-type HistoryMap = Record<string, QuotaSample[]>;
+class MementoSampleStore<S> {
+  constructor(
+    private readonly memento: vscode.Memento | undefined,
+    private readonly storageKey: string,
+    private readonly toSample: (quota: AccountQuotaSummary | undefined, now: number) => S | undefined,
+    private readonly appendFn: (history: S[], sample: S) => { history: S[]; changed: boolean }
+  ) {}
 
-/**
- * Keeps each account's recent weekly quota readings in the extension's own storage (local only).
- * Writes are rare: a reading is only stored when it changed or enough time passed.
- */
-export class QuotaHistoryStore {
-  constructor(private readonly memento: vscode.Memento | undefined) {}
-
-  private load(): HistoryMap {
-    return this.memento?.get<HistoryMap>(QUOTA_HISTORY_KEY, {}) ?? {};
+  load(): Record<string, S[]> {
+    return this.memento?.get<Record<string, S[]>>(this.storageKey, {}) ?? {};
   }
 
-  /** Records a reading for an account. Returns true when something was stored. */
-  async record(accountId: string, quota: AccountQuotaSummary | undefined, now: number = Date.now()): Promise<boolean> {
+  async record(accountId: string, quota: AccountQuotaSummary | undefined, now: number): Promise<boolean> {
     if (!this.memento) return false;
-    const sample = sampleFromQuota(quota, now);
+    const sample = this.toSample(quota, now);
     if (!sample) return false;
 
     const all = this.load();
-    const result = appendSample(all[accountId] ?? [], sample);
+    const result = this.appendFn(all[accountId] ?? [], sample);
     if (!result.changed) return false;
 
-    await this.memento.update(QUOTA_HISTORY_KEY, { ...all, [accountId]: result.history });
+    await this.memento.update(this.storageKey, { ...all, [accountId]: result.history });
     return true;
   }
 
-  get(accountId: string): QuotaSample[] {
+  get(accountId: string): S[] {
     return this.load()[accountId] ?? [];
   }
 
-  /** Trend data for each of the given accounts (accounts with nothing to show are left out). */
-  trends(accountIds: string[], now: number = Date.now()): Record<string, QuotaTrend> {
+  async prune(keepIds: string[]): Promise<void> {
+    if (!this.memento) return;
     const all = this.load();
+    const keep = new Set(keepIds);
+    const stale = Object.keys(all).filter((id) => !keep.has(id));
+    if (stale.length === 0) return;
+    const next: Record<string, S[]> = {};
+    for (const [id, history] of Object.entries(all)) {
+      if (keep.has(id)) next[id] = history;
+    }
+    await this.memento.update(this.storageKey, next);
+  }
+}
+
+/**
+ * Keeps each account's recent weekly quota readings in the extension's own storage (local only).
+ */
+export class QuotaHistoryStore {
+  private readonly inner: MementoSampleStore<QuotaSample>;
+
+  constructor(memento: vscode.Memento | undefined) {
+    this.inner = new MementoSampleStore(memento, QUOTA_HISTORY_KEY, sampleFromQuota, appendSample);
+  }
+
+  async record(accountId: string, quota: AccountQuotaSummary | undefined, now: number = Date.now()): Promise<boolean> {
+    return this.inner.record(accountId, quota, now);
+  }
+
+  get(accountId: string): QuotaSample[] {
+    return this.inner.get(accountId);
+  }
+
+  trends(accountIds: string[], now: number = Date.now()): Record<string, QuotaTrend> {
+    const all = this.inner.load();
     const out: Record<string, QuotaTrend> = {};
     for (const id of accountIds) {
       const trend = buildTrend(all[id] ? pruneHistory(all[id], now) : undefined, now);
@@ -52,17 +90,46 @@ export class QuotaHistoryStore {
     return out;
   }
 
-  /** Forgets accounts that no longer exist. */
   async prune(keepIds: string[]): Promise<void> {
-    if (!this.memento) return;
-    const all = this.load();
-    const keep = new Set(keepIds);
-    const stale = Object.keys(all).filter((id) => !keep.has(id));
-    if (stale.length === 0) return;
-    const next: HistoryMap = {};
-    for (const [id, history] of Object.entries(all)) {
-      if (keep.has(id)) next[id] = history;
+    return this.inner.prune(keepIds);
+  }
+}
+
+/**
+ * Keeps short-horizon multi-bucket readings (5h + weekly) for status-bar burn-rate tracking.
+ */
+export class ShortQuotaHistoryStore {
+  private readonly inner: MementoSampleStore<ShortQuotaSample>;
+
+  constructor(memento: vscode.Memento | undefined) {
+    this.inner = new MementoSampleStore(memento, SHORT_QUOTA_HISTORY_KEY, shortSampleFromQuota, appendShortSample);
+  }
+
+  async record(accountId: string, quota: AccountQuotaSummary | undefined, now: number = Date.now()): Promise<boolean> {
+    return this.inner.record(accountId, quota, now);
+  }
+
+  get(accountId: string): ShortQuotaSample[] {
+    return this.inner.get(accountId);
+  }
+
+  burnRatesFor(
+    accounts: AccountMeta[],
+    trends: Record<string, QuotaTrend> = {},
+    now: number = Date.now()
+  ): Record<string, AccountBurnRates> {
+    const all = this.inner.load();
+    const out: Record<string, AccountBurnRates> = {};
+    for (const acc of accounts) {
+      if (!acc.quota) continue;
+      const raw = all[acc.id];
+      const samples = raw ? pruneShortHistory(raw, now) : [];
+      out[acc.id] = computeAccountBurnRates(samples, acc.quota, acc.plan, now, trends[acc.id]);
     }
-    await this.memento.update(QUOTA_HISTORY_KEY, next);
+    return out;
+  }
+
+  async prune(keepIds: string[]): Promise<void> {
+    return this.inner.prune(keepIds);
   }
 }

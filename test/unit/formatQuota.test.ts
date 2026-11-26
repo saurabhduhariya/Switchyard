@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { formatCountdown, formatCompactAge, formatPercentage } from '../../webview/src/lib/formatQuota';
+import {
+  formatCountdown,
+  formatCompactAge,
+  formatPercentage,
+  formatPercentShort,
+  formatResetShort,
+  compactTierBadge,
+} from '../../src/shared/formatQuota';
 
 describe('formatQuota', () => {
   describe('formatCountdown', () => {
@@ -27,6 +34,34 @@ describe('formatQuota', () => {
     it('formats minutes only when under 1 hour', () => {
       const future = new Date(Date.now() + (25 * 60 + 10) * 1000).toISOString();
       expect(formatCountdown(future)).toBe('Resets in 25m');
+    });
+  });
+
+  describe('formatResetShort & compactTierBadge & formatPercentShort', () => {
+    it('formats compact countdown strings without prefix', () => {
+      const now = Date.parse('2026-10-10T12:00:00Z');
+      expect(formatResetShort(undefined, now)).toBe('—');
+      expect(formatResetShort(new Date(now - 10_000).toISOString(), now)).toBe('Reset');
+      expect(formatResetShort(new Date(now + 30_000).toISOString(), now)).toBe('< 1m');
+      expect(formatResetShort(new Date(now + 2 * 86_400_000 + 3 * 3_600_000).toISOString(), now)).toBe('2d 3h');
+      expect(formatResetShort(new Date(now + 4 * 3_600_000 + 15 * 60_000).toISOString(), now)).toBe('4h 15m');
+    });
+
+    it('formats short percentages guarding >0 and <100 boundaries', () => {
+      expect(formatPercentShort(undefined)).toBe('-');
+      expect(formatPercentShort(0)).toBe('0%');
+      expect(formatPercentShort(0.4)).toBe('<1%');
+      expect(formatPercentShort(99.6)).toBe('99%');
+      expect(formatPercentShort(100)).toBe('100%');
+      expect(formatPercentShort(67.6)).toBe('68%');
+    });
+
+    it('creates concise tier badges for minimal status bar', () => {
+      expect(compactTierBadge('Google AI Pro Quota')).toBe('Pro');
+      expect(compactTierBadge('Google AI Ultra Quota')).toBe('Ultra');
+      expect(compactTierBadge('Antigravity Starter Quota')).toBe('Starter');
+      expect(compactTierBadge('Antigravity Quota')).toBeUndefined();
+      expect(compactTierBadge(undefined)).toBeUndefined();
     });
   });
 

@@ -2,6 +2,7 @@
  * Helpers about an account's Antigravity tier and how to present its quota.
  */
 
+import { shortTierName } from '../../../src/shared/formatQuota';
 import { LOW_QUOTA_PERCENT } from '../../../src/shared/quotaRules';
 
 export {
@@ -15,19 +16,7 @@ export {
   windowsForTier,
 } from '../../../src/shared/quotaRules';
 
-/**
- * Short label for the tier pill so it never gets cut off:
- * "Antigravity Starter Quota" -> "Starter", "Google AI Pro Quota" -> "Google AI Pro".
- * The full name stays available as a tooltip.
- */
-export function shortTierName(tierName?: string): string {
-  if (!tierName) return 'Quota';
-  const short = tierName
-    .replace(/^Antigravity\s+/i, '')
-    .replace(/\s+Quota$/i, '')
-    .trim();
-  return short || tierName;
-}
+export { shortTierName };
 
 export type QuotaTone = 'good' | 'warn' | 'low' | 'unknown';
 
