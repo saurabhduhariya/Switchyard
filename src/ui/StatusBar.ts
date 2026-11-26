@@ -1,49 +1,93 @@
 import * as vscode from 'vscode';
 import type { AccountMeta } from '../shared/messages';
-import { accountDisplayName } from '../shared/accountName';
+import {
+  buildStatusBarPresentation,
+  TRUSTED_STATUS_BAR_COMMANDS,
+  type StatusBarBuildOptions,
+  type StatusBarSeverity,
+} from '../shared/statusBarModel';
+
+function createItem(
+  id: string,
+  priority: number,
+  name: string,
+  command: string
+): vscode.StatusBarItem {
+  const item = vscode.window.createStatusBarItem(id, vscode.StatusBarAlignment.Left, priority);
+  item.name = name;
+  item.command = command;
+  return item;
+}
+
+function severityBackground(severity: StatusBarSeverity): vscode.ThemeColor | undefined {
+  if (severity === 'none' || typeof vscode.ThemeColor !== 'function') return undefined;
+  return new vscode.ThemeColor(
+    severity === 'error' ? 'statusBarItem.errorBackground' : 'statusBarItem.warningBackground'
+  );
+}
+
+function makeTooltip(markdown: string): string | vscode.MarkdownString {
+  if (!markdown || typeof vscode.MarkdownString !== 'function') return markdown;
+  const md = new vscode.MarkdownString(markdown, true);
+  md.isTrusted = { enabledCommands: [...TRUSTED_STATUS_BAR_COMMANDS] };
+  return md;
+}
 
 /**
- * Status bar item showing the current active account email.
+ * Dual status bar controller showing active account and configurable quota telemetry.
  */
 export class StatusBar implements vscode.Disposable {
-  private item: vscode.StatusBarItem;
+  private readonly accountItem: vscode.StatusBarItem;
+  private readonly quotaItem: vscode.StatusBarItem;
 
   constructor() {
-    this.item = vscode.window.createStatusBarItem(
-      vscode.StatusBarAlignment.Left,
-      50
+    this.accountItem = createItem(
+      'switchyard.statusBar.account',
+      50,
+      'Switchyard Account',
+      'switchyard.switchAccount'
     );
-    this.item.command = 'switchyard.switchAccount';
-    this.item.tooltip = 'Click to switch account';
-    this.item.name = 'Switchyard Account';
+    this.quotaItem = createItem(
+      'switchyard.statusBar.quota',
+      49,
+      'Switchyard Quota',
+      'agSwitchyard.panel.focus'
+    );
   }
 
-  /** Update the status bar with the currently active account. */
-  /** `hideEmails` shows the account's label (never its email) instead. */
-  public update(accounts: AccountMeta[], activeId?: string, hideEmails = false): void {
-    const active = accounts.find((a) => a.id === activeId);
-    if (active) {
-      if (hideEmails) {
-        const name = accountDisplayName(active, true);
-        this.item.text = `$(account) ${name}`;
-        this.item.tooltip = `Active Account: ${name} • Click to switch`;
-      } else {
-        this.item.text = `$(account) ${active.email}`;
-        this.item.tooltip = active.label
-          ? `Active Account: ${active.email} (${active.label}) • Click to switch`
-          : `Active Account: ${active.email} • Click to switch`;
-      }
-      this.item.show();
-    } else if (accounts.length === 0) {
-      this.item.hide();
+  public update(
+    accounts: AccountMeta[],
+    activeId?: string,
+    hideEmails = false,
+    options: StatusBarBuildOptions = {}
+  ): void {
+    const view = buildStatusBarPresentation(accounts, activeId, hideEmails, options);
+    const tooltip = makeTooltip(view.tooltipMarkdown);
+
+    if (view.accountItem.visible) {
+      this.accountItem.text = view.accountItem.text;
+      this.accountItem.tooltip = tooltip;
+      this.accountItem.backgroundColor = severityBackground(view.accountItem.severity);
+      this.accountItem.show();
     } else {
-      this.item.text = '$(account) No active account';
-      this.item.tooltip = 'Switchyard: Click to select an active account';
-      this.item.show();
+      this.accountItem.backgroundColor = undefined;
+      this.accountItem.hide();
+    }
+
+    if (view.quotaItem.visible) {
+      this.quotaItem.text = view.quotaItem.text;
+      this.quotaItem.tooltip = tooltip;
+      this.quotaItem.command = view.quotaItem.command;
+      this.quotaItem.backgroundColor = severityBackground(view.quotaItem.severity);
+      this.quotaItem.show();
+    } else {
+      this.quotaItem.backgroundColor = undefined;
+      this.quotaItem.hide();
     }
   }
 
   public dispose(): void {
-    this.item.dispose();
+    this.accountItem.dispose();
+    this.quotaItem.dispose();
   }
 }

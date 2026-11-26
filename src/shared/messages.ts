@@ -125,12 +125,15 @@ export interface CaptureSessionState {
   detectedKind?: 'new' | 'saved' | 'active';
 }
 
+export type StatusBarMode = 'minimal' | 'quota' | 'compactGraph' | 'burnRate';
+
 export type ToWebview =
   | {
       type: 'state';
       accounts: AccountMeta[];
       activeId?: string;
       maskEmails?: boolean;
+      statusBarMode?: StatusBarMode;
       mode?: 'profile' | 'tokenSwap';
       addAccountMethod?: 'sideWindow' | 'signOutRestart';
       confirmBeforeSwitch?: boolean;
