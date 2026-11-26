@@ -6,6 +6,7 @@
  */
 
 import type { AccountMeta, AccountQuotaSummary, StatusBarMode, ToWebview } from '../../../src/shared/messages';
+import { computePacingAdvisory, type ShortQuotaSample } from '../../../src/shared/quotaBurnRate';
 import { buildTrend, type QuotaSample } from '../../../src/shared/quotaHistory';
 import { suggestBestAccount } from '../../../src/shared/quotaSuggest';
 
@@ -124,6 +125,17 @@ let currentScenario: ScenarioKey = '3';
 let currentActiveId = SCENARIOS[currentScenario].activeId;
 let currentStatusBarMode: StatusBarMode = 'quota';
 
+function mockShortHistory(id: string): ShortQuotaSample[] {
+  if (id === 'acc-1') {
+    return [
+      { t: NOW - 60 * 60_000, gw: 9, g5: 60 },
+      { t: NOW - 30 * 60_000, gw: 7.5, g5: 51 },
+      { t: NOW, gw: 6, g5: 42 },
+    ];
+  }
+  return [];
+}
+
 function sendState() {
   const s = SCENARIOS[currentScenario];
   // Same logic the extension uses, so the dev preview shows the "running low" hint too
@@ -133,6 +145,10 @@ function sendState() {
     const t = buildTrend(mockHistory(a.id), NOW);
     if (t) trends[a.id] = t;
   }
+  const active = currentActiveId ? s.accounts.find((a) => a.id === currentActiveId) : undefined;
+  const pacing = active
+    ? computePacingAdvisory(mockShortHistory(active.id), active.quota, active.plan, NOW, trends[active.id])
+    : undefined;
   // The "error" scenario also shows the quota-could-not-be-read state on the signed-in account
   const quotaError =
     currentScenario === 'error' && currentActiveId
@@ -150,6 +166,7 @@ function sendState() {
     statusBarMode: currentStatusBarMode,
     suggestion,
     trends: Object.keys(trends).length > 0 ? trends : undefined,
+    pacing,
     quotaError,
   });
 }

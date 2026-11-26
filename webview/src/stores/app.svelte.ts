@@ -7,6 +7,7 @@ import type {
   AccountMeta,
   AddAccountGuideState,
   CaptureSessionState,
+  PacingAdvisory,
   QuotaErrorState,
   QuotaTrend,
   StatusBarMode,
@@ -35,6 +36,7 @@ let unsupported = $state<{ reason: string; version?: string } | undefined>(undef
 let captureSession = $state<CaptureSessionState | undefined>(undefined);
 let suggestion = $state<SwitchSuggestion | undefined>(undefined);
 let trends = $state<Record<string, QuotaTrend>>({});
+let pacing = $state<PacingAdvisory | undefined>(undefined);
 let quotaError = $state<QuotaErrorState | undefined>(undefined);
 
 // Compact view is a per-user display preference, kept in the webview's own state.
@@ -161,6 +163,10 @@ export function getTrend(accountId: string): QuotaTrend | undefined {
   return trends[accountId];
 }
 
+export function getPacing(): PacingAdvisory | undefined {
+  return pacing;
+}
+
 export function getQuotaError(): QuotaErrorState | undefined {
   return quotaError;
 }
@@ -216,6 +222,7 @@ export function handleMessage(data: ToWebview): void {
       captureSession = data.captureSession;
       suggestion = data.suggestion;
       trends = data.trends ?? {};
+      pacing = data.pacing;
       quotaError = data.quotaError;
       finishRefresh();
       busy = false;

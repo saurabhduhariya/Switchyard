@@ -204,6 +204,7 @@
    * inside boxes.
    */
   .quota-grid {
+    container-type: inline-size;
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0;
@@ -226,7 +227,7 @@
   }
 
   /* Narrow sidebars: stack the two columns instead of squeezing them */
-  @media (max-width: 320px) {
+  @container (max-width: 295px) {
     .quota-grid {
       grid-template-columns: 1fr;
     }
@@ -237,6 +238,16 @@
       padding-top: 10px;
       margin-top: 10px;
       border-top: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+    }
+  }
+
+  @container (max-width: 350px) {
+    .trend-row {
+      gap: 5px;
+    }
+    .trend-row :global(.spark) {
+      width: 42px;
+      height: 14px;
     }
   }
 

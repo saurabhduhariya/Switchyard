@@ -542,6 +542,71 @@ describe('ui/PanelProvider end-to-end (Phase 4)', () => {
       await panelProvider.handleCycleNextAccount();
       expect(switchSpy).toHaveBeenCalledWith(a2.id);
     });
+
+    it('tracks live drops through BurnRateAnalyzer and exposes pacing in webview state', async () => {
+      const a1 = await store.upsertFromSnapshot(
+        {
+          values: {
+            'antigravityUnifiedStateSync.oauthToken': 'dG9rLXBhY2luZw==',
+            'agy.userStatusJson': JSON.stringify({ email: 'pace@example.com' }),
+          },
+          capturedAt: 1,
+        },
+        'Pacing Account'
+      );
+      await store.setActive(a1.id);
+
+      const now = Date.now();
+      const analyzer = (panelProvider as any).burnAnalyzer;
+      await analyzer.record(
+        a1.id,
+        {
+          tierName: 'Google AI Pro Quota',
+          updatedAt: now - 30 * 60_000,
+          source: 'live',
+          gemini: {
+            name: 'Gemini',
+            weekly: { remainingPercent: 95, resetTime: new Date(now + 5 * 86_400_000).toISOString() },
+            fiveHour: { remainingPercent: 60, resetTime: new Date(now + 4 * 3_600_000).toISOString() },
+          },
+          claudeGpt: { name: 'Claude + GPT' },
+        },
+        now - 30 * 60_000
+      );
+      await analyzer.record(
+        a1.id,
+        {
+          tierName: 'Google AI Pro Quota',
+          updatedAt: now,
+          source: 'live',
+          gemini: {
+            name: 'Gemini',
+            weekly: { remainingPercent: 93, resetTime: new Date(now + 5 * 86_400_000).toISOString() },
+            fiveHour: { remainingPercent: 45, resetTime: new Date(now + 4 * 3_600_000).toISOString() },
+          },
+          claudeGpt: { name: 'Claude + GPT' },
+        },
+        now
+      );
+      await store.updateQuota(a1.id, {
+        tierName: 'Google AI Pro Quota',
+        updatedAt: now,
+        source: 'live',
+        gemini: {
+          name: 'Gemini',
+          weekly: { remainingPercent: 93, resetTime: new Date(now + 5 * 86_400_000).toISOString() },
+          fiveHour: { remainingPercent: 45, resetTime: new Date(now + 4 * 3_600_000).toISOString() },
+        },
+        claudeGpt: { name: 'Claude + GPT' },
+      });
+
+      postedMessages.length = 0;
+      await panelProvider.push();
+      const stateMsg = [...postedMessages].reverse().find((m) => m.type === 'state') as any;
+      expect(stateMsg?.pacing).toBeDefined();
+      expect(stateMsg.pacing.bucket).toBe('gemini.fiveHour');
+      expect(stateMsg.pacing.burnRatePerHour).toBe(30);
+    });
   });
 
   describe('quota freshness', () => {

@@ -2,13 +2,17 @@ import { rankCarouselCandidates } from './accountCarousel';
 import { accountDisplayName } from './accountName';
 import {
   compactTierBadge,
+  formatDelayShort,
+  formatPacingBucketLabel,
   formatPercentShort,
   formatResetShort,
+  formatTteShort,
   shortTierName,
 } from './formatQuota';
 import type {
   AccountMeta,
   AccountQuotaSummary,
+  PacingAdvisory,
   QuotaErrorState,
   QuotaTrend,
   StatusBarMode,
@@ -54,6 +58,7 @@ export interface StatusBarBuildOptions {
   mode?: StatusBarMode;
   trends?: Record<string, QuotaTrend>;
   burnRates?: Record<string, AccountBurnRates>;
+  pacing?: PacingAdvisory;
   quotaError?: QuotaErrorState;
   now?: number;
 }
@@ -106,14 +111,6 @@ export function renderUnicodeSparkline(points: number[] | undefined, maxBars = 8
 function formatRateHourly(rate: number): string {
   const val = rate >= 10 || Number.isInteger(rate) ? String(Math.round(rate)) : rate.toFixed(1);
   return `-${val}%/h`;
-}
-
-function formatTteMinutes(minutes: number | null): string | undefined {
-  if (minutes === null || minutes <= 0) return undefined;
-  if (minutes < 60) return `~${minutes}m left`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return m > 0 ? `~${h}h ${m}m left` : `~${h}h left`;
 }
 
 function effectiveSummary(
@@ -169,7 +166,8 @@ function formatQuotaItemText(
   active: AccountMeta,
   effectiveQuota: AccountQuotaSummary | undefined,
   readings: BucketReading[],
-  burnRates: AccountBurnRates | undefined
+  burnRates: AccountBurnRates | undefined,
+  pacing: PacingAdvisory | undefined
 ): { visible: boolean; text: string } {
   if (mode === 'minimal') {
     const badge = compactTierBadge(active.plan || effectiveQuota?.tierName);
@@ -201,13 +199,16 @@ function formatQuotaItemText(
       const rate: BucketBurnRate | undefined = g.group === 'gemini' ? burnRates?.gemini : burnRates?.claudeGpt;
       if (rate && rate.burnRatePerHour >= 0.5) {
         anyActiveRate = true;
-        parts.push(`${g.shortName} ${formatBucketPct(g.reading)} (${formatRateHourly(rate.burnRatePerHour)})`);
+        const tte = formatTteShort(rate.tteMinutes);
+        const detail = tte ? `${formatRateHourly(rate.burnRatePerHour)} · ${tte}` : formatRateHourly(rate.burnRatePerHour);
+        parts.push(`${g.shortName} ${formatBucketPct(g.reading)} (${detail})`);
       } else {
         parts.push(`${g.shortName} ${formatBucketPct(g.reading)}`);
       }
     }
+    const icon = pacing?.safety === 'critical' ? '$(warning)' : '$(pulse)';
     const suffix = anyActiveRate ? '' : ' (0%/h)';
-    return { visible: true, text: `$(pulse) ${parts.join(' · ')}${suffix}` };
+    return { visible: true, text: `${icon} ${parts.join(' · ')}${suffix}` };
   }
 
   // Default: 'quota'
@@ -281,6 +282,7 @@ function buildActiveTooltip(
   hideEmails: boolean,
   trend: QuotaTrend | undefined,
   burnRates: AccountBurnRates | undefined,
+  pacing: PacingAdvisory | undefined,
   quotaError: QuotaErrorState | undefined,
   now: number
 ): string {
@@ -346,21 +348,40 @@ function buildActiveTooltip(
     sections.push('_No quota readings yet._');
   }
 
-  const activeBurnParts: string[] = [];
-  if (burnRates?.gemini && burnRates.gemini.burnRatePerHour >= 0.5) {
-    const tte = formatTteMinutes(burnRates.gemini.tteMinutes);
-    activeBurnParts.push(
-      `Gem ${formatRateHourly(burnRates.gemini.burnRatePerHour)}${tte ? ` (${tte})` : ''}`
-    );
-  }
-  if (burnRates?.claudeGpt && burnRates.claudeGpt.burnRatePerHour >= 0.5) {
-    const tte = formatTteMinutes(burnRates.claudeGpt.tteMinutes);
-    activeBurnParts.push(
-      `Cld ${formatRateHourly(burnRates.claudeGpt.burnRatePerHour)}${tte ? ` (${tte})` : ''}`
-    );
-  }
-  if (activeBurnParts.length > 0) {
-    sections.push(`$(flame) **Burn rate:** ${activeBurnParts.join(' · ')}`);
+  if (pacing) {
+    const label = formatPacingBucketLabel(pacing.bucket);
+    const tte = formatTteShort(pacing.tteMinutes);
+    const ttr = pacing.ttrMinutes !== null ? formatTteShort(pacing.ttrMinutes, false) : undefined;
+    const pacingParts = [formatRateHourly(pacing.burnRatePerHour)];
+    if (tte) pacingParts.push(tte);
+    if (ttr) pacingParts.push(`reset in ${ttr.replace(/^~/, '')}`);
+    const delay = formatDelayShort(pacing.recommendedDelaySec);
+    const hint = delay
+      ? pacing.safety === 'critical'
+        ? ` — slow down (${delay} pause)`
+        : ` — ease pace (${delay} pause)`
+      : pacing.safety === 'sustainable'
+        ? ' — safe until reset'
+        : '';
+    const icon = pacing.safety === 'critical' ? '$(warning)' : '$(flame)';
+    sections.push(`${icon} **Pacing (${label}):** ${pacingParts.join(' · ')}${hint}`);
+  } else {
+    const activeBurnParts: string[] = [];
+    if (burnRates?.gemini && burnRates.gemini.burnRatePerHour >= 0.5) {
+      const tte = formatTteShort(burnRates.gemini.tteMinutes);
+      activeBurnParts.push(
+        `Gem ${formatRateHourly(burnRates.gemini.burnRatePerHour)}${tte ? ` (${tte})` : ''}`
+      );
+    }
+    if (burnRates?.claudeGpt && burnRates.claudeGpt.burnRatePerHour >= 0.5) {
+      const tte = formatTteShort(burnRates.claudeGpt.tteMinutes);
+      activeBurnParts.push(
+        `Cld ${formatRateHourly(burnRates.claudeGpt.burnRatePerHour)}${tte ? ` (${tte})` : ''}`
+      );
+    }
+    if (activeBurnParts.length > 0) {
+      sections.push(`$(flame) **Burn rate:** ${activeBurnParts.join(' · ')}`);
+    }
   }
 
   if (quotaError && quotaError.accountId === active.id) {
@@ -412,7 +433,7 @@ export function buildStatusBarPresentation(
   const readings = readBuckets(effectiveQuota, active.plan);
   const severity = computeQuotaSeverity(readings);
   const burnRates = options.burnRates?.[active.id];
-  const quotaDisplay = formatQuotaItemText(mode, active, effectiveQuota, readings, burnRates);
+  const quotaDisplay = formatQuotaItemText(mode, active, effectiveQuota, readings, burnRates, options.pacing);
 
   const tooltipMarkdown = buildActiveTooltip(
     active,
@@ -422,6 +443,7 @@ export function buildStatusBarPresentation(
     hideEmails,
     options.trends?.[active.id],
     burnRates,
+    options.pacing,
     options.quotaError,
     now
   );

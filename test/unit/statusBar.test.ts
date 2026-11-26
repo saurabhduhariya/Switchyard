@@ -164,9 +164,19 @@ describe('statusBarModel', () => {
           claudeGpt: { burnRatePerHour: 0, tteMinutes: null },
         },
       },
+      pacing: {
+        bucket: 'gemini.fiveHour',
+        burnRatePerHour: 18,
+        tteMinutes: 140,
+        ttrMinutes: 258,
+        safety: 'critical',
+        recommendedDelaySec: 25,
+      },
       now: NOW,
     });
-    expect(burnMode.quotaItem.text).toBe('$(pulse) Gem 84% (-18%/h) · Cld 42%');
+    expect(burnMode.quotaItem.text).toBe('$(warning) Gem 84% (-18%/h · ~2.3h left) · Cld 42%');
+    expect(burnMode.tooltipMarkdown).toContain('**Pacing (Gemini 5h):** -18%/h · ~2.3h left');
+    expect(burnMode.tooltipMarkdown).toContain('slow down (~25s pause)');
 
     const idleBurnMode = buildStatusBarPresentation(accounts, 'acc-1', false, {
       mode: 'burnRate',

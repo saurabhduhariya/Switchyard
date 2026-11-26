@@ -6,9 +6,23 @@
   import OverflowMenu, { type MenuItem } from './OverflowMenu.svelte';
   import Icon from './Icon.svelte';
   import { accountDisplayName } from '../../../src/shared/accountName';
+  import {
+    formatDelayShort,
+    formatPacingBucketLabel,
+    formatPacingBucketShort,
+    formatTteShort,
+  } from '../../../src/shared/formatQuota';
   import { formatCompactAge } from '../lib/formatQuota';
   import { postToHost } from '../lib/vscode';
-  import { getMode, getQuotaError, getTrend, isRefreshing, startRefresh } from '../stores/app.svelte';
+  import {
+    getMode,
+    getPacing,
+    getQuotaError,
+    getStatusBarMode,
+    getTrend,
+    isRefreshing,
+    startRefresh,
+  } from '../stores/app.svelte';
   import { shortTierName } from '../lib/tier';
   import { shouldEstimate } from '../../../src/shared/quotaEstimate';
 
@@ -29,6 +43,54 @@
   let username = $derived(accountDisplayName(account, hideEmail));
   let tierName = $derived(account.plan || account.quota?.tierName || 'Antigravity Quota');
   let age = $derived(account.quota ? formatCompactAge(account.quota.updatedAt, true) : 'Live');
+  let pacing = $derived(getPacing());
+  let pacingExpanded = $state(false);
+  let statusBarMode = $derived(getStatusBarMode());
+
+  let pacingSummary = $derived.by(() => {
+    if (!pacing) return undefined;
+    const rateNum =
+      pacing.burnRatePerHour >= 10 || Number.isInteger(pacing.burnRatePerHour)
+        ? Math.round(pacing.burnRatePerHour)
+        : pacing.burnRatePerHour.toFixed(1);
+    const rate = `−${rateNum}%/h`;
+    const tte = formatTteShort(pacing.tteMinutes);
+    const delay = formatDelayShort(pacing.recommendedDelaySec);
+    const ttr = pacing.ttrMinutes !== null ? formatTteShort(pacing.ttrMinutes, false) : undefined;
+    const bucket = formatPacingBucketLabel(pacing.bucket);
+    const bucketShort = formatPacingBucketShort(pacing.bucket);
+
+    const tail = delay
+      ? pacing.safety === 'critical'
+        ? `slow down (${delay})`
+        : `ease pace (${delay})`
+      : pacing.safety === 'sustainable'
+        ? 'safe until reset'
+        : ttr
+          ? `resets ${ttr.replace(/^~/, '')}`
+          : undefined;
+
+    const tooltipParts = [`At ${rate}, ${bucket} quota`];
+    if (tte) tooltipParts.push(`runs out in ${tte.replace(/\s+left$/, '')}`);
+    if (ttr) tooltipParts.push(`(resets in ${ttr.replace(/^~/, '')})`);
+    if (delay) tooltipParts.push(`— pausing ${delay} between prompts helps it last until reset.`);
+    else if (pacing.safety === 'sustainable') tooltipParts.push('— current pace will last until reset.');
+
+    return {
+      bucket,
+      bucketShort,
+      rate,
+      tte,
+      tail,
+      safety: pacing.safety,
+      tooltip: tooltipParts.join(' '),
+    };
+  });
+
+  function toggleBurnRateStatusBar() {
+    const next = statusBarMode === 'burnRate' ? 'quota' : 'burnRate';
+    postToHost({ type: 'updateSetting', key: 'statusBarMode', value: next });
+  }
 
   function startRename() {
     renameValue = account.label ?? '';
@@ -174,6 +236,39 @@
     />
   {/if}
 
+  {#if pacingSummary}
+    <div class="pacing-box safety-{pacingSummary.safety}" class:expanded={pacingExpanded}>
+      <button
+        type="button"
+        class="pacing-strip"
+        onclick={() => (pacingExpanded = !pacingExpanded)}
+        aria-expanded={pacingExpanded}
+        title={pacingSummary.tooltip}
+      >
+        <Icon name={pacingSummary.safety === 'critical' ? 'warning-clock' : 'zap'} size={12} class="pacing-icon" />
+        <span class="pacing-bucket pacing-bucket-full">{pacingSummary.bucket}:</span>
+        <span class="pacing-bucket pacing-bucket-short">{pacingSummary.bucketShort}:</span>
+        <span class="pacing-rate">{pacingSummary.rate}</span>
+        {#if pacingSummary.tte}
+          <span class="pacing-tte"><span class="sep" aria-hidden="true">·</span> {pacingSummary.tte}</span>
+        {/if}
+        {#if pacingSummary.tail}
+          <span class="pacing-tail"><span class="sep" aria-hidden="true">·</span> {pacingSummary.tail}</span>
+        {/if}
+        <span class="pacing-caret" aria-hidden="true">{pacingExpanded ? '▾' : '▸'}</span>
+      </button>
+
+      {#if pacingExpanded}
+        <div class="pacing-details">
+          <p class="pacing-explain">{pacingSummary.tooltip}</p>
+          <button type="button" class="pacing-action" onclick={toggleBurnRateStatusBar}>
+            {statusBarMode === 'burnRate' ? 'Showing burn rate in status bar ✓' : 'Show burn rate in status bar'}
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if menuOpen && menuBtn}
     <OverflowMenu items={menuItems} anchor={menuBtn} onclose={() => (menuOpen = false)} />
   {/if}
@@ -312,5 +407,121 @@
     border: 1px solid var(--vscode-input-border, #007fd4);
     border-radius: 3px;
     outline: none;
+  }
+
+  .pacing-box {
+    margin-top: 8px;
+    border-radius: 4px;
+    border: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.08));
+    background: color-mix(in srgb, var(--vscode-foreground, #ccc), transparent 95%);
+    color: var(--vscode-descriptionForeground, #9aa0a6);
+    overflow: hidden;
+  }
+
+  .pacing-box.safety-elevated {
+    color: var(--vscode-editorWarning-foreground, #cca700);
+    border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700), transparent 65%);
+    background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700), transparent 92%);
+  }
+
+  .pacing-box.safety-critical {
+    color: var(--vscode-errorForeground, #f48771);
+    border-color: color-mix(in srgb, var(--vscode-errorForeground, #f48771), transparent 60%);
+    background: color-mix(in srgb, var(--vscode-errorForeground, #f48771), transparent 90%);
+  }
+
+  .pacing-strip {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 8px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .pacing-strip:hover {
+    background: color-mix(in srgb, currentColor, transparent 92%);
+  }
+
+  .pacing-strip :global(.pacing-icon) {
+    flex-shrink: 0;
+  }
+
+  .pacing-bucket {
+    font-weight: 600;
+  }
+
+  .pacing-bucket-short {
+    display: none;
+  }
+
+  .pacing-caret {
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.75;
+    flex-shrink: 0;
+  }
+
+  .pacing-details {
+    padding: 4px 8px 7px;
+    border-top: 1px solid color-mix(in srgb, currentColor, transparent 82%);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .pacing-explain {
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--vscode-foreground, #e0e0e0);
+    opacity: 0.9;
+  }
+
+  .pacing-action {
+    align-self: flex-start;
+    padding: 2px 6px;
+    font-size: 10.5px;
+    font-family: inherit;
+    color: var(--vscode-textLink-foreground, #3794ff);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff), transparent 65%);
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .pacing-action:hover {
+    background: color-mix(in srgb, var(--vscode-textLink-foreground, #3794ff), transparent 88%);
+  }
+
+  @container (max-width: 390px) {
+    .pacing-bucket-full,
+    .pacing-tail {
+      display: none;
+    }
+    .pacing-bucket-short {
+      display: inline;
+    }
+  }
+
+  @container (max-width: 245px) {
+    .pacing-bucket-short {
+      display: none;
+    }
+  }
+
+  @container (max-width: 175px) {
+    .pacing-tte {
+      display: none;
+    }
   }
 </style>

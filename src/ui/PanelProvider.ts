@@ -27,7 +27,8 @@ import { Logger } from '../util/logger';
 import { StatusBar } from './StatusBar';
 import { SwitchEngine } from '../switch/SwitchEngine';
 import { describeQuotaError, QuotaCollector } from '../quota/QuotaCollector';
-import { QuotaHistoryStore, ShortQuotaHistoryStore } from '../quota/QuotaHistoryStore';
+import { BurnRateAnalyzer } from '../quota/BurnRateAnalyzer';
+import { QuotaHistoryStore } from '../quota/QuotaHistoryStore';
 
 export class PanelProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'agSwitchyard.panel';
@@ -42,7 +43,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   private dismissedSignOutBanner = false;
   private readonly quotaCollector: QuotaCollector;
   private readonly history: QuotaHistoryStore;
-  private readonly shortHistory: ShortQuotaHistoryStore;
+  private readonly burnAnalyzer: BurnRateAnalyzer;
   /** Set once reading the signed-in account's quota keeps failing (or the user asked for a retry). */
   private quotaError?: QuotaErrorState;
   private quotaFailures = 0;
@@ -60,7 +61,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
   ) {
     this.quotaCollector = new QuotaCollector(this.logger);
     this.history = new QuotaHistoryStore(this.ctx.globalState);
-    this.shortHistory = new ShortQuotaHistoryStore(this.ctx.globalState);
+    this.burnAnalyzer = new BurnRateAnalyzer(this.ctx.globalState);
   }
 
   public setSwitchEngine(switchEngine: SwitchEngine): void {
@@ -247,9 +248,9 @@ export class PanelProvider implements vscode.WebviewViewProvider {
 
     const accountIds = rawAccounts.map((a) => a.id);
     await this.history.prune(accountIds);
-    await this.shortHistory.prune(accountIds);
+    await this.burnAnalyzer.prune(accountIds);
     const trends = this.history.trends(accountIds);
-    const burnRates = this.shortHistory.burnRatesFor(accounts, trends);
+    const { burnRates, pacing } = this.burnAnalyzer.analyze(accounts, activeId, trends);
 
     const quotaError =
       this.quotaError && this.quotaError.accountId === activeId ? this.quotaError : undefined;
@@ -296,6 +297,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       addAccountGuide,
       suggestion,
       trends: Object.keys(trends).length > 0 ? trends : undefined,
+      pacing,
       quotaError,
       captureSession: captureSession ? {
         state: captureSession.state,
@@ -320,6 +322,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
       mode: statusBarMode,
       trends,
       burnRates,
+      pacing,
       quotaError,
     });
     void vscode.commands.executeCommand('setContext', 'switchyard.hasAccounts', accounts.length > 0);
@@ -582,7 +585,7 @@ export class PanelProvider implements vscode.WebviewViewProvider {
     const saved = await this.store.get(accountId);
     if (saved?.quota?.updatedAt === quota.updatedAt) {
       await this.history.record(accountId, quota);
-      await this.shortHistory.record(accountId, quota);
+      await this.burnAnalyzer.record(accountId, quota);
     }
   }
 
